@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Databricks
+.databricks/
+.databricks-resources.json
+.claude/
+.claude-terminal
+.superpowers/
+.coverage
+
+# OS
+.DS_Store
+
+# Project-specific exclusions
+screenshots/
+notebooks/
+capture_screenshots.py
+client/
+static/dist/

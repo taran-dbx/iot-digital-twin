@@ -1,0 +1,149 @@
+flowchart LR
+
+    %% ══════════════════════════════════════════════════
+    %% COLUMN A — FRONTEND
+    %% ══════════════════════════════════════════════════
+    subgraph FE["FRONTEND — React + TypeScript\n(Vite · Tailwind · Radix UI)"]
+        direction TB
+        P_HOME["Home"]
+        P_DASH["Dashboard"]
+        P_WIZ["Pipeline Wizard"]
+        P_DET["Pipeline Detail"]
+        P_HUB["Data Hub"]
+        P_SRC["Source Settings"]
+        FE_CTX["Contexts\nUserProvider\nPipelineProvider\nSensorProvider"]
+        WS_HOOK["useWebSocket\nauto-reconnecting"]
+        CHARTS["Recharts\nreal-time viz"]
+    end
+
+    %% ══════════════════════════════════════════════════
+    %% COLUMN B — BACKEND
+    %% ══════════════════════════════════════════════════
+    subgraph BE["BACKEND — FastAPI on Databricks Apps  (uvicorn · async)"]
+        direction TB
+        AUTH["Auth Middleware\nx-forwarded-access-token · OAuth"]
+        A_PIP["/api/pipelines\nPipeline CRUD"]
+        A_SEN["/api/sensor\nSensor Queries"]
+        A_PRO["/api/provision\nProvisioning"]
+        A_CLU["/api/clusters\nCluster Mgmt"]
+        A_SSS["/api/sss/ingest\nSSS Ingest"]
+        WS_EP["/ws\nWebSocket Endpoint"]
+        BCAST["Broadcast Manager\nconnected clients"]
+        SIM["IoT Simulator\nasyncio background task"]
+        METRICS["Source Metrics\nwebsocket · lakebase\nzerobus · sss"]
+    end
+
+    %% ══════════════════════════════════════════════════
+    %% COLUMN C — DATA SINKS
+    %% ══════════════════════════════════════════════════
+    subgraph SINKS["DATA SINKS — 3 Parallel Outputs"]
+        direction TB
+        SK_WS["WebSocket Sink\n2 Hz broadcast"]
+        SK_LB["Lakebase Sink\nasyncpg · batch 50 · 1 Hz"]
+        SK_ZB["Zerobus Sink\ngRPC stream · batch 10"]
+    end
+
+    %% ══════════════════════════════════════════════════
+    %% COLUMN D — STORAGE
+    %% ══════════════════════════════════════════════════
+    subgraph STORAGE["DATA STORAGE"]
+        direction TB
+        T_PIP[("pipelines\nJSONB config · per-user")]
+        T_SEN[("sensor_readings\ntime-series")]
+        MV1[("sensor_1m\n1-min materialized view")]
+        MV2[("sensor_5m\n5-min materialized view")]
+        DELTA[("Delta Table\ntaran_explore\n.iot_simulator\n.iot_sensor_data")]
+        UC[("Unity Catalog\ncatalogs · schemas\nvolumes · secrets")]
+    end
+
+    %% ══════════════════════════════════════════════════
+    %% COLUMN E — EXTERNAL (Databricks Platform)
+    %% ══════════════════════════════════════════════════
+    subgraph EXT["EXTERNAL INTEGRATIONS — Databricks Platform"]
+        direction TB
+        SSS_SRC["Sources\nKafka · Kinesis · EventHub"]
+        SSS_JOB["SSS Notebook Job\nserverless Spark"]
+        SSS_FW["ForeachWriter"]
+        DBK_SDK["Databricks SDK\nOAuth · cluster mgmt"]
+        DBK_API["Workspace API\nclusters · notebooks · jobs"]
+        DBK_KAF["Kafka Producer\nNotebook Job"]
+    end
+
+    %% ══════════════════════════════════════════════════
+    %% USER
+    %% ══════════════════════════════════════════════════
+    USER(["👤 Browser User"])
+
+    %% ══════════════════════════════════════════════════
+    %% EDGES
+    %% ══════════════════════════════════════════════════
+
+    USER <-->|HTTPS| FE
+
+    %% Frontend ↔ Backend REST
+    P_DASH <-->|GET sensor data| A_SEN
+    P_WIZ  <-->|pipeline CRUD| A_PIP
+    P_DET  <-->|pipeline CRUD| A_PIP
+    P_SRC   -->|provision| A_PRO
+    P_SRC   -->|cluster ops| A_CLU
+    FE_CTX -.->|OAuth token| AUTH
+    AUTH   -.->|validates| A_PIP
+    AUTH   -.->|validates| WS_EP
+
+    %% Frontend ↔ WebSocket
+    WS_HOOK <-->|WebSocket frames| WS_EP
+    BCAST   -->|real-time sensor frames| WS_HOOK
+
+    %% WebSocket internal
+    WS_EP --> BCAST
+
+    %% IoT Simulator → Sinks
+    SIM --> METRICS
+    SIM -->|sensor events| SK_WS
+    SIM -->|sensor events| SK_LB
+    SIM -->|sensor events| SK_ZB
+
+    %% Sinks → Storage / Clients
+    SK_WS -->|broadcast 2 Hz| BCAST
+    SK_LB -->|batch write| T_SEN
+    SK_ZB -->|gRPC stream| DELTA
+
+    %% API → Storage
+    A_PIP <-->|CRUD| T_PIP
+    A_SEN  -->|SELECT| T_SEN
+    A_SEN  -->|SELECT| MV1
+    A_SEN  -->|SELECT| MV2
+
+    %% SSS flow
+    SSS_SRC -->|read stream| SSS_JOB
+    SSS_JOB -->|HTTP POST windowed aggs| A_SSS
+    SSS_JOB --> SSS_FW
+    SSS_FW  -->|write raw rows| T_SEN
+    A_SSS   -->|WebSocket broadcast| BCAST
+
+    %% Provisioning / Cluster mgmt
+    A_PRO -->|provision| DBK_SDK
+    A_CLU -->|cluster ops| DBK_SDK
+    DBK_SDK -->|REST calls| DBK_API
+    DBK_API -->|submit job| DBK_KAF
+    A_PRO   -->|catalog · schema · volume| UC
+    DELTA  -.->|governed by| UC
+
+    %% ══════════════════════════════════════════════════
+    %% STYLES
+    %% ══════════════════════════════════════════════════
+    classDef user    fill:#1e293b,stroke:#94a3b8,stroke-width:2px,color:#f1f5f9,font-weight:bold
+    classDef fe      fill:#1d4ed8,stroke:#93c5fd,stroke-width:1px,color:#dbeafe
+    classDef auth    fill:#92400e,stroke:#fcd34d,stroke-width:2px,color:#fef3c7,font-weight:bold
+    classDef be      fill:#166534,stroke:#86efac,stroke-width:1px,color:#dcfce7
+    classDef sink    fill:#0e7490,stroke:#67e8f9,stroke-width:1px,color:#cffafe
+    classDef storage fill:#9a3412,stroke:#fb923c,stroke-width:1px,color:#ffedd5
+    classDef ext     fill:#6b21a8,stroke:#c084fc,stroke-width:1px,color:#ede9fe
+
+    class USER user
+    class P_HOME,P_DASH,P_WIZ,P_DET,P_HUB,P_SRC,FE_CTX,WS_HOOK,CHARTS fe
+    class AUTH auth
+    class A_PIP,A_SEN,A_PRO,A_CLU,A_SSS,WS_EP,BCAST,SIM,METRICS be
+    class SK_WS,SK_LB,SK_ZB sink
+    class T_PIP,T_SEN,MV1,MV2,DELTA,UC storage
+    class SSS_SRC,SSS_JOB,SSS_FW,DBK_SDK,DBK_API,DBK_KAF ext

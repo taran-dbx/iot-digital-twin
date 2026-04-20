@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 200" fill="none">
+  <!-- Funnel top -->
+  <path d="M30 10 L130 10 L110 50 L50 50 Z" fill="rgba(108,92,231,0.12)" stroke="#8b8fa3" stroke-width="1.5"/>
+  <!-- Funnel rim -->
+  <ellipse cx="80" cy="10" rx="50" ry="6" fill="rgba(108,92,231,0.08)" stroke="#8b8fa3" stroke-width="1.5"/>
+  <!-- Main vessel body -->
+  <rect x="40" y="50" width="80" height="90" rx="6" fill="rgba(108,92,231,0.1)" stroke="#8b8fa3" stroke-width="1.5"/>
+  <!-- Liquid level inside vessel -->
+  <rect x="42" y="80" width="76" height="58" rx="4" fill="rgba(0,184,148,0.2)"/>
+  <!-- Drain valve (bottom) -->
+  <rect x="70" y="140" width="20" height="16" rx="3" fill="#8b8fa3"/>
+  <!-- Outlet pipe -->
+  <line x1="80" y1="156" x2="80" y2="180" stroke="#8b8fa3" stroke-width="3"/>
+  <!-- Outlet arrow -->
+  <polygon points="74,176 80,186 86,176" fill="#00b894"/>
+  <!-- Side port (left) -->
+  <rect x="26" y="75" width="14" height="8" rx="2" fill="#8b8fa3"/>
+  <!-- Side port (right) -->
+  <rect x="120" y="75" width="14" height="8" rx="2" fill="#8b8fa3"/>
+  <!-- Sight glass on vessel -->
+  <rect x="54" y="92" width="52" height="4" rx="1" fill="rgba(0,184,148,0.35)"/>
+  <rect x="54" y="102" width="52" height="4" rx="1" fill="rgba(0,184,148,0.25)"/>
+  <rect x="54" y="112" width="52" height="4" rx="1" fill="rgba(0,184,148,0.15)"/>
+  <!-- Agitator shaft -->
+  <line x1="80" y1="12" x2="80" y2="60" stroke="#8b8fa3" stroke-width="1.5"/>
+  <!-- Agitator blades -->
+  <line x1="65" y1="58" x2="95" y2="54" stroke="#8b8fa3" stroke-width="1.5"/>
+  <line x1="65" y1="54" x2="95" y2="58" stroke="#8b8fa3" stroke-width="1.5"/>
+</svg>

@@ -1,0 +1,23 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg"
+   viewBox="0 0 460 460">
+<g>
+  <!-- Lower tube fill (accent light) -->
+  <path d="M290,270V170c0-5.514-4.486-10-10-10h-50v110H290z" fill="rgba(108,92,231,0.25)"/>
+  <!-- Upper tube fill (accent lighter) -->
+  <path d="M170,170v100h60V160h-50C174.486,160,170,164.486,170,170z" fill="rgba(108,92,231,0.15)"/>
+  <!-- Lower right liquid -->
+  <path d="M230,420h50c5.514,0,10-4.486,10-10V270h-60V420z" fill="rgba(116,185,255,0.25)"/>
+  <!-- Lower left liquid -->
+  <path d="M170,270v140c0,5.514,4.486,10,10,10h50V270H170z" fill="rgba(116,185,255,0.35)"/>
+  <!-- Left body outline -->
+  <path d="M160,40v40h20v40c-27.614,0-50,22.386-50,50v240c0,27.614,22.386,50,50,50h50v-40h-50
+    c-5.514,0-10-4.486-10-10V170c0-5.514,4.486-10,10-10h50V40H160z" fill="#8b8fa3"/>
+  <!-- Right body outline -->
+  <path d="M280,120V80h20V40h-70v120h50c5.514,0,10,4.486,10,10v240c0,5.514-4.486,10-10,10h-50v40h50
+    c27.614,0,50-22.386,50-50V170C330,142.386,307.614,120,280,120z" fill="#8b8fa3"/>
+  <!-- Cap left -->
+  <rect x="160" y="0" width="70" height="40" fill="#fdcb6e"/>
+  <!-- Cap right -->
+  <rect x="230" y="0" width="70" height="40" fill="rgba(253,203,110,0.8)"/>
+</g>
+</svg>

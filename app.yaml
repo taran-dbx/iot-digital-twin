@@ -1,0 +1,28 @@
+command:
+  - "/bin/sh"
+  - "-c"
+  - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
+
+env:
+  - name: PGHOST
+    value: "ep-ancient-dust-d1ch7tek.database.us-west-2.cloud.databricks.com"
+  - name: PGDATABASE
+    value: "databricks_postgres"
+  - name: PGPORT
+    value: "5432"
+  - name: LAKEBASE_ENDPOINT
+    value: "projects/iot-digital-twin/branches/production/endpoints/primary"
+  - name: ZEROBUS_SERVER_ENDPOINT
+    value: "7474649530865514.zerobus.us-west-2.cloud.databricks.com"
+  - name: ZEROBUS_TABLE_NAME
+    value: "taran_explore.iot_simulator.iot_sensor_data"
+  - name: ZEROBUS_CLIENT_ID
+    value: "182192cb-5feb-40f0-82a0-6e02067019f6"
+  - name: ZEROBUS_SECRET_SCOPE
+    value: "iot-digital-twin"
+  - name: ZEROBUS_SECRET_KEY
+    value: "zerobus-client-secret"
+  - name: UC_STORAGE_ROOT
+    value: "s3://rtm-msk-demo-ext-s3-332745928618-p7zdpf"
+  - name: INDUSTRIES
+    value: "pharmaceutical"
