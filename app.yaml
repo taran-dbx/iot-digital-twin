@@ -26,3 +26,5 @@ env:
     value: "s3://rtm-msk-demo-ext-s3-332745928618-p7zdpf"
   - name: INDUSTRIES
     value: "pharmaceutical"
+  - name: LAKETS_GIT_URL
+    value: "https://github.com/taranpreetsingh-grover_data/LakeTS.git"
