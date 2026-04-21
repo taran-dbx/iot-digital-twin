@@ -244,8 +244,34 @@ async def provision_secrets_settings(request: Request, user_email: str = Depends
 
         except Exception as exc:
             logger.warning("Failed to create service principal / store credentials: %s", exc)
-            provisioned.append({"resource": "Service principal credentials", "status": "failed",
-                               "error": str(exc)[:200]})
+            err_text = str(exc).lower()
+            # Permission and SDK-deserialization errors mean the runtime
+            # identity can't mint account-level SP credentials (common on
+            # FEVM / shared demo workspaces, where account-admin is scoped
+            # to another principal).  This is only needed for Zerobus
+            # ingest — mark as ``skipped`` so the overall secret-scope
+            # provisioning flow stays green.
+            is_skippable = (
+                "unable to parse response" in err_text
+                or "not authorized" in err_text
+                or "permission denied" in err_text
+                or "forbidden" in err_text
+                or "unauthorized" in err_text
+            )
+            if is_skippable:
+                provisioned.append({
+                    "resource": "Service principal credentials",
+                    "status": "skipped",
+                    "error": "Service-principal credential minting isn't available on "
+                             "this workspace (needs account-admin).  This is only "
+                             "required for Zerobus ingest — skip unless you plan to use Zerobus.",
+                })
+            else:
+                provisioned.append({
+                    "resource": "Service principal credentials",
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                })
 
     validation = await validate_secrets({"secrets": secrets})
     return {"provisioned": provisioned, "validation": validation}
