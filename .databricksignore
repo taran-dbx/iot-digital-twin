@@ -2,7 +2,10 @@
 __pycache__/
 client/
 screenshots/
-notebooks/
+# Exclude ONLY the top-level notebooks/ (sss_rtm_job.py etc.) — the
+# leading slash anchors the pattern so that databricks/notebooks/
+# (lakets_retention.py) is still synced.
+/notebooks/
 .gitignore
 capture_screenshots.py
 iot_data_simulator*.whl

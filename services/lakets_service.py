@@ -294,6 +294,10 @@ async def check_lakehouse_sync_readiness(pool: Any) -> dict:
     database_compatible = (current_db == _REQUIRED_DATABASE)
     wal2delta_installed = wal2delta_version is not None
 
+    # Lakehouse Sync is a Databricks-managed feature — the wal2delta extension
+    # is wired up by the platform, not by the user.  Keep the probe for info
+    # only; do NOT gate readiness on it.
+    # See https://docs.databricks.com/aws/en/oltp/projects/lakehouse-sync.
     reasons: list[str] = []
     if not database_compatible:
         reasons.append(
@@ -302,13 +306,6 @@ async def check_lakehouse_sync_readiness(pool: Any) -> dict:
         )
     if not lakets_sync:
         reasons.append("LakeTS shadow-sync functions not found — install LakeTS first.")
-    if not wal2delta_available:
-        reasons.append("`wal2delta` extension is not available on this Lakebase instance.")
-    elif not wal2delta_installed:
-        reasons.append(
-            "`wal2delta` extension is available but not yet installed "
-            "(run `CREATE EXTENSION wal2delta`)."
-        )
 
     return {
         "database_compatible": database_compatible,

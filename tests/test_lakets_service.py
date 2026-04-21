@@ -310,7 +310,8 @@ class TestCheckLakehouseSyncReadiness:
         assert "databricks_postgres" in result["reason"]
 
     @pytest.mark.asyncio
-    async def test_wal2delta_not_installed_but_available(self) -> None:
+    async def test_wal2delta_does_not_gate_readiness(self) -> None:
+        # wal2delta is managed by the platform — absence doesn't block sync.
         pool = MagicMock()
         pool.fetchval = AsyncMock(side_effect=[
             "databricks_postgres", True, None, True,
@@ -319,11 +320,11 @@ class TestCheckLakehouseSyncReadiness:
 
         assert result["wal2delta_available"] is True
         assert result["wal2delta_installed"] is False
-        assert result["ready_to_enable"] is False
-        assert "wal2delta" in result["reason"]
+        assert result["ready_to_enable"] is True  # <-- key behaviour change
+        assert result.get("reason") in (None, "")
 
     @pytest.mark.asyncio
-    async def test_wal2delta_not_available(self) -> None:
+    async def test_wal2delta_not_available_is_still_ready(self) -> None:
         pool = MagicMock()
         pool.fetchval = AsyncMock(side_effect=[
             "databricks_postgres", False, None, True,
@@ -332,7 +333,7 @@ class TestCheckLakehouseSyncReadiness:
 
         assert result["wal2delta_available"] is False
         assert result["wal2delta_installed"] is False
-        assert result["ready_to_enable"] is False
+        assert result["ready_to_enable"] is True
 
     @pytest.mark.asyncio
     async def test_lakets_sync_missing(self) -> None:
