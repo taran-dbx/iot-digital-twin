@@ -34,5 +34,6 @@ env:
     value: "pharmaceutical"
 
   # ── LakeTS source for per-pipeline tiering ──
-  - name: LAKETS_GIT_URL
-    value: "https://github.com/taranpreetsingh-grover_data/LakeTS.git"
+  # Vendored inside the repo; the Apps runtime has no network egress for git.
+  - name: LAKETS_SQL_PATH
+    value: "/app/python/source_code/databricks/vendor/lakets.sql"

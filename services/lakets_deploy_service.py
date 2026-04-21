@@ -14,8 +14,95 @@ from typing import Any
 
 logger = logging.getLogger("iot_digital_twin.services.lakets_deploy")
 
-# Location of the notebook source relative to the repo root.
-_NOTEBOOK_REL_PATH = Path("databricks") / "notebooks" / "lakets_retention.py"
+# Notebook source is inlined rather than read from disk.  `databricks sync`
+# treats any `.py` file starting with ``# Databricks notebook source`` as a
+# workspace notebook and strips the ``.py`` extension during upload — which
+# makes it unreachable via the deployed app's filesystem.  Keeping the source
+# inline here sidesteps that round-trip entirely.
+_RETENTION_NOTEBOOK_SOURCE = b"""# Databricks notebook source
+# MAGIC %md
+# MAGIC # LakeTS Retention
+# MAGIC
+# MAGIC Scheduled daily job.  Invokes `lakets.execute_retention(<table>)` for every
+# MAGIC ChronoTable that has an enabled retention or tiered_retention policy on the
+# MAGIC target Lakebase.  Prints a JSON summary of dropped-chunk counts per table.
+
+# COMMAND ----------
+# MAGIC %pip install psycopg2-binary databricks-sdk --quiet
+
+# COMMAND ----------
+dbutils.library.restartPython()
+
+# COMMAND ----------
+import json
+import os
+import psycopg2
+
+dbutils.widgets.text("project_id", "", "Lakebase project")
+dbutils.widgets.text("branch_id", "production", "Lakebase branch")
+dbutils.widgets.text("database", "databricks_postgres", "Postgres database")
+
+project_id = dbutils.widgets.get("project_id").strip()
+branch_id = dbutils.widgets.get("branch_id").strip() or "production"
+database = dbutils.widgets.get("database").strip() or "databricks_postgres"
+
+if not project_id:
+    raise ValueError("project_id widget is empty")
+
+from databricks.sdk import WorkspaceClient
+w = WorkspaceClient()
+parent = f"projects/{project_id}/branches/{branch_id}"
+endpoints = list(w.postgres.list_endpoints(parent=parent))
+if not endpoints:
+    raise RuntimeError(f"No endpoints on {parent}")
+
+endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
+cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
+pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
+
+conn = psycopg2.connect(
+    host=endpoint.status.hosts.host,
+    port=5432,
+    dbname=database,
+    user=pg_user,
+    password=cred.token,
+    sslmode="require",
+)
+conn.autocommit = True
+
+results: dict = {}
+with conn.cursor() as cur:
+    cur.execute(
+        "SELECT DISTINCT c.schema_name, c.table_name "
+        "FROM lakets._policy_registry p "
+        "JOIN lakets._chronotable_registry c ON p.chronotable_id = c.id "
+        "WHERE p.policy_type IN ('retention', 'tiered_retention') "
+        "  AND p.enabled = TRUE"
+    )
+    tables = cur.fetchall()
+
+for schema, table in tables:
+    key = f"{schema}.{table}"
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT lakets.execute_retention(%s, %s)", (table, schema))
+            dropped = cur.fetchone()[0]
+        results[key] = dropped
+        print(f"Retention on {key}: dropped {dropped} chunk(s)")
+    except Exception as exc:
+        results[key] = f"error: {exc}"
+        print(f"Retention on {key} FAILED: {exc}")
+
+conn.close()
+
+print("\\n==== Summary ====")
+print(json.dumps(results, indent=2, default=str))
+
+if any(isinstance(v, str) and v.startswith("error:") for v in results.values()):
+    dbutils.notebook.exit(json.dumps({"status": "partial_failure", "results": results}))
+else:
+    dbutils.notebook.exit(json.dumps({"status": "ok", "results": results}))
+"""
 
 # Workspace path where the notebook is uploaded (under the running user's home).
 _WS_SUBDIR = "iot-digital-twin/lakets"
@@ -25,15 +112,9 @@ _WS_FILENAME = "retention"  # no extension — Databricks infers from import for
 _DEFAULT_CRON = "0 0 3 * * ?"
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
 def _notebook_source_bytes() -> bytes:
-    path = _repo_root() / _NOTEBOOK_REL_PATH
-    if not path.exists():
-        raise FileNotFoundError(f"Retention notebook not found at {path}")
-    return path.read_bytes()
+    """Return the inlined retention-notebook source as raw bytes."""
+    return _RETENTION_NOTEBOOK_SOURCE
 
 
 def _job_display_name(project_id: str, branch_id: str) -> str:
