@@ -235,13 +235,13 @@ class TestToDict:
 class TestCreateDefaultSources:
     """Verify the factory function for built-in sources."""
 
-    def test_returns_four_sources(self) -> None:
+    def test_returns_three_sources(self) -> None:
         sources = create_default_sources()
-        assert len(sources) == 4
+        assert len(sources) == 3
 
     def test_keys_match_expected_names(self) -> None:
         sources = create_default_sources()
-        assert set(sources.keys()) == {"websocket", "lakebase", "zerobus", "sss"}
+        assert set(sources.keys()) == {"websocket", "zerobus", "sss"}
 
     def test_each_value_is_source_metrics(self) -> None:
         sources = create_default_sources()

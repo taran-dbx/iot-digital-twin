@@ -83,29 +83,6 @@ async def run_simulator(state: AppState) -> None:
 
     sources = state.sources
 
-    # --- Lakebase sink ---
-    lakebase_sink = None
-    if state.db_available:
-        try:
-            from sinks.lakebase_sink import LakebaseSink
-
-            lakebase_sink = LakebaseSink(rate_hz=1.0, batch_size=50)
-            await lakebase_sink.connect()
-            sim.add_sink(lakebase_sink)
-            sources["lakebase"].sink_config = lakebase_sink.sink_config
-            sources["lakebase"]._sink_runner = sim._runners[-1]
-            sources["lakebase"].status = "active"
-            logger.info("LakebaseSink enabled and connected")
-        except Exception as exc:
-            sources["lakebase"].status = "error"
-            sources["lakebase"].error = str(exc)[:200]
-            logger.warning("LakebaseSink failed: %s\n%s", exc, traceback.format_exc())
-            lakebase_sink = None
-    else:
-        sources["lakebase"].status = "inactive"
-        sources["lakebase"].error = "Database not available (PGHOST not set or connection failed)"
-        logger.info("LakebaseSink disabled — database not available")
-
     # --- Zerobus sink ---
     zerobus_sink = None
     zerobus_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT")
@@ -160,34 +137,6 @@ async def run_simulator(state: AppState) -> None:
     # --- SSS ---
     sources["sss"].status = "waiting"
     sources["sss"].error = "Waiting for SSS job to connect via /api/sss/ingest"
-
-    # --- Latency-tracking wrapper for Lakebase sink ---
-    if lakebase_sink is not None:
-        original_lakebase_write = lakebase_sink.write
-
-        async def tracked_lakebase_write(records):
-            t0 = time.time()
-            try:
-                await original_lakebase_write(records)
-                now = time.time()
-                write_ms = (now - t0) * 1000
-                avg_ts = sum(r.timestamp for r in records) / len(records)
-                e2e_ms = (now - avg_ts) * 1000
-                sources["lakebase"].record_write(len(records), write_ms, e2e_ms)
-                sensor_dicts = _records_to_dicts(records, "lakebase")
-                if sensor_dicts:
-                    await broadcast(state, {
-                        "type": "sensor_update",
-                        "source": "lakebase",
-                        "sensors": sensor_dicts,
-                        "write_latency_ms": round(write_ms, 1),
-                        "e2e_latency_ms": round(e2e_ms, 1),
-                    })
-            except Exception as exc:
-                sources["lakebase"].status = "error"
-                sources["lakebase"].error = str(exc)[:200]
-
-        lakebase_sink.write = tracked_lakebase_write  # type: ignore[assignment]
 
     # --- Latency-tracking wrapper for Zerobus sink (with reconnect) ---
     if zerobus_sink is not None:

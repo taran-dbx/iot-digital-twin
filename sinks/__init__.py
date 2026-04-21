@@ -1,3 +1,8 @@
-from sinks.lakebase_sink import LakebaseSink
+"""Legacy sinks package.
 
-__all__ = ["LakebaseSink"]
+The in-app LakebaseSink was removed — per-pipeline Lakebase writes now flow
+through the Spark Structured Streaming consumer (``notebooks/sss_rtm_job.py``),
+driven by producer notebooks generated for each pipeline's configured source.
+"""
+
+__all__: list[str] = []

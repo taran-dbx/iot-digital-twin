@@ -29,4 +29,7 @@ screenshots/
 notebooks/
 capture_screenshots.py
 client/
-static/dist/
+# NOTE: static/dist/ is NOT gitignored — databricks sync honours gitignore
+# patterns, so excluding it here means the frontend bundle never reaches the
+# deployed app.  Keep untracked in git via individual file ignores if needed,
+# but do not add the directory to gitignore.
