@@ -329,7 +329,7 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
                 parent=parent,
                 endpoint=Endpoint(
                     spec=EndpointSpec(
-                        endpoint_type=EndpointType.READ_WRITE,
+                        endpoint_type=EndpointType.ENDPOINT_TYPE_READ_WRITE,
                         autoscaling_limit_min_cu=0.5,
                         autoscaling_limit_max_cu=2.0,
                     ),
