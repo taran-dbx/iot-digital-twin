@@ -321,11 +321,28 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
     return results
 
 
+def _is_permission_error(exc: Exception) -> bool:
+    """Return True when an SDK exception is the Lakebase project-admin gate."""
+    s = str(exc).lower()
+    return (
+        "not authorized" in s
+        or "permission denied" in s
+        or "unauthorized" in s
+        or "permission_denied" in s
+        or "forbidden" in s
+    )
+
+
 async def provision_lakebase_role(
     project_id: str, branch_id: str, password: str, database: str = "databricks_postgres"
 ) -> list[dict]:
     """Create a password-authenticated Postgres role in Lakebase, set its password,
-    and grant full privileges on the target database and public schema."""
+    and grant full privileges on the target database and public schema.
+
+    When the calling identity lacks Lakebase project-admin (typical for a
+    deployed Databricks App running as its own SP), the role creation is
+    skipped gracefully — autoscale OAuth already provides the runtime
+    credential via ``LAKEBASE_ENDPOINT`` so this named role is redundant."""
     results: list[dict] = []
     role_name = LAKEBASE_ROLE_NAME
 
@@ -345,6 +362,14 @@ async def provision_lakebase_role(
         err_str = str(e).lower()
         if "not_found" in err_str or "not found" in err_str or "does not exist" in err_str:
             role_exists = False
+        elif _is_permission_error(e):
+            results.append({
+                "resource": f"Postgres role '{role_name}'",
+                "status": "skipped",
+                "error": "Runtime identity lacks Lakebase project-admin. "
+                         "Autoscale OAuth is used instead — this named role is not required.",
+            })
+            return results
         else:
             results.append({"resource": f"Postgres role '{role_name}'", "status": "failed", "error": str(e)[:200]})
             return results
@@ -365,6 +390,14 @@ async def provision_lakebase_role(
         except Exception as exc:
             if "already exists" in str(exc).lower():
                 results.append({"resource": f"Postgres role '{role_name}'", "status": "already_exists"})
+            elif _is_permission_error(exc):
+                results.append({
+                    "resource": f"Postgres role '{role_name}'",
+                    "status": "skipped",
+                    "error": "Runtime identity lacks Lakebase project-admin. "
+                             "Autoscale OAuth is used instead — this named role is not required.",
+                })
+                return results
             else:
                 results.append({"resource": f"Postgres role '{role_name}'", "status": "failed", "error": str(exc)[:200]})
                 return results
