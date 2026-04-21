@@ -14,3 +14,13 @@ iot_data_simulator*.whl
 .DS_Store
 node_modules/
 .databricks/
+.databricks-resources.json
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.vscode/
+.idea/
+.superpowers/
+.claude-terminal
+docs/superpowers/

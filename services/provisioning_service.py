@@ -247,7 +247,7 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
-    from databricks.sdk.service.postgres import Project, Branch
+    from databricks.sdk.service.postgres import Project, Branch, BranchSpec
     w = WorkspaceClient()
 
     # Step 1: Check if project exists
@@ -294,9 +294,12 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
     # Step 4: Create branch if needed
     if not branch_exists:
         try:
+            # ``no_expiry=True`` is required by newer Lakebase API versions —
+            # otherwise "Expiration must be specified when creating a branch".
+            # Lives inside BranchSpec, not on Branch itself.
             w.postgres.create_branch(
                 parent=f"projects/{project_id}",
-                branch=Branch(),
+                branch=Branch(spec=BranchSpec(no_expiry=True)),
                 branch_id=branch_id,
             )
             results.append({"resource": f"Lakebase branch '{branch_id}'", "status": "created"})
