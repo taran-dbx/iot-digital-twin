@@ -139,10 +139,7 @@ def deploy_retention_job(
     from databricks.sdk import WorkspaceClient
     from databricks.sdk.service import jobs as dj
     from databricks.sdk.service import workspace as dw
-    from databricks.sdk.service.compute import (
-        DataSecurityMode,
-        ClusterSpec,
-    )
+    from databricks.sdk.service.compute import Environment
 
     w = WorkspaceClient()
     user = w.current_user.me()
@@ -175,7 +172,12 @@ def deploy_retention_job(
             existing_job_id = j.job_id
             break
 
-    # ── 4. Build job settings (shared between create + reset) ─────────────
+    # ── 4. Build job settings (serverless + performance-optimized) ───────
+    # Notebook task references the job-level serverless environment via
+    # environment_key.  No new_cluster — compute is provisioned by the
+    # serverless job runtime, and the job-level performance_target pins it
+    # to PERFORMANCE_OPTIMIZED for fast startup (daily cron, short runs).
+    env_key = "lakets_serverless"
     task = dj.Task(
         task_key="lakets_retention",
         notebook_task=dj.NotebookTask(
@@ -187,24 +189,23 @@ def deploy_retention_job(
                 "database": database,
             },
         ),
-        new_cluster=ClusterSpec(
-            spark_version="15.4.x-scala2.12",
-            node_type_id="m5d.xlarge",
-            num_workers=0,
-            spark_conf={
-                "spark.databricks.cluster.profile": "singleNode",
-                "spark.master": "local[*]",
-            },
-            custom_tags={"ResourceClass": "SingleNode"},
-            data_security_mode=DataSecurityMode.SINGLE_USER,
-            single_user_name=user_email,
-        ),
+        environment_key=env_key,
         timeout_seconds=600,
     )
 
     job_settings = dj.JobSettings(
         name=job_name,
         tasks=[task],
+        environments=[
+            dj.JobEnvironment(
+                environment_key=env_key,
+                spec=Environment(
+                    client="2",
+                    dependencies=["psycopg2-binary", "databricks-sdk"],
+                ),
+            ),
+        ],
+        performance_target=dj.PerformanceTarget.PERFORMANCE_OPTIMIZED,
         schedule=dj.CronSchedule(
             quartz_cron_expression=schedule_cron,
             timezone_id=timezone,
@@ -227,6 +228,8 @@ def deploy_retention_job(
         created = w.jobs.create(
             name=job_settings.name,
             tasks=job_settings.tasks,
+            environments=job_settings.environments,
+            performance_target=job_settings.performance_target,
             schedule=job_settings.schedule,
             max_concurrent_runs=job_settings.max_concurrent_runs,
             tags=job_settings.tags,

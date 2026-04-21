@@ -310,12 +310,49 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
                 results.append({"resource": f"Lakebase branch '{branch_id}'", "status": "failed", "error": str(exc)[:200]})
                 return results
 
-    # Step 5: Wait for endpoint to be available (up to 90s)
-    if not branch_exists or not project_exists:
-        for attempt in range(18):  # 18 * 5s = 90s
+    # Step 5: Ensure a primary read-write endpoint exists on the branch.
+    # Project creation auto-creates a `production` branch with a `primary`
+    # endpoint, but creating a branch on an existing project does NOT.
+    try:
+        endpoints = list(w.postgres.list_endpoints(parent=parent))
+    except Exception:
+        endpoints = []
+
+    if not endpoints:
+        try:
+            from databricks.sdk.service.postgres import (
+                Endpoint,
+                EndpointSpec,
+                EndpointType,
+            )
+            w.postgres.create_endpoint(
+                parent=parent,
+                endpoint=Endpoint(
+                    spec=EndpointSpec(
+                        endpoint_type=EndpointType.READ_WRITE,
+                        autoscaling_limit_min_cu=0.5,
+                        autoscaling_limit_max_cu=2.0,
+                    ),
+                ),
+                endpoint_id="primary",
+            )
+            results.append({"resource": f"Lakebase endpoint 'primary'", "status": "created"})
+        except Exception as exc:
+            if "already exists" in str(exc).lower():
+                results.append({"resource": f"Lakebase endpoint 'primary'", "status": "already_exists"})
+            else:
+                results.append({
+                    "resource": f"Lakebase endpoint 'primary'",
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                })
+
+    # Step 6: Wait for endpoint to be ACTIVE (up to 90s)
+    if not branch_exists or not project_exists or not endpoints:
+        for _ in range(18):  # 18 * 5s = 90s
             try:
-                endpoints = list(w.postgres.list_endpoints(parent=parent))
-                if endpoints:
+                current = list(w.postgres.list_endpoints(parent=parent))
+                if current:
                     break
             except Exception:
                 pass
