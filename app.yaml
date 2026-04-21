@@ -4,27 +4,35 @@ command:
   - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
 
 env:
+  # ── App backend Lakebase (stores pipelines + user_settings) ──
   - name: PGHOST
-    value: "ep-ancient-dust-d1ch7tek.database.us-west-2.cloud.databricks.com"
+    value: "ep-young-pine-d3cm83xf.database.eu-west-1.cloud.databricks.com"
   - name: PGDATABASE
     value: "databricks_postgres"
   - name: PGPORT
     value: "5432"
   - name: LAKEBASE_ENDPOINT
     value: "projects/iot-digital-twin/branches/production/endpoints/primary"
+
+  # ── Zerobus (not configured on e2-demo-emea; Zerobus sink will no-op) ──
   - name: ZEROBUS_SERVER_ENDPOINT
-    value: "7474649530865514.zerobus.us-west-2.cloud.databricks.com"
+    value: ""
   - name: ZEROBUS_TABLE_NAME
-    value: "taran_explore.iot_simulator.iot_sensor_data"
+    value: ""
   - name: ZEROBUS_CLIENT_ID
-    value: "182192cb-5feb-40f0-82a0-6e02067019f6"
+    value: ""
   - name: ZEROBUS_SECRET_SCOPE
-    value: "iot-digital-twin"
+    value: ""
   - name: ZEROBUS_SECRET_KEY
-    value: "zerobus-client-secret"
+    value: ""
+
+  # ── Unity Catalog managed storage (metastore storage_root, eu-west-1) ──
   - name: UC_STORAGE_ROOT
-    value: "s3://rtm-msk-demo-ext-s3-332745928618-p7zdpf"
+    value: "s3://databricks-uc-e2-demo-emea-ireland/155e600b-57c2-43e2-a38c-fb7a40bfb81e"
+
   - name: INDUSTRIES
     value: "pharmaceutical"
+
+  # ── LakeTS source for per-pipeline tiering ──
   - name: LAKETS_GIT_URL
     value: "https://github.com/taranpreetsingh-grover_data/LakeTS.git"
