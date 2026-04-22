@@ -286,12 +286,16 @@ async def validate_on_cluster(cluster_id: str, request: Request, user_email: str
         ).result()
         context_id = ctx.id
 
+        # Kafka/Kinesis setup + 20 s batch wait inside the validation block
+        # regularly runs past 60 s.  Allow a generous 5 min default and
+        # accept a caller-provided ``validation_timeout_sec`` for tuning.
+        validation_timeout_sec = int(body.get("validation_timeout_sec", 300))
         result = w.command_execution.execute(
             cluster_id=cluster_id,
             context_id=context_id,
             language=CmdLanguage.PYTHON,
             command=validation_content,
-        ).result(timeout=timedelta(seconds=60))
+        ).result(timeout=timedelta(seconds=validation_timeout_sec))
 
         status = result.status.value if result.status else "UNKNOWN"
         output = ""
