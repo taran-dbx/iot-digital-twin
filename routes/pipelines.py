@@ -428,6 +428,83 @@ async def clone_pipeline(
     return pipeline_row_to_dict(row)
 
 
+@router.get("/api/pipelines/{pipeline_id}/lakebase-health")
+async def get_lakebase_health(
+    pipeline_id: str,
+    state: AppState = Depends(get_app_state),
+):
+    """Return Lakebase sink health signals for the dashboard observability card.
+
+    Queries ``sensor_readings`` on the app's Lakebase pool to expose:
+    - ``rows_5m``: row count inserted in the last 5 minutes.
+    - ``latest_at``: ISO timestamp of the most recent ``event_time`` (or null).
+    - ``latency_sec``: seconds between now and ``latest_at`` (or null).
+    - ``inserts_per_sec_recent``: ``rows_5m / 300`` rounded to 2 dp.
+
+    On DB error the same shape is returned with zeroes plus an ``error`` key so
+    the client never has to special-case a transport failure.
+    """
+    # TODO: scope by pipeline_id once source_bindings tracks it
+    default_payload: dict[str, Any] = {
+        "rows_5m": 0,
+        "latest_at": None,
+        "latency_sec": None,
+        "inserts_per_sec_recent": 0.0,
+    }
+
+    if not state.db_available or not state.db:
+        return {**default_payload, "error": "Database not configured"}
+
+    try:
+        row = await state.db.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS rows_5m,
+                MAX(event_time) AS latest_at,
+                CASE
+                    WHEN MAX(event_time) IS NOT NULL
+                        THEN EXTRACT(EPOCH FROM NOW() - MAX(event_time))
+                    ELSE NULL
+                END AS latency_sec
+            FROM sensor_readings
+            WHERE event_time > NOW() - INTERVAL '5 minutes'
+            """
+        )
+    except Exception as exc:
+        logger.warning("lakebase-health query failed for pipeline %s: %s", pipeline_id, exc)
+        return {**default_payload, "error": str(exc)}
+
+    if not row:
+        return default_payload
+
+    rows_5m = int(row["rows_5m"] or 0)
+    latest_at_raw = row["latest_at"]
+    latency_raw = row["latency_sec"]
+
+    latest_at_iso: str | None = None
+    if latest_at_raw is not None:
+        try:
+            latest_at_iso = latest_at_raw.isoformat()
+        except AttributeError:
+            latest_at_iso = str(latest_at_raw)
+
+    latency_sec: float | None = None
+    if latency_raw is not None:
+        try:
+            latency_sec = round(float(latency_raw), 2)
+        except (TypeError, ValueError):
+            latency_sec = None
+
+    inserts_per_sec_recent = round(rows_5m / 300.0, 2)
+
+    return {
+        "rows_5m": rows_5m,
+        "latest_at": latest_at_iso,
+        "latency_sec": latency_sec,
+        "inserts_per_sec_recent": inserts_per_sec_recent,
+    }
+
+
 @router.get("/api/pipeline/{pipeline_id}/history")
 async def pipeline_history(
     pipeline_id: str,

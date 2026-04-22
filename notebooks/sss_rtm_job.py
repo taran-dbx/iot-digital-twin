@@ -156,6 +156,7 @@ class LakebaseForeachWriter:
         )
         self.cursor = self.conn.cursor()
         self.buffer = []
+        print(f"[LakebaseForeachWriter] opened partition={partition_id} epoch={epoch_id}")
         return True
 
     def process(self, row):
@@ -189,6 +190,7 @@ class LakebaseForeachWriter:
             template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'sss')",
         )
         self.conn.commit()
+        print(f"[LakebaseForeachWriter] wrote {len(self.buffer)} rows")
         self.buffer.clear()
 
     def close(self, error):

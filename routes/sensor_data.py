@@ -354,6 +354,216 @@ async def get_pipeline_stats(
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+async def _probe_lakets_available(state: AppState) -> bool:
+    """Probe ``lakets._version`` — return True when LakeTS is installed.
+
+    Returns False on any failure (missing schema, permissions, etc.) so the
+    caller can gracefully surface ``LakeTS not installed`` in the response.
+    """
+    if not state.db_available or not state.db:
+        return False
+    try:
+        version = await state.db.fetchval(
+            "SELECT version FROM lakets._version ORDER BY installed_at DESC LIMIT 1"
+        )
+        return bool(version)
+    except Exception as exc:  # pragma: no cover — surfaced via reason field
+        logger.debug("lakets._version probe failed: %s", exc)
+        return False
+
+
+@router.get("/api/pipelines/{pipeline_id}/lakets/gapfill")
+async def get_lakets_gapfill(
+    pipeline_id: str,
+    minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
+    state: AppState = Depends(get_app_state),
+):
+    """Return 1-minute gap-filled average values per sensor via LakeTS.
+
+    Uses ``lakets.time_bucket`` to bucket raw readings, then ``lakets.locf``
+    inside a window (``LAG`` over partition) so missing buckets carry the
+    previous value forward — a continuous line even when a sensor stops
+    reporting for a few seconds.
+    """
+    if not await _probe_lakets_available(state):
+        return {"rows": [], "reason": "LakeTS not installed"}
+
+    try:
+        rows = await state.db.fetch(
+            """
+            WITH base AS (
+                SELECT lakets.time_bucket('1 minute'::interval, event_time) AS bucket,
+                       sensor_name,
+                       AVG(value) AS avg_value
+                FROM sensor_readings
+                WHERE event_time > NOW() - make_interval(mins => $1)
+                GROUP BY bucket, sensor_name
+            )
+            SELECT bucket,
+                   sensor_name,
+                   lakets.locf(
+                       avg_value,
+                       LAG(avg_value) OVER (
+                           PARTITION BY sensor_name ORDER BY bucket
+                       )
+                   ) AS value
+            FROM base
+            ORDER BY bucket ASC
+            LIMIT 5000
+            """,
+            minutes,
+        )
+    except Exception as exc:
+        logger.warning("LakeTS gapfill query failed for pipeline %s: %s", pipeline_id, exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    data = [
+        {
+            "bucket": str(r["bucket"]) if r["bucket"] is not None else None,
+            "sensor_name": r["sensor_name"],
+            "value": float(r["value"]) if r["value"] is not None else None,
+        }
+        for r in rows
+    ]
+    return {"rows": data, "resolution": "1 min", "minutes": minutes}
+
+
+@router.get("/api/pipelines/{pipeline_id}/lakets/rate")
+async def get_lakets_rate(
+    pipeline_id: str,
+    minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
+    state: AppState = Depends(get_app_state),
+):
+    """Return per-minute value rate-of-change per sensor via ``lakets.rate``.
+
+    Buckets raw readings with ``lakets.time_bucket``, then invokes
+    ``lakets.rate`` with the current bucket value and a ``LAG`` of the previous
+    bucket value / timestamp to compute per-second change.
+    """
+    if not await _probe_lakets_available(state):
+        return {"rows": [], "reason": "LakeTS not installed"}
+
+    try:
+        rows = await state.db.fetch(
+            """
+            WITH base AS (
+                SELECT lakets.time_bucket('1 minute'::interval, event_time) AS bucket,
+                       sensor_name,
+                       AVG(value) AS avg_value
+                FROM sensor_readings
+                WHERE event_time > NOW() - make_interval(mins => $1)
+                GROUP BY bucket, sensor_name
+            )
+            SELECT bucket,
+                   sensor_name,
+                   lakets.rate(
+                       avg_value,
+                       LAG(avg_value) OVER (
+                           PARTITION BY sensor_name ORDER BY bucket
+                       ),
+                       bucket,
+                       LAG(bucket) OVER (
+                           PARTITION BY sensor_name ORDER BY bucket
+                       )
+                   ) AS value
+            FROM base
+            ORDER BY bucket ASC
+            LIMIT 5000
+            """,
+            minutes,
+        )
+    except Exception as exc:
+        logger.warning("LakeTS rate query failed for pipeline %s: %s", pipeline_id, exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    data = [
+        {
+            "bucket": str(r["bucket"]) if r["bucket"] is not None else None,
+            "sensor_name": r["sensor_name"],
+            "value": float(r["value"]) if r["value"] is not None else None,
+        }
+        for r in rows
+    ]
+    return {"rows": data, "resolution": "1 min", "minutes": minutes}
+
+
+@router.get("/api/pipelines/{pipeline_id}/lakets/histogram")
+async def get_lakets_histogram(
+    pipeline_id: str,
+    sensor: str = Query(..., description="Sensor name to compute the distribution for"),
+    minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
+    buckets: int = Query(20, ge=2, le=200, description="Number of histogram buckets"),
+    state: AppState = Depends(get_app_state),
+):
+    """Return a value-distribution histogram for a given sensor via LakeTS.
+
+    Uses ``lakets.histogram(value, min, max, num_buckets)`` to assign each
+    reading to a bucket index, then aggregates counts + emits each bucket's
+    lower/upper numeric bounds.
+    """
+    if not await _probe_lakets_available(state):
+        return {"rows": [], "reason": "LakeTS not installed"}
+
+    try:
+        rows = await state.db.fetch(
+            """
+            WITH bounds AS (
+                SELECT MIN(value) AS min_v, MAX(value) AS max_v
+                FROM sensor_readings
+                WHERE sensor_name = $1
+                  AND event_time > NOW() - make_interval(mins => $2)
+            ),
+            bucketed AS (
+                SELECT lakets.histogram(
+                           r.value,
+                           b.min_v,
+                           b.max_v,
+                           $3::int
+                       ) AS bucket_idx,
+                       b.min_v,
+                       b.max_v
+                FROM sensor_readings r
+                CROSS JOIN bounds b
+                WHERE r.sensor_name = $1
+                  AND r.event_time > NOW() - make_interval(mins => $2)
+                  AND b.min_v IS NOT NULL
+                  AND b.max_v IS NOT NULL
+            )
+            SELECT bucket_idx,
+                   MIN(min_v) AS min_v,
+                   MIN(max_v) AS max_v,
+                   COUNT(*) AS cnt
+            FROM bucketed
+            WHERE bucket_idx IS NOT NULL
+            GROUP BY bucket_idx
+            ORDER BY bucket_idx ASC
+            """,
+            sensor,
+            minutes,
+            buckets,
+        )
+    except Exception as exc:
+        logger.warning("LakeTS histogram query failed for pipeline %s: %s", pipeline_id, exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    data: list[dict[str, Any]] = []
+    for r in rows:
+        min_v = float(r["min_v"]) if r["min_v"] is not None else 0.0
+        max_v = float(r["max_v"]) if r["max_v"] is not None else 0.0
+        width = (max_v - min_v) / buckets if buckets else 0.0
+        bucket_idx = int(r["bucket_idx"])
+        lower = min_v + width * bucket_idx
+        upper = min_v + width * (bucket_idx + 1)
+        data.append({
+            "bucket_idx": bucket_idx,
+            "lower": round(lower, 4),
+            "upper": round(upper, 4),
+            "count": int(r["cnt"] or 0),
+        })
+
+    return {"rows": data, "resolution": "1 min", "minutes": minutes}
+
+
 @router.get("/api/pipeline/{pipeline_id}/streaming-metrics")
 async def get_streaming_metrics(
     pipeline_id: str,
