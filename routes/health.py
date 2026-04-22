@@ -32,6 +32,17 @@ async def app_defaults():
     NOTE: Only non-secret values are returned. The client_secret is indicated
     as present/absent but never exposed.
     """
+    # Parse the app's Lakebase endpoint so the wizard can pre-populate new
+    # pipelines with the same project (ops can override per pipeline).
+    # Format: "projects/<project_id>/branches/<branch_id>/endpoints/<endpoint_id>"
+    lakebase_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
+    lakebase_project_id = ""
+    lakebase_branch_id = ""
+    parts = lakebase_endpoint.split("/")
+    if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "branches":
+        lakebase_project_id = parts[1]
+        lakebase_branch_id = parts[3]
+
     return {
         "zerobus_endpoint": os.getenv("ZEROBUS_SERVER_ENDPOINT", ""),
         "zerobus_client_id": os.getenv("ZEROBUS_CLIENT_ID", ""),
@@ -40,6 +51,10 @@ async def app_defaults():
             or (os.getenv("ZEROBUS_SECRET_SCOPE") and os.getenv("ZEROBUS_SECRET_KEY"))
         ),
         "workspace_url": os.getenv("DATABRICKS_HOST", ""),
+        "lakebase_endpoint": lakebase_endpoint,
+        "lakebase_project_id": lakebase_project_id,
+        "lakebase_branch_id": lakebase_branch_id,
+        "lakebase_database": os.getenv("PGDATABASE", ""),
     }
 
 
