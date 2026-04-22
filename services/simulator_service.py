@@ -191,45 +191,11 @@ async def run_simulator(state: AppState) -> None:
 
         zerobus_sink.write = tracked_zerobus_write  # type: ignore[assignment]
 
-    # --- WebSocket callback sink (always active) ---
-    async def ws_callback(records):
-        try:
-            t0 = time.time()
-            latest_by_sensor: dict[str, dict] = {}
-            for r in records:
-                latest_by_sensor[r.sensor_name] = {
-                    "sensor_name": r.sensor_name,
-                    "industry": r.industry,
-                    "value": round(r.value, 3),
-                    "unit": r.unit,
-                    "sensor_type": r.sensor_type,
-                    "timestamp": r.timestamp,
-                    "fault_active": r.fault_active,
-                    "source": "websocket",
-                }
-            now = time.time()
-            write_ms = (now - t0) * 1000
-            avg_ts = sum(r.timestamp for r in records) / len(records)
-            e2e_ms = (now - avg_ts) * 1000
-            if latest_by_sensor:
-                await broadcast(state, {
-                    "type": "sensor_update",
-                    "source": "websocket",
-                    "sensors": list(latest_by_sensor.values()),
-                    "write_latency_ms": round(write_ms, 1),
-                    "e2e_latency_ms": round(e2e_ms, 1),
-                })
-            sources["websocket"].record_write(len(records), write_ms, e2e_ms)
-        except Exception as exc:
-            logger.warning("ws_callback error: %s", exc)
-
-    from iot_simulator.sinks.callback import CallbackSink
-
-    ws_sink = CallbackSink(ws_callback, rate_hz=2.0, batch_size=50)
-    sim.add_sink(ws_sink)
-    sources["websocket"].sink_config = ws_sink.sink_config
-    sources["websocket"]._sink_runner = sim._runners[-1]
-    sources["websocket"].status = "active"
+    # NOTE: the legacy in-app WebSocket CallbackSink used to generate synthetic
+    # sensor data and push it over SSE, which made the dashboard look alive even
+    # when no Spark job was running.  Per-pipeline architecture: only a pipeline's
+    # deployed SSS job (via /api/sss/ingest) should feed SSE.  The callback sink
+    # was removed along with LakebaseSink; see project_lakebase_two_roles memory.
 
     # --- Periodic source-status broadcast ---
     async def broadcast_source_status():

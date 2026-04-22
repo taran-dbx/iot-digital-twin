@@ -58,18 +58,15 @@ class TestAppStateDefaults:
 class TestAppStateSources:
     """Verify the default sources dict is populated correctly."""
 
-    def test_sources_has_three_entries(self) -> None:
+    def test_sources_has_two_entries(self) -> None:
         state = AppState()
-        assert len(state.sources) == 3
+        assert len(state.sources) == 2
 
-    def test_sources_contains_websocket(self) -> None:
+    def test_sources_omits_in_app_sinks(self) -> None:
+        # Neither the legacy in-app WebSocket simulator nor Lakebase are
+        # listed — both only populate via per-pipeline SSS/producer jobs.
         state = AppState()
-        assert "websocket" in state.sources
-
-    def test_sources_omits_lakebase(self) -> None:
-        # Lakebase is a per-pipeline sink populated by Spark Streaming,
-        # not an in-app source that the simulator writes to.
-        state = AppState()
+        assert "websocket" not in state.sources
         assert "lakebase" not in state.sources
 
     def test_sources_contains_zerobus(self) -> None:

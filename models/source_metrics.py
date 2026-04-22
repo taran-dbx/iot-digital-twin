@@ -118,14 +118,14 @@ class SourceMetrics:
 
 
 def create_default_sources() -> dict[str, SourceMetrics]:
-    """Factory for the three built-in data sources.
+    """Factory for the two built-in data sources.
 
-    Lakebase is *not* an in-app sink.  It is a per-pipeline sink configured
-    via the wizard and populated by Spark Structured Streaming; the app only
-    reads from it.
+    Neither Lakebase nor the legacy in-app WebSocket simulator are listed here
+    anymore — data arrives exclusively from per-pipeline jobs:
+      * ``sss`` — Spark Structured Streaming consumer (/api/sss/ingest)
+      * ``zerobus`` — Zerobus Delta ingest (optional)
     """
     return {
-        "websocket": SourceMetrics("websocket", "WebSocket (Real-time)"),
         "zerobus": SourceMetrics("zerobus", "Zerobus (Delta Ingest)"),
         "sss": SourceMetrics("sss", "Spark Structured Streaming"),
     }
