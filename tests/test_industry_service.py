@@ -49,6 +49,7 @@ def test_get_catalog_reconciles_legacy_pharma_demo_pipeline(monkeypatch):
     async def fake_list(_state):
         return [
             {
+                "id": "11111111-1111-1111-1111-111111111111",
                 "name": "Demo",
                 "status": "step2_complete",
                 "industry": "pharmaceutical",
@@ -63,6 +64,12 @@ def test_get_catalog_reconciles_legacy_pharma_demo_pipeline(monkeypatch):
     rt = next(m for m in pharma["modes"] if m["id"] == "realtime")
     assert rt["status"] == "running"
     assert pharma["running_count"] >= 1
+    # The reconciled row's id should be threaded through so admins can
+    # deep-link to it (e.g. from an "Edit configuration" action).
+    assert rt["pipeline_id"] == "11111111-1111-1111-1111-111111111111"
+    # Modes with no matched pipeline row at all report pipeline_id: None.
+    mb = next(m for m in pharma["modes"] if m["id"] == "microbatch")
+    assert mb["pipeline_id"] is None
 
 
 def test_get_catalog_reconciles_legacy_zerobus_pipeline(monkeypatch):
@@ -113,3 +120,84 @@ def test_get_catalog_exact_name_match_still_wins(monkeypatch):
     mb = next(m for m in energy["modes"] if m["id"] == "microbatch")
     assert mb["status"] == "running"
     assert energy["running_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# resolve_pipeline_for_mode — the shared matching helper get_catalog and the
+# stopped-only config endpoint (routes/industries.py) both use.
+# ---------------------------------------------------------------------------
+def test_resolve_pipeline_for_mode_exact_name_match(monkeypatch):
+    async def fake_list(_state):
+        return [{"id": "pid-1", "name": "iot-energy-microbatch", "status": "running"}]
+
+    monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
+    row = asyncio.get_event_loop().run_until_complete(
+        isvc.resolve_pipeline_for_mode(None, "energy", "microbatch")
+    )
+    assert row is not None
+    assert row["id"] == "pid-1"
+
+
+def test_resolve_pipeline_for_mode_reconciled_legacy_row(monkeypatch):
+    async def fake_list(_state):
+        return [
+            {
+                "id": "pid-2",
+                "name": "Demo",
+                "status": "step2_complete",
+                "industry": "pharmaceutical",
+                "source_type": "sss",
+                "source_config": {"rtm_sink": "lakebase"},
+            }
+        ]
+
+    monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
+    row = asyncio.get_event_loop().run_until_complete(
+        isvc.resolve_pipeline_for_mode(None, "pharmaceutical", "realtime")
+    )
+    assert row is not None
+    assert row["id"] == "pid-2"
+
+
+def test_resolve_pipeline_for_mode_no_match_returns_none(monkeypatch):
+    async def fake_list(_state):
+        return []
+
+    monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
+    row = asyncio.get_event_loop().run_until_complete(
+        isvc.resolve_pipeline_for_mode(None, "energy", "microbatch")
+    )
+    assert row is None
+
+
+# ---------------------------------------------------------------------------
+# update_pipeline_config — merges a patch into a pipeline row's source_config
+# JSONB by id, reusing the same COALESCE(...) || $n::jsonb merge technique
+# routes/pipelines.py::update_pipeline already uses.
+# ---------------------------------------------------------------------------
+def test_update_pipeline_config_merges_and_returns_source_config():
+    class FakeDb:
+        async def fetchrow(self, query, *args):
+            assert "source_config" in query
+            assert "COALESCE" in query
+            return {"source_config": {"rate_hz": 5, "capture_metrics": True}}
+
+    class FakeState:
+        db_available = True
+        db = FakeDb()
+
+    merged = asyncio.get_event_loop().run_until_complete(
+        isvc.update_pipeline_config(FakeState(), "pid-1", {"rate_hz": 5, "capture_metrics": True})
+    )
+    assert merged == {"rate_hz": 5, "capture_metrics": True}
+
+
+def test_update_pipeline_config_no_db_returns_empty_dict():
+    class FakeState:
+        db_available = False
+        db = None
+
+    merged = asyncio.get_event_loop().run_until_complete(
+        isvc.update_pipeline_config(FakeState(), "pid-1", {"rate_hz": 5})
+    )
+    assert merged == {}

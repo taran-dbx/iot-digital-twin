@@ -166,30 +166,105 @@ def _mode_status(row: dict[str, Any] | None) -> str:
 _RECONCILE_DEPLOYED_STATES = {"step2_complete", "running"}
 
 
+def _all_deterministic_names() -> set[str]:
+    """Every curated ``(industry, mode)`` slot's deterministic pipeline name."""
+    return {pipeline_name(industry, mode) for industry in CURATED_INDUSTRIES for mode in MODES}
+
+
+async def resolve_pipeline_for_mode(
+    state: AppState,
+    industry: str,
+    mode: str,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Resolve the pipeline row (if any) provisioned for a curated ``(industry,
+    mode)`` slot — the single source of matching truth ``get_catalog`` (the
+    gallery/setup status view) and the stopped-only config endpoint
+    (``routes/industries.py``) both rely on, so the two never drift apart.
+
+    Two passes, mirroring ``get_catalog``'s original two-pass algorithm:
+    1. Exact deterministic-name join (``iot-<industry>-<mode>``) — handles
+       every pipeline created through the new industry-catalog flow
+       (``start_mode``/``stop_mode``).
+    2. Reconciliation — a pipeline deployed before that naming convention
+       existed (e.g. one literally named ``"Demo"``) can't be found by name,
+       so any row not already claimed by *some* curated slot's exact name
+       (``_all_deterministic_names``), whose ``industry`` matches and whose
+       inferred mode (``_infer_mode``) matches, and whose status counts as
+       deployed (``_RECONCILE_DEPLOYED_STATES``), is returned instead.
+
+    ``rows`` lets ``get_catalog`` pass its already-fetched pipeline rows in
+    so building the full catalog doesn't re-query per ``(industry, mode)``
+    pair; callers resolving a single pair (e.g. the config endpoint) omit it
+    and this fetches fresh via ``_list_pipelines``.
+    """
+    if rows is None:
+        rows = await _list_pipelines(state)
+
+    name = pipeline_name(industry, mode)
+    for row in rows:
+        if row.get("name") == name:
+            return row
+
+    reserved_names = _all_deterministic_names()
+    for row in rows:
+        if row.get("name") in reserved_names:
+            continue  # already claimed by another curated slot's exact match
+        if row.get("industry") != industry:
+            continue
+        status_value = str(row.get("status") or "").lower()
+        if status_value not in _RECONCILE_DEPLOYED_STATES:
+            continue  # draft / anything else — not deployed, skip
+        if _infer_mode(row) != mode:
+            continue
+        return row
+
+    return None
+
+
+async def update_pipeline_config(
+    state: AppState, pipeline_id: str, patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge ``patch`` into a pipeline row's ``source_config`` JSONB, by id.
+
+    Reuses the exact jsonb-merge technique ``routes/pipelines.py::update_
+    pipeline`` already uses for jsonb columns (``COALESCE(source_config,
+    '{}'::jsonb) || $2::jsonb``) rather than a new hand-written UPDATE — just
+    scoped to a single column and addressed by pipeline id. Returns the
+    row's merged ``source_config`` dict (``{}`` if there's no DB or no
+    matching row).
+    """
+    if not state or not getattr(state, "db_available", False) or not getattr(state, "db", None):
+        return {}
+    row = await state.db.fetchrow(
+        "UPDATE pipelines SET source_config = COALESCE(source_config, '{}'::jsonb) || $2::jsonb, "
+        "updated_at = NOW() WHERE id = $1::uuid RETURNING source_config",
+        pipeline_id, json.dumps(patch),
+    )
+    if not row:
+        return {}
+    return _coerce_json_dict(row["source_config"])
+
+
 async def get_catalog(state: AppState) -> list[dict[str, Any]]:
     """Return one gallery entry per curated industry, with per-mode status.
 
     Each entry: ``{id, name, accent, icon, twin_type, tag, modes, running_count}``
-    where ``modes`` is ``[{id, name, to, desc, status}]`` and ``status`` is
-    one of ``"idle" | "starting" | "running"``.
+    where ``modes`` is ``[{id, name, to, desc, status, pipeline_id}]`` and
+    ``status`` is one of ``"idle" | "starting" | "running"``.
 
-    Two passes over the pipeline rows:
-    1. Exact deterministic-name join (``iot-<industry>-<mode>``) — handles
-       every pipeline created through the new industry-catalog flow
-       (``start_mode``/``stop_mode``).
-    2. Reconciliation — pipelines deployed before that naming convention
-       existed (e.g. one literally named ``"Demo"``) can't be found by name,
-       so any non-deleted, non-draft row not already matched in pass 1 is
-       checked via ``_infer_mode``: if its ``(industry, mode)`` is curated
-       and that mode is still ``"idle"``, it's promoted to ``"running"`` for
-       display. This never downgrades or overrides a status pass 1 already
-       resolved to ``"running"``/``"starting"``.
+    Per-mode matching is delegated to ``resolve_pipeline_for_mode`` (shared
+    with the config endpoint, so the two never drift apart). A row found via
+    the exact deterministic-name join reports its own lifecycle status
+    (``_mode_status``); a row found only via the reconciliation pass is
+    promoted to ``"running"`` for display regardless of its literal status
+    value (see ``resolve_pipeline_for_mode``'s docstring for why a legacy row
+    counts as deployed at all).
     """
     rows = await _list_pipelines(state)
-    rows_by_name = {row["name"]: row for row in rows if row.get("name")}
 
     catalog: list[dict[str, Any]] = []
-    matched_names: set[str] = set()
     for industry in CURATED_INDUSTRIES:
         template = get_template(industry)
         if template is None:
@@ -199,11 +274,13 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
         running_count = 0
         for mode in MODES:
             cfg = mode_config(mode)
-            name = pipeline_name(industry, mode)
-            row = rows_by_name.get(name)
-            if row is not None:
-                matched_names.add(name)
-            status = _mode_status(row)
+            row = await resolve_pipeline_for_mode(state, industry, mode, rows=rows)
+            if row is None:
+                status = "idle"
+            elif row.get("name") == pipeline_name(industry, mode):
+                status = _mode_status(row)
+            else:
+                status = "running"  # reconciled legacy row
             if status == "running":
                 running_count += 1
             modes.append(
@@ -236,32 +313,6 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
                 "running_count": running_count,
             }
         )
-
-    catalog_by_industry = {entry["id"]: entry for entry in catalog}
-    for row in rows:
-        name = row.get("name")
-        if name and name in matched_names:
-            continue  # already resolved by the exact-name join
-        status_value = str(row.get("status") or "").lower()
-        if status_value not in _RECONCILE_DEPLOYED_STATES:
-            continue  # draft / anything else — not deployed, skip
-
-        entry = catalog_by_industry.get(row.get("industry"))
-        if entry is None:
-            continue  # not a curated industry
-
-        mode = _infer_mode(row)
-        if mode not in MODES:
-            continue
-
-        mode_entry = next((m for m in entry["modes"] if m["id"] == mode), None)
-        if mode_entry is None or mode_entry["status"] != "idle":
-            continue  # never override an already-resolved running/starting
-
-        mode_entry["status"] = "running"
-        if row.get("id"):
-            mode_entry["pipeline_id"] = str(row["id"])
-        entry["running_count"] += 1
 
     return catalog
 

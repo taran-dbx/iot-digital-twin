@@ -126,39 +126,6 @@ async def get_industries_catalog(
     return {"industries": catalog, "is_admin": app_permissions.is_admin(request)}
 
 
-@router.get("/api/industries/whoami")
-async def whoami(request: Request):
-    """Diagnostic: what identity does the app resolve for the caller?
-
-    Helps verify admin resolution end-to-end (safe — returns only the
-    caller's own identity + non-sensitive header/claim key names).
-    """
-    import base64 as _b64
-    import json as _json
-
-    fwd_headers = {
-        k: request.headers.get(k)
-        for k in ("x-forwarded-email", "x-forwarded-user", "x-forwarded-preferred-username")
-    }
-    token = request.headers.get("x-forwarded-access-token")
-    claim_keys: list[str] = []
-    if token:
-        try:
-            part = token.split(".")[1]
-            part += "=" * (-len(part) % 4)
-            claim_keys = sorted(_json.loads(_b64.urlsafe_b64decode(part)).keys())
-        except Exception:
-            claim_keys = ["<decode-failed>"]
-    return {
-        "caller_email": app_permissions._caller_email(request),
-        "is_admin": app_permissions.is_admin(request),
-        "admin_emails_configured": sorted(app_permissions._admin_emails()),
-        "forwarded_headers": fwd_headers,
-        "has_forwarded_token": bool(token),
-        "token_claim_keys": claim_keys,
-    }
-
-
 def _validate_industry_mode(industry: str, mode: str) -> JSONResponse | None:
     """Return a 400 JSONResponse if ``industry``/``mode`` aren't curated, else None."""
     if industry not in CURATED_INDUSTRIES:
@@ -190,3 +157,56 @@ async def stop_industry_mode(
     if error is not None:
         return error
     return await industry_service.stop_mode(state, industry, mode)
+
+
+@router.post("/api/industries/{industry}/modes/{mode}/config")
+async def update_industry_mode_config(
+    industry: str, mode: str, request: Request, state: AppState = Depends(get_app_state)
+):
+    """Persist frequency/metrics config for a curated industry's mode.
+
+    Stopped-only: end users can tweak ``rate_hz``/``capture_metrics`` for a
+    mode once it's idle, but not while it's running/starting — the config is
+    only re-read by a (re)deployed job, so changing it live would be
+    misleading. ``capture_metrics`` has no effect for ``zerobus`` (no Spark
+    job to capture metrics from) and is ignored — not rejected — when sent
+    for that mode.
+    """
+    error = _validate_industry_mode(industry, mode)
+    if error is not None:
+        return error
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    row = await industry_service.resolve_pipeline_for_mode(state, industry, mode)
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "no pipeline for this industry/mode — create one first"},
+        )
+
+    if industry_service._mode_status(row) in ("running", "starting"):
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "stop the pipeline before changing its config"},
+        )
+
+    patch: dict = {}
+    note: str | None = None
+    if "rate_hz" in body:
+        patch["rate_hz"] = body["rate_hz"]
+    if "capture_metrics" in body:
+        if mode == "zerobus":
+            note = "capture_metrics is not applicable to zerobus (no Spark job) — ignored"
+        else:
+            patch["capture_metrics"] = body["capture_metrics"]
+
+    merged = await industry_service.update_pipeline_config(state, row.get("id"), patch)
+
+    response: dict = {"config": merged, "applied": "on next (re)deploy"}
+    if note:
+        response["note"] = note
+    return response

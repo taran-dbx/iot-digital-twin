@@ -173,3 +173,186 @@ class TestStopIndustryMode:
         assert resp.status_code == 200
         assert resp.json() == fake_result
         stop_mock.assert_awaited_once_with(state, "manufacturing", "microbatch")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/industries/{industry}/modes/{mode}/config
+# ---------------------------------------------------------------------------
+class TestUpdateIndustryModeConfig:
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_industry(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode", AsyncMock()
+        ) as resolve_mock:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/banking/modes/realtime/config",
+                    json={"rate_hz": 5},
+                )
+
+        assert resp.status_code == 400
+        resolve_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_mode(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode", AsyncMock()
+        ) as resolve_mock:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/nightly/config",
+                    json={"rate_hz": 5},
+                )
+
+        assert resp.status_code == 400
+        resolve_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_pipeline_returns_404(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            AsyncMock(return_value=None),
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/realtime/config",
+                    json={"rate_hz": 5},
+                )
+
+        assert resp.status_code == 404
+        assert "create one first" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_running_pipeline_returns_409(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        running_row = {"id": "pid-1", "status": "running"}
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            AsyncMock(return_value=running_row),
+        ), patch(
+            "routes.industries.industry_service.update_pipeline_config", AsyncMock()
+        ) as update_mock:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/realtime/config",
+                    json={"rate_hz": 5},
+                )
+
+        assert resp.status_code == 409
+        assert "stop the pipeline" in resp.json()["detail"]
+        update_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_starting_pipeline_returns_409(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        starting_row = {"id": "pid-1", "status": "starting"}
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            AsyncMock(return_value=starting_row),
+        ), patch(
+            "routes.industries.industry_service.update_pipeline_config", AsyncMock()
+        ) as update_mock:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/realtime/config",
+                    json={"rate_hz": 5},
+                )
+
+        assert resp.status_code == 409
+        update_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stopped_pipeline_persists_config(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        stopped_row = {"id": "pid-1", "status": "step2_complete"}
+        merged = {"rate_hz": 10, "capture_metrics": False}
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            AsyncMock(return_value=stopped_row),
+        ), patch(
+            "routes.industries.industry_service.update_pipeline_config",
+            AsyncMock(return_value=merged),
+        ) as update_mock:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/realtime/config",
+                    json={"rate_hz": 10, "capture_metrics": False},
+                )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["config"] == merged
+        assert body["applied"] == "on next (re)deploy"
+        update_mock.assert_awaited_once_with(
+            state, "pid-1", {"rate_hz": 10, "capture_metrics": False}
+        )
+
+    @pytest.mark.asyncio
+    async def test_idle_pipeline_persists_config(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        idle_row = {"id": "pid-1", "status": "idle"}
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            AsyncMock(return_value=idle_row),
+        ), patch(
+            "routes.industries.industry_service.update_pipeline_config",
+            AsyncMock(return_value={"rate_hz": 3}),
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/realtime/config",
+                    json={"rate_hz": 3},
+                )
+
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_zerobus_ignores_capture_metrics_but_notes_it(self) -> None:
+        state = _state()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        stopped_row = {"id": "pid-2", "status": "step2_complete"}
+        with patch(
+            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            AsyncMock(return_value=stopped_row),
+        ), patch(
+            "routes.industries.industry_service.update_pipeline_config",
+            AsyncMock(return_value={"rate_hz": 2}),
+        ) as update_mock:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/industries/pharmaceutical/modes/zerobus/config",
+                    json={"rate_hz": 2, "capture_metrics": True},
+                )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "note" in body
+        assert "zerobus" in body["note"]
+        # capture_metrics must not be forwarded into the persisted patch.
+        update_mock.assert_awaited_once_with(state, "pid-2", {"rate_hz": 2})
