@@ -451,6 +451,34 @@ secret scope: iot-secrets
 service principal: iot-sss-industries      → Lakebase role, metrics writer, zerobus ingest
 ```
 
+### 2.8 Pipeline management & health page
+
+A dedicated admin surface to see and operate all deployed pipelines. Two views:
+
+**List (`/pipelines`)** — every industry pipeline setup with: enabled modes,
+**overall health** (Healthy / Degraded / Down), jobs running (e.g. 2/2),
+resources healthy (e.g. 19/19), last updated, and actions (View health, Edit
+config, Start/Stop, Delete).
+
+**Health detail (`/pipelines/:id/health`)** — per-resource status for one
+pipeline, grouped and each with a health pill + last-checked/last-run:
+- **Unity Catalog** — catalog bound, schemas, tables, checkpoint volume.
+- **Lakebase (real-time)** — project, branch active, primary RW + read replica
+  endpoints running, ChronoTable partition freshness (next chunk / horizon),
+  rollups, **CDF sync `STREAMING` + committed_lsn advancing**.
+- **Kafka topics** — existence + partition count.
+- **Jobs (7)** — consumer/producer + LakeTS ops (partition manager, rollup,
+  tiering, retention): status + schedule + last run.
+- **Metrics** — `streaming_metrics` receiving rows (freshness).
+- **Identity** — SP + secret scope.
+- Actions: Modify config (→ setup wizard in edit mode), Re-run validation,
+  Restart jobs, **Delete** (tears down all resources via the
+  `provisioned_resource` ledger in reverse `teardown_order`).
+
+Health is computed live against the provisioned resources; the
+`provisioned_resource` registry (§2.3) is the inventory the page walks. Prototype
+built as in-app React pages under `TwinShell`.
+
 ## Decisions log (Section 2)
 
 | ID | Decision |
