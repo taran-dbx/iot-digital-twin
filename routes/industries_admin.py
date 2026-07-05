@@ -311,17 +311,22 @@ async def delete_pipeline(
     if setup is None:
         raise HTTPException(status_code=404, detail="pipeline setup not found")
 
-    # Register a job deleter so ``job`` ledger rows are actually deleted (reverse
-    # order).  Building it needs a live WorkspaceClient; if that is unavailable
-    # (tests / no creds) fall back to the default registry (jobs skipped, not
-    # failed).  Kafka topic-delete stays skipped — DeleteTopic is denied (§1.8).
+    # Register a deleter for EVERY resource_type the ledger records so teardown
+    # actually removes the cloud resource (UC catalog, Lakebase branch/endpoints,
+    # external metrics table + its S3 objects, secrets, SP, grants) in reverse
+    # dependency order — instead of silently skipping and orphaning it.  Shared
+    # resources are never deleted; Kafka topic-delete stays skipped (DeleteTopic
+    # denied, §1.8).  Building the registry needs a live WorkspaceClient; if that
+    # is unavailable (tests / no creds) fall back to the default (all skipped).
     deleters = None
     try:
-        from services.deployment_service import make_job_deleter
+        from services import resource_deleters
 
-        deleters = {"job": make_job_deleter()}
+        deleters = resource_deleters.make_all_deleters(
+            warehouse_id=setup.get("warehouse_id"),
+        )
     except Exception as exc:  # pragma: no cover - best-effort
-        logger.warning("job deleter unavailable; jobs will be skipped: %s", exc)
+        logger.warning("deleter registry unavailable; resources will be skipped: %s", exc)
 
     result = await teardown_service.teardown_setup(db, setup_id, deleters)
     return result

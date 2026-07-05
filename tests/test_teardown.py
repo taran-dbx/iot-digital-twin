@@ -8,7 +8,7 @@ the live iot-app-backend project proves nothing is orphaned after teardown.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -106,6 +106,62 @@ async def test_teardown_reports_deleter_failure(mock_db) -> None:
     assert result["success"] is False
     assert result["steps"][0]["action"] == "failed"
     assert "delete failed" in result["steps"][0]["error"]
+
+
+async def test_teardown_failure_does_not_cascade_orphan(mock_db) -> None:
+    # A failed deleter must NOT drop the setup row — keeping the ledger row
+    # (marked ``failed``) is the only record that the cloud resource still
+    # exists, so it is surfaced for retry instead of silently orphaned.
+    mock_db.fetch = AsyncMock(
+        return_value=[
+            {"id": "r1", "resource_type": "uc_catalog", "identifier": "c",
+             "metadata": {}, "teardown_order": 10},
+        ]
+    )
+    mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "metadata": {}})
+    mock_db.execute = AsyncMock(return_value="DELETE 1")
+
+    async def _boom(res):
+        raise RuntimeError("boom")
+
+    with patch.object(
+        teardown_service.pipeline_setup_repo, "delete_setup", AsyncMock()
+    ) as del_mock:
+        result = await teardown_service.teardown_setup(
+            mock_db, "setup-1", deleters={"uc_catalog": AsyncMock(side_effect=_boom)}
+        )
+
+    del_mock.assert_not_awaited()
+    assert result["success"] is False
+    assert result["deleted_setup"] is False
+    # the failed row is marked ``failed`` (not ``deleted``) before we bail out
+    assert mock_db.fetchrow.await_args.args[1] == "failed"
+
+
+async def test_teardown_skips_shared_resources(mock_db) -> None:
+    # Shared SP / secret-scope / iot-pipelines project rows carry
+    # ``metadata.shared`` and must never be deleted per-industry — even when a
+    # deleter is registered for their type.
+    mock_db.fetch = AsyncMock(
+        return_value=[
+            {"id": "r1", "resource_type": "service_principal",
+             "identifier": "iot-sss-industries", "metadata": {"shared": True},
+             "teardown_order": 1},
+        ]
+    )
+    mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "metadata": {}})
+    mock_db.execute = AsyncMock(return_value="DELETE 1")
+
+    sp_deleter = AsyncMock()
+    result = await teardown_service.teardown_setup(
+        mock_db, "setup-1", deleters={"service_principal": sp_deleter}
+    )
+
+    sp_deleter.assert_not_awaited()  # shared guard fires before dispatch
+    assert result["steps"][0]["action"] == "skipped"
+    assert "shared" in result["steps"][0]["reason"].lower()
+    assert result["success"] is True
+    assert mock_db.fetchrow.await_args.args[1] == "skipped"
 
 
 # ---------------------------------------------------------------------------
