@@ -498,6 +498,18 @@ already run those checks (Section 1). Instead show a single verdict:
 The verdict derives from the same live health as §2.8. This supersedes the
 current end-user provisioning/starting status display.
 
+**End-user start health gate.** The user can **run health checks manually** (a
+"Run health check" button) before starting, and **Start runs them automatically
+as a pre-flight gate**. These are lightweight **runtime** checks (resources up
+*right now* — Lakebase endpoints active, Kafka topics reachable, the mode's
+job(s) healthy, CDF `STREAMING` for real-time, partitions current, metrics table
+writable), a live rollup of §2.8 — NOT the admin's full provisioning validation
+(§1, already done). Behaviour:
+- **All checks pass →** the pipeline/mode starts.
+- **Any check fails →** the pipeline **does not run**; show which check failed and
+  "please contact your admin."
+Present as a short live checklist (pending/running/passed/failed) while it runs.
+
 ## Decisions log (Section 2)
 
 | ID | Decision |
