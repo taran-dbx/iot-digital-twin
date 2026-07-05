@@ -126,6 +126,39 @@ async def get_industries_catalog(
     return {"industries": catalog, "is_admin": app_permissions.is_admin(request)}
 
 
+@router.get("/api/industries/whoami")
+async def whoami(request: Request):
+    """Diagnostic: what identity does the app resolve for the caller?
+
+    Helps verify admin resolution end-to-end (safe — returns only the
+    caller's own identity + non-sensitive header/claim key names).
+    """
+    import base64 as _b64
+    import json as _json
+
+    fwd_headers = {
+        k: request.headers.get(k)
+        for k in ("x-forwarded-email", "x-forwarded-user", "x-forwarded-preferred-username")
+    }
+    token = request.headers.get("x-forwarded-access-token")
+    claim_keys: list[str] = []
+    if token:
+        try:
+            part = token.split(".")[1]
+            part += "=" * (-len(part) % 4)
+            claim_keys = sorted(_json.loads(_b64.urlsafe_b64decode(part)).keys())
+        except Exception:
+            claim_keys = ["<decode-failed>"]
+    return {
+        "caller_email": app_permissions._caller_email(request),
+        "is_admin": app_permissions.is_admin(request),
+        "admin_emails_configured": sorted(app_permissions._admin_emails()),
+        "forwarded_headers": fwd_headers,
+        "has_forwarded_token": bool(token),
+        "token_claim_keys": claim_keys,
+    }
+
+
 def _validate_industry_mode(industry: str, mode: str) -> JSONResponse | None:
     """Return a 400 JSONResponse if ``industry``/``mode`` aren't curated, else None."""
     if industry not in CURATED_INDUSTRIES:

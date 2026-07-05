@@ -57,12 +57,19 @@ def _forwarded_token(request: Any) -> str | None:
 
 
 def _caller_email(request: Any) -> str | None:
-    """Decode the caller's email from the forwarded token's ``sub`` claim.
+    """Resolve the caller's email.
 
-    Same decode as ``core.auth.get_current_user`` — the proxy already
-    validated the token, so no network call is needed. Returns ``None`` on
-    any failure (missing/malformed token) rather than raising.
+    Prefers the ``x-forwarded-email`` header that Databricks Apps inject for
+    authenticated browser requests (the authoritative email), falling back to
+    the ``sub`` claim of the forwarded OAuth token. Returns ``None`` on any
+    failure rather than raising.
     """
+    try:
+        header_email = request.headers.get("x-forwarded-email")
+        if header_email:
+            return header_email
+    except Exception:
+        pass
     token = _forwarded_token(request)
     if not token:
         return None
@@ -70,6 +77,11 @@ def _caller_email(request: Any) -> str | None:
         payload_b64 = token.split(".")[1]
         payload_b64 += "=" * (-len(payload_b64) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        # Prefer email-shaped claims; ``sub`` is often a UUID on Databricks.
+        for claim in ("email", "upn", "preferred_username", "unique_name", "sub"):
+            value = payload.get(claim)
+            if value and "@" in str(value):
+                return value
         return payload.get("sub") or None
     except Exception as exc:
         logger.warning("Failed to decode caller email from forwarded token: %s", exc)
