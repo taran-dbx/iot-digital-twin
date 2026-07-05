@@ -472,8 +472,10 @@ pipeline, grouped and each with a health pill + last-checked/last-run:
 - **Metrics** — `streaming_metrics` receiving rows (freshness).
 - **Identity** — SP + secret scope.
 - Actions: Modify config (→ setup wizard in edit mode), Re-run validation,
-  Restart jobs, **Delete** (tears down all resources via the
-  `provisioned_resource` ledger in reverse `teardown_order`).
+  Restart jobs. **No Delete here** — Delete lives on the **pipeline list page**
+  and the **config page** (`/setup-validate`), not the status/health page. Delete
+  tears down all resources via the `provisioned_resource` ledger in reverse
+  `teardown_order`.
 
 Health is computed live against the provisioned resources; the
 `provisioned_resource` registry (§2.3) is the inventory the page walks. Prototype
