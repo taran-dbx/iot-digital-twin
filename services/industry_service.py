@@ -52,7 +52,7 @@ def topic_name(industry: str, mode: str) -> str:
 
 
 async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
-    """Return non-deleted pipeline rows (``name`` + lifecycle state).
+    """Return non-deleted pipeline rows (name/status/industry/source info).
 
     Thin wrapper around the same ``pipelines`` table access
     ``routes.pipelines.list_pipelines`` uses (``state.db.fetch`` against the
@@ -60,17 +60,82 @@ async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
     The gallery/setup catalog is not user-scoped — it needs the lifecycle of
     every curated-industry pipeline, not just one user's — so this omits
     that route's ``user_email`` filter.
+
+    ``industry``, ``source_type`` and ``source_config`` are pulled alongside
+    ``name``/``status`` so the reconciliation pass in ``get_catalog`` can
+    recognize pipelines that predate the deterministic ``iot-<industry>-
+    <mode>`` naming convention (see ``_infer_mode``).
     """
     if not state or not getattr(state, "db_available", False) or not getattr(state, "db", None):
         return []
     try:
         rows = await state.db.fetch(
-            "SELECT name, status FROM pipelines WHERE status != 'deleted'"
+            "SELECT name, status, industry, source_type, source_config "
+            "FROM pipelines WHERE status != 'deleted'"
         )
     except Exception as exc:
         logger.warning("Failed to list pipelines for industry catalog: %s", exc)
         return []
     return [dict(row) for row in rows]
+
+
+def _coerce_json_dict(raw: Any) -> dict:
+    """Return ``raw`` as a dict, parsing JSON strings; ``{}`` on any failure."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+# Sink identifiers that indicate a Lakebase/LakeTS destination — used by
+# ``_infer_mode`` to tell "realtime" (SSS -> Lakebase) apart from
+# "microbatch" (SSS -> Delta) for pre-convention pipeline rows.
+_LAKEBASE_SINK_MARKERS = ("lakebase", "lb_", "lakets")
+
+
+def _infer_mode(row: dict[str, Any]) -> str | None:
+    """Best-effort streaming-mode inference for a pipeline row.
+
+    Existing pipelines deployed before the deterministic ``iot-<industry>-
+    <mode>`` naming convention (e.g. one literally named ``"Demo"``) can't be
+    joined back to a curated mode by name. This infers the mode from
+    ``source_type``/``source_config`` instead, so ``get_catalog``'s
+    reconciliation pass can still report it as running.
+
+    - ``source_type == "zerobus"`` -> ``"zerobus"`` (no Spark job, writes
+      straight to Delta — see ``mode_config("zerobus")``).
+    - ``source_type == "sss"`` (Spark Structured Streaming): a
+      Lakebase/LakeTS sink (``rtm_sink == "lakebase"``, or any
+      ``lb_*``/``lakets`` marker in ``source_config``) -> ``"realtime"``;
+      a Delta/micro-batch sink -> ``"microbatch"``; otherwise defaults to
+      ``"realtime"`` (SSS's most common target for this app).
+    - Anything else (unknown/legacy ``source_type``, or none at all) ->
+      ``None`` — no mode can be inferred, so the reconciliation pass skips
+      the row.
+    """
+    source_type = str(row.get("source_type") or "").lower()
+    if source_type == "zerobus":
+        return "zerobus"
+    if source_type != "sss":
+        return None
+
+    source_config = _coerce_json_dict(row.get("source_config"))
+    rtm_sink = str(source_config.get("rtm_sink") or "").lower()
+    if rtm_sink == "lakebase":
+        return "realtime"
+    if rtm_sink in ("delta", "microbatch"):
+        return "microbatch"
+
+    config_blob = json.dumps(source_config).lower()
+    if any(marker in config_blob for marker in _LAKEBASE_SINK_MARKERS):
+        return "realtime"
+
+    return "realtime"
 
 
 def _mode_status(row: dict[str, Any] | None) -> str:
@@ -85,17 +150,46 @@ def _mode_status(row: dict[str, Any] | None) -> str:
     return "idle"
 
 
+
+# Pipeline row statuses treated as "deployed/active" by the reconciliation
+# pass below — a legacy row need not be literally ``"running"`` to count,
+# since ``_STOPPED_STATUS`` (``"step2_complete"``) is also written for
+# pipelines that were provisioned and deployed outside the new deterministic
+# naming flow. ``draft``/``deleted`` rows never reconcile as running.
+#
+# Known limitation: ``step2_complete`` is reused by ``stop_mode`` (see its
+# docstring) to mean "stopped" for pipelines created through the new
+# deterministic-name flow. A pre-convention pipeline that some future flow
+# stops by writing this same status would still reconcile as "running" here
+# — there is no separate status value today to distinguish "legacy deployed"
+# from "new-flow stopped". Acceptable for this reconciliation slice.
+_RECONCILE_DEPLOYED_STATES = {"step2_complete", "running"}
+
+
 async def get_catalog(state: AppState) -> list[dict[str, Any]]:
     """Return one gallery entry per curated industry, with per-mode status.
 
     Each entry: ``{id, name, accent, icon, twin_type, tag, modes, running_count}``
     where ``modes`` is ``[{id, name, to, desc, status}]`` and ``status`` is
     one of ``"idle" | "starting" | "running"``.
+
+    Two passes over the pipeline rows:
+    1. Exact deterministic-name join (``iot-<industry>-<mode>``) — handles
+       every pipeline created through the new industry-catalog flow
+       (``start_mode``/``stop_mode``).
+    2. Reconciliation — pipelines deployed before that naming convention
+       existed (e.g. one literally named ``"Demo"``) can't be found by name,
+       so any non-deleted, non-draft row not already matched in pass 1 is
+       checked via ``_infer_mode``: if its ``(industry, mode)`` is curated
+       and that mode is still ``"idle"``, it's promoted to ``"running"`` for
+       display. This never downgrades or overrides a status pass 1 already
+       resolved to ``"running"``/``"starting"``.
     """
     rows = await _list_pipelines(state)
     rows_by_name = {row["name"]: row for row in rows if row.get("name")}
 
     catalog: list[dict[str, Any]] = []
+    matched_names: set[str] = set()
     for industry in CURATED_INDUSTRIES:
         template = get_template(industry)
         if template is None:
@@ -105,7 +199,11 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
         running_count = 0
         for mode in MODES:
             cfg = mode_config(mode)
-            status = _mode_status(rows_by_name.get(pipeline_name(industry, mode)))
+            name = pipeline_name(industry, mode)
+            row = rows_by_name.get(name)
+            if row is not None:
+                matched_names.add(name)
+            status = _mode_status(row)
             if status == "running":
                 running_count += 1
             modes.append(
@@ -133,6 +231,30 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
                 "running_count": running_count,
             }
         )
+
+    catalog_by_industry = {entry["id"]: entry for entry in catalog}
+    for row in rows:
+        name = row.get("name")
+        if name and name in matched_names:
+            continue  # already resolved by the exact-name join
+        status_value = str(row.get("status") or "").lower()
+        if status_value not in _RECONCILE_DEPLOYED_STATES:
+            continue  # draft / anything else — not deployed, skip
+
+        entry = catalog_by_industry.get(row.get("industry"))
+        if entry is None:
+            continue  # not a curated industry
+
+        mode = _infer_mode(row)
+        if mode not in MODES:
+            continue
+
+        mode_entry = next((m for m in entry["modes"] if m["id"] == mode), None)
+        if mode_entry is None or mode_entry["status"] != "idle":
+            continue  # never override an already-resolved running/starting
+
+        mode_entry["status"] = "running"
+        entry["running_count"] += 1
 
     return catalog
 
