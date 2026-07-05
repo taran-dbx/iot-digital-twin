@@ -54,11 +54,20 @@ are validated up front, and test data is purged before finishing.
 - Provisioned with `spark.databricks.streaming.realTimeMode.enabled=true`
   (reuses `routes/cluster.py`). Used for `realtime` + `microbatch` validation.
 - **Spec:** smallest suitable general-purpose node (auto-selected via
-  `list_node_types`, ~4 vCPU class); driver = worker node type; **latest stable
-  DBR** that supports real-time mode; **90-minute auto-termination** (default &
-  floor; admin may raise, not lower — inactivity-based, survives the active
-  tests and tolerates an idle `cdf_manual` wait; re-provisions on resume if it
-  terminates).
+  `list_node_types`, ~4 vCPU class); driver = worker node type; **90-minute
+  auto-termination** (default & floor; admin may raise, not lower —
+  inactivity-based, survives the active tests and tolerates an idle `cdf_manual`
+  wait; re-provisions on resume if it terminates).
+- **Runtime (RTM):** use the **latest GA DBR that supports BOTH real-time mode AND
+  service credentials**, in **single-user** access mode. This applies to **both**
+  the interactive validation cluster **and** the deploy-time RTM **job cluster**
+  (they must match — §G2). 16.4 LTS is confirmed for service credentials; the
+  real-time-mode-capable GA runtime must be verified to also support service
+  credentials (the earlier 17.x beta failure was runtime/access-mode, not a
+  workspace toggle). **Pin the exact RTM Spark conf** on the cluster spec — at
+  minimum `spark.databricks.streaming.realTimeMode.enabled=true` plus any
+  companion configs the verified runtime requires — and use the real-time trigger
+  (`.trigger(realTime=...)`) on the query.
 - **Same IAM role / instance profile, subnet, and security group** as the
   deploy-time job cluster, so the test is representative.
 - **Worker count (M1):**
