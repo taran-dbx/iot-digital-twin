@@ -24,6 +24,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from models.metrics_schema import metrics_table_fqn, metrics_table_location
 from services import industry_catalog_service as cat
 from services import pipelines_project_service as pps
 from services import validation_config as vc
@@ -31,6 +32,11 @@ from services import validation_snippets as snip
 from services import validation_state_machine as sm
 from services.dbsql_service import execute_dbsql
 from services.validation_service import StepContext, StepResult
+
+# Source marker stamped on the RTM write-test rows so cleanup can purge exactly
+# the test data it produced (test-data isolation, §1.13).
+VALIDATION_SOURCE = "validation"
+RTM_TABLE = "sensor_readings"
 
 logger = logging.getLogger("iot_digital_twin.services.validation_steps")
 
@@ -46,6 +52,8 @@ _LIB_POLL_S = 10
 VALIDATION_CLUSTER_LIBRARIES: tuple[str, ...] = (
     "kafka-python>=3",
     "aws-msk-iam-sasl-signer-python",
+    "psycopg2-binary",   # RTM ForeachWriter → Lakebase ChronoTable
+    "deltalake",         # buffered delta-rs streaming-metrics write
 )
 
 
@@ -78,6 +86,9 @@ def _cfg(ctx: StepContext) -> dict:
         "replication_factor": vc.replication_factor(brokers),
         "warehouse_id": setup.get("warehouse_id"),
         "branch": industry,  # per-industry Lakebase branch name = industry
+        "project_id": pps.PIPELINES_PROJECT,
+        "metrics_table_fqn": metrics_table_fqn(catalog),
+        "metrics_table_location": metrics_table_location(catalog, cat.SHARED_STORAGE_BASE),
     }
 
 
@@ -239,6 +250,8 @@ if r.returncode != 0:
 else:
     import kafka  # noqa: F401
     from aws_msk_iam_sasl_signer import MSKAuthTokenProvider  # noqa: F401
+    import psycopg2  # noqa: F401
+    from deltalake import write_deltalake  # noqa: F401
     print("{snip.OK_SENTINEL} " + "libraries installed")
 '''
 
@@ -312,13 +325,34 @@ async def write_test(ctx: StepContext) -> StepResult:
         code = snip.microbatch_write_test(
             topic, cfg["bootstrap"], cfg["service_credential"], delta, checkpoint,
         )
-    else:
-        topic = vc.topic_name(cfg["industry"], "realtime")
-        code = snip.rtm_write_test(
-            topic, cfg["bootstrap"], cfg["service_credential"],
-            pg_host="", pg_database=pps.PG_DATABASE,
-            table="sensor_readings", checkpoint_path=checkpoint,
-        )
+        return await _run_on_cluster(ctx, code, timeout_s=300)
+
+    # Real-time lane: TRULY land + measure data (Phase-7 fix).
+    #   1. produce ~100 sample messages onto the topic (no producer runs during
+    #      validation otherwise, so an earliest read had nothing to land);
+    #   2. run the bounded RTM consumer that writes rows to the Lakebase LakeTS
+    #      ChronoTable via a psycopg ForeachWriter, wired with the buffered
+    #      delta-rs metrics listener so metrics rows land too.
+    topic = vc.topic_name(cfg["industry"], "realtime")
+    produce = await _run_on_cluster(
+        ctx,
+        snip.rtm_produce(
+            topic, cfg["bootstrap"], cfg["region"], cfg["service_credential"],
+            num_records=100, source=VALIDATION_SOURCE,
+        ),
+        timeout_s=180,
+    )
+    if produce.status != sm.PASSED:
+        return produce
+    code = snip.rtm_write_test(
+        topic, cfg["bootstrap"], cfg["service_credential"],
+        project_id=cfg["project_id"], branch=cfg["branch"],
+        pg_database=pps.PG_DATABASE, table=RTM_TABLE,
+        checkpoint_path=checkpoint,
+        metrics_table_fqn=cfg["metrics_table_fqn"],
+        metrics_table_location=cfg["metrics_table_location"],
+        region=cfg["region"], source=VALIDATION_SOURCE,
+    )
     return await _run_on_cluster(ctx, code, timeout_s=300)
 
 
@@ -330,25 +364,54 @@ async def cdf_manual(ctx: StepContext) -> StepResult:
 
 
 async def cdf_verify(ctx: StepContext) -> StepResult:
-    return await _run_on_cluster(ctx, snip.cdf_verify(), timeout_s=180)
+    # Key on THIS pipeline's shadow table (lakets_cdf._shadow_sensor_readings),
+    # not any streaming table (§1.10.3).
+    return await _run_on_cluster(ctx, snip.cdf_verify(RTM_TABLE), timeout_s=180)
+
+
+async def _count_validation_rows(conn: Any) -> int:
+    rows = await conn.fetchval(
+        f"SELECT count(*) FROM {RTM_TABLE} WHERE source = $1", VALIDATION_SOURCE
+    )
+    return int(rows or 0)
 
 
 async def read_back(ctx: StepContext) -> StepResult:
-    # Immediate round-trip: read from Lakebase directly (CDF sync is async).
+    # Immediate round-trip: verify the test rows landed in the ChronoTable via
+    # Lakebase.  The PRIMARY must have them; the REPLICA count is best-effort
+    # (replication is async, so a lower/zero replica count is not a failure).
     cfg = _cfg(ctx)
-    conn = None
+    primary = None
     try:
-        conn = await pps.get_read_conn(cfg["branch"], ws=ctx.ws)
-        rows = await conn.fetchval("SELECT count(*) FROM sensor_readings")
-        if rows and int(rows) > 0:
-            return StepResult(sm.PASSED, data={"rows": int(rows)})
-        return StepResult(sm.FAILED, error="no rows in Lakebase after write test")
+        primary = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
+        primary_rows = await _count_validation_rows(primary)
     finally:
-        if conn is not None:
+        if primary is not None:
             try:
-                await conn.close()
+                await primary.close()
             except Exception:  # pragma: no cover
                 pass
+    if primary_rows <= 0:
+        return StepResult(
+            sm.FAILED, error="no validation rows in Lakebase primary after write test"
+        )
+
+    replica_rows: int | None = None
+    replica = None
+    try:
+        replica = await pps.get_read_conn(cfg["branch"], ws=ctx.ws)
+        replica_rows = await _count_validation_rows(replica)
+    except Exception as exc:  # replica lag / transient — non-fatal
+        logger.info("read_back replica read failed (non-fatal): %s", exc)
+    finally:
+        if replica is not None:
+            try:
+                await replica.close()
+            except Exception:  # pragma: no cover
+                pass
+    return StepResult(
+        sm.PASSED, data={"rows_primary": primary_rows, "rows_replica": replica_rows}
+    )
 
 
 async def dbsql_read(ctx: StepContext) -> StepResult:
@@ -384,12 +447,39 @@ async def metrics_check(ctx: StepContext) -> StepResult:
 
 
 async def cleanup(ctx: StepContext) -> StepResult:
-    # Keep objects; empty test data; delete validation checkpoints (§1.13).
+    # Keep objects; empty the test data + delete the validation checkpoint so no
+    # test rows or checkpoint state leak across runs (§1.13).
     cfg = _cfg(ctx)
-    return StepResult(sm.PASSED, data={
-        "purged": True,
-        "checkpoint": _checkpoint(cfg["catalog"], ctx.mode or "realtime"),
-    })
+    mode = ctx.mode or "realtime"
+    checkpoint = _checkpoint(cfg["catalog"], mode)
+    data: dict[str, Any] = {"checkpoint": checkpoint}
+
+    # 1. Empty the realtime test rows the RTM write-test landed in the Lakebase
+    #    ChronoTable (source-scoped so only this harness's data is removed).
+    if mode == "realtime":
+        conn = None
+        try:
+            conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
+            status = await conn.execute(
+                f"DELETE FROM {RTM_TABLE} WHERE source = $1", VALIDATION_SOURCE
+            )
+            data["rows_purged"] = status
+        except Exception as exc:  # best-effort — surfaced, non-fatal
+            logger.warning("cleanup row purge failed: %s", exc)
+            data["rows_purge_error"] = str(exc)[:200]
+        finally:
+            if conn is not None:
+                try:
+                    await conn.close()
+                except Exception:  # pragma: no cover
+                    pass
+
+    # 2. Delete the distinct validation checkpoint (best-effort; a missing
+    #    checkpoint is already "removed").
+    rm = await _run_on_cluster(ctx, snip.remove_path(checkpoint), timeout_s=120)
+    data["checkpoint_deleted"] = rm.status == sm.PASSED
+
+    return StepResult(sm.PASSED, data=data)
 
 
 # ---------------------------------------------------------------------------

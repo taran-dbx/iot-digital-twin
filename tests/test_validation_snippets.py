@@ -2,8 +2,9 @@
 
 The snippets run on the harness cluster where they can't be unit-executed, but
 their *content* must carry the VERIFIED configs — so we assert those tokens are
-present (service credential, public :9198 bootstrap, RTM read options, latest
-offsets for test-data isolation, distinct validation checkpoint, https:// OIDC).
+present (service credential, public :9198 bootstrap, RTM read options, a bounded
+producer + distinct validation checkpoint for test-data isolation, the buffered
+delta-rs metrics listener, the specific CDF shadow table, https:// OIDC).
 """
 
 from __future__ import annotations
@@ -29,22 +30,79 @@ def test_topic_create_uses_msk_iam_oauth():
     assert "iot.x.realtime" in code
 
 
-def test_rtm_write_test_verified_read_config():
-    code = snip.rtm_write_test(
+def _rtm_write_test_code() -> str:
+    return snip.rtm_write_test(
         "iot.x.realtime", "b-1:9198", "iot-rtm-sc",
-        pg_host="h", pg_database="databricks_postgres",
-        table="sensor_readings", checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
+        project_id="iot-pipelines", branch="x", pg_database="databricks_postgres",
+        table="sensor_readings",
+        checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
+        metrics_table_fqn="iot_x.metrics.streaming_metrics",
+        metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics/",
+        region="us-east-1",
     )
+
+
+def test_rtm_write_test_verified_read_config():
+    code = _rtm_write_test_code()
     # Service credential handles MSK-IAM — no plaintext SASL on the Spark read.
     assert '"databricks.serviceCredential"' in code
     assert "iot-rtm-sc" in code
     assert "kafka.sasl" not in code
-    # Test-data isolation: latest offsets + distinct validation checkpoint.
-    assert '"latest"' in code
+    # Bounded test window reads from earliest into a distinct validation checkpoint.
+    assert '"earliest"' in code
     assert "/validation/realtime" in code
     # Real-time trigger + update output mode.
     assert "realTime=" in code
     assert 'outputMode("update")' in code
+
+
+def test_rtm_write_test_lands_data_not_noop():
+    """The RTM consumer must write via a psycopg ForeachWriter — never noop."""
+    code = _rtm_write_test_code()
+    assert '.format("noop")' not in code
+    assert ".foreach(" in code
+    # psycopg ForeachWriter with positional-tuple process() into the ChronoTable.
+    assert "psycopg2" in code
+    assert "class LakebaseWriter" in code
+    assert "def process(self, row)" in code
+    assert "row[0]" in code and "row[10]" in code   # positional, not named Row
+    assert "INSERT INTO" in code
+    assert "sensor_readings" in code
+    # Writes go to the Lakebase branch PRIMARY (READ_WRITE) endpoint.
+    assert "generate_database_credential" in code
+    assert "iot-pipelines" in code
+
+
+def test_rtm_write_test_wires_buffered_metrics_listener():
+    """The buffered delta-rs metrics listener (P5a) must be wired into the run."""
+    code = _rtm_write_test_code()
+    assert "BufferedDeltaMetricsListener" in code
+    assert "spark.streams.addListener(" in code
+    assert "write_deltalake" in code
+    assert "onQueryProgress" in code
+    assert "iot_x.metrics.streaming_metrics" in code       # metrics table fqn
+    assert "streaming_metrics/" in code                    # metrics table location
+
+
+def test_rtm_produce_uses_msk_iam_kafka_producer():
+    code = snip.rtm_produce("iot.x.realtime", "b-1:9198", "us-east-1", "iot-rtm-sc", num_records=100)
+    assert "KafkaProducer" in code
+    assert "SASL_SSL" in code
+    assert "OAUTHBEARER" in code
+    assert "AbstractTokenProvider" in code
+    assert "MSKAuthTokenProvider" in code
+    assert "getServiceCredentialsProvider" in code
+    assert "iot-rtm-sc" in code
+    # api_version MUST be pinned (auto-detect hangs on MSK before SASL handshake).
+    assert "api_version=(2, 8, 1)" in code
+    assert "iot.x.realtime" in code
+    assert "range(100)" in code
+
+
+def test_remove_path_deletes_checkpoint():
+    code = snip.remove_path("/Volumes/x/checkpoints/v/validation/realtime")
+    assert "dbutils.fs.rm(" in code
+    assert "/validation/realtime" in code
 
 
 def test_microbatch_write_test_processing_time_trigger():
@@ -58,10 +116,22 @@ def test_microbatch_write_test_processing_time_trigger():
 
 
 def test_cdf_verify_polls_streaming_and_lsn():
-    code = snip.cdf_verify()
+    code = snip.cdf_verify("sensor_readings")
     assert "wal2delta.tables" in code
     assert "STREAMING" in code
     assert "committed_lsn" in code
+
+
+def test_cdf_verify_keys_on_specific_shadow_table():
+    """cdf_verify must key on THIS pipeline's shadow lakets_cdf._shadow_<table>,
+    not match ANY streaming table in wal2delta.tables (spec §1.10.3)."""
+    code = snip.cdf_verify("sensor_readings")
+    assert "_shadow_sensor_readings" in code
+    assert "lakets_cdf" in code
+    # A different pipeline's shadow table must not be conflated.
+    other = snip.cdf_verify("iot_sensor_data")
+    assert "_shadow_iot_sensor_data" in other
+    assert "_shadow_sensor_readings" not in other
 
 
 def test_zerobus_produce_https_prefix_gotcha():
