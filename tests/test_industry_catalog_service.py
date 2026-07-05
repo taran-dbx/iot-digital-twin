@@ -1,0 +1,211 @@
+"""Tests for the canonical per-industry UC provisioning + grants + secrets.
+
+Covers plan Phase 2 Task 2.2 + 2.4 / spec §2.5–2.7, §1.11.  Unit tests mock the
+Databricks ``WorkspaceClient`` and the DBSQL executor.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from services import industry_catalog_service as ics
+
+
+class _NotFound(Exception):
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return "RESOURCE_DOES_NOT_EXIST: not found"
+
+
+class _AlreadyExists(Exception):
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return "catalog already exists"
+
+
+def _make_ws(*, ext_loc=True, has_warehouse=True):
+    ws = MagicMock()
+    if ext_loc:
+        ws.external_locations.get = MagicMock(return_value=MagicMock())
+    else:
+        ws.external_locations.get = MagicMock(side_effect=_NotFound())
+    if has_warehouse:
+        wh = MagicMock()
+        wh.id = "wh-1"
+        ws.warehouses.list = MagicMock(return_value=[wh])
+    else:
+        ws.warehouses.list = MagicMock(return_value=[])
+    ws.catalogs.create = MagicMock(return_value=MagicMock())
+    ws.schemas.create = MagicMock(return_value=MagicMock())
+    ws.volumes.create = MagicMock(return_value=MagicMock())
+    return ws
+
+
+# ---------------------------------------------------------------------------
+# Name helpers
+# ---------------------------------------------------------------------------
+class TestNames:
+    def test_catalog_name_sanitizes(self) -> None:
+        assert ics.catalog_name("Pharmaceutical") == "iot_pharmaceutical"
+        assert ics.catalog_name("Oil & Gas") == "iot_oil_gas"
+        assert ics.catalog_name("spiketest") == "iot_spiketest"
+
+    def test_catalog_name_rejects_empty(self) -> None:
+        with pytest.raises(ValueError):
+            ics.catalog_name("  ")
+
+    def test_managed_location(self) -> None:
+        assert ics.catalog_managed_location("iot_spiketest") == (
+            "s3://taran-shared-interop/iot_spiketest"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight
+# ---------------------------------------------------------------------------
+class TestPreflight:
+    def test_all_pass(self) -> None:
+        checks = ics.preflight_checks(ws=_make_ws())
+        assert all(c["status"] == "pass" for c in checks)
+        ics.raise_on_failed_preflight(checks)  # no raise
+
+    def test_missing_external_location_fails(self) -> None:
+        checks = ics.preflight_checks(ws=_make_ws(ext_loc=False))
+        assert any(c["status"] == "fail" and "External location" in c["check"] for c in checks)
+        with pytest.raises(RuntimeError, match="Pre-flight"):
+            ics.raise_on_failed_preflight(checks)
+
+    def test_missing_warehouse_fails(self) -> None:
+        checks = ics.preflight_checks(ws=_make_ws(has_warehouse=False))
+        assert any(c["status"] == "fail" and "warehouse" in c["check"].lower() for c in checks)
+
+
+# ---------------------------------------------------------------------------
+# provision_industry_catalog
+# ---------------------------------------------------------------------------
+class TestProvisionCatalog:
+    @pytest.mark.asyncio
+    async def test_creates_catalog_with_managed_location(self) -> None:
+        ws = _make_ws()
+        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})):
+            res = await ics.provision_industry_catalog("spiketest", ws=ws)
+        assert res["catalog"] == "iot_spiketest"
+        _, kwargs = ws.catalogs.create.call_args
+        assert kwargs["name"] == "iot_spiketest"
+        assert kwargs["storage_root"] == "s3://taran-shared-interop/iot_spiketest"
+
+    @pytest.mark.asyncio
+    async def test_creates_five_schemas_and_volume(self) -> None:
+        ws = _make_ws()
+        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})):
+            await ics.provision_industry_catalog("spiketest", ws=ws)
+        created_schemas = {c.kwargs["name"] for c in ws.schemas.create.call_args_list}
+        assert created_schemas == set(ics.CANONICAL_SCHEMAS)
+        ws.volumes.create.assert_called_once()
+        _, vkwargs = ws.volumes.create.call_args
+        assert vkwargs["schema_name"] == "checkpoints"
+        assert vkwargs["name"] == "stream_checkpoints"
+
+    @pytest.mark.asyncio
+    async def test_external_metrics_table_ddl_executed(self) -> None:
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            res = await ics.provision_industry_catalog("spiketest", ws=ws)
+        ddl_calls = [c.args[0] for c in exec_mock.call_args_list]
+        assert any("streaming_metrics" in s and "LOCATION" in s for s in ddl_calls)
+        assert res["metrics_table"] == "iot_spiketest.metrics.streaming_metrics"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_catalog_already_exists(self) -> None:
+        ws = _make_ws()
+        ws.catalogs.create = MagicMock(side_effect=_AlreadyExists())
+        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})):
+            res = await ics.provision_industry_catalog("spiketest", ws=ws)
+        statuses = {r["resource"]: r["status"] for r in res["results"]}
+        assert statuses["UC catalog 'iot_spiketest'"] == "already_exists"
+
+    @pytest.mark.asyncio
+    async def test_records_resources_in_ledger(self) -> None:
+        ws = _make_ws()
+        recorded: list[dict] = []
+
+        async def _rec(_db, **kw):
+            recorded.append(kw)
+            return kw
+
+        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})), \
+                patch.object(ics, "record_resource", side_effect=_rec):
+            await ics.provision_industry_catalog(
+                "spiketest", ws=ws, db=MagicMock(), setup_id="s1",
+            )
+        types = [r["resource_type"] for r in recorded]
+        assert "uc_catalog" in types
+        assert "uc_schema" in types
+        assert "uc_volume" in types
+        assert "metrics_table" in types
+
+
+# ---------------------------------------------------------------------------
+# Grants
+# ---------------------------------------------------------------------------
+class TestGrants:
+    @pytest.mark.asyncio
+    async def test_grants_include_external_use_schema_and_create_table(self) -> None:
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            await ics.grant_streaming_sp("spiketest", ws=ws, principal="app-123")
+        sqls = " ".join(c.args[0] for c in exec_mock.call_args_list)
+        assert "EXTERNAL USE SCHEMA ON SCHEMA iot_spiketest.metrics" in sqls
+        assert "CREATE TABLE ON SCHEMA iot_spiketest.zerobus" in sqls
+        assert "USE CATALOG ON CATALOG iot_spiketest" in sqls
+        assert "`app-123`" in sqls
+
+    @pytest.mark.asyncio
+    async def test_grants_recorded_in_ledger(self) -> None:
+        ws = _make_ws()
+        recorded: list[dict] = []
+
+        async def _rec(_db, **kw):
+            recorded.append(kw)
+
+        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})), \
+                patch.object(ics, "record_resource", side_effect=_rec):
+            await ics.grant_streaming_sp(
+                "spiketest", ws=ws, principal="app-123",
+                db=MagicMock(), setup_id="s1",
+            )
+        assert recorded and all(r["resource_type"] == "grant" for r in recorded)
+
+    def test_resolve_principal_falls_back(self) -> None:
+        ws = MagicMock()
+        with patch.object(ics, "_find_sp_by_display_name", return_value=None):
+            assert ics.resolve_streaming_sp_principal(ws) == ics.FALLBACK_SP_APP_ID
+
+
+# ---------------------------------------------------------------------------
+# Secret scope
+# ---------------------------------------------------------------------------
+class TestSecretScope:
+    @pytest.mark.asyncio
+    async def test_creates_scope_and_records_shared(self) -> None:
+        ws = MagicMock()
+        ws.secrets.create_scope = MagicMock(return_value=None)
+        recorded: list[dict] = []
+
+        async def _rec(_db, **kw):
+            recorded.append(kw)
+
+        with patch.object(ics, "record_resource", side_effect=_rec):
+            res = await ics.ensure_secret_scope(ws=ws, db=MagicMock(), setup_id="s1")
+        assert res["status"] == "created"
+        assert recorded[0]["resource_type"] == "secret_scope"
+        assert recorded[0]["metadata"]["shared"] is True
+
+    @pytest.mark.asyncio
+    async def test_scope_already_exists(self) -> None:
+        ws = MagicMock()
+        ws.secrets.create_scope = MagicMock(side_effect=Exception("scope already exists"))
+        res = await ics.ensure_secret_scope(ws=ws)
+        assert res["status"] == "already_exists"
