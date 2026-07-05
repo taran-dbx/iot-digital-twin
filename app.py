@@ -20,6 +20,7 @@ from core.config import INDUSTRIES, UPDATE_RATE_HZ
 from core.state import AppState
 from core.shutdown import install_sigterm_handler, shutdown
 from routes import create_api_router
+from routes.setup import router as setup_router
 from routes.static_files import router as static_files_router
 from services.simulator_service import run_simulator
 from services.retention_service import run_retention_loop
@@ -61,6 +62,7 @@ async def lifespan(application: FastAPI):
             logger.info("Lakebase connection pool ready")
             await db.ensure_pipelines_table()
             await db.ensure_user_settings_table()
+            await db.ensure_source_bindings_table()
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
             logger.warning(
@@ -127,6 +129,9 @@ app = FastAPI(title="IoT Digital Twin", lifespan=lifespan)
 # provisioning, cluster, deployment, jobs, industries, user, settings,
 # warehouses, pipelines)
 app.include_router(create_api_router())
+
+# One-click Lakebase + LakeTS pipeline-setup router (POST /api/setup/...)
+app.include_router(setup_router)
 
 # Static file routes (/, /legacy, /legacy-settings)
 app.include_router(static_files_router)

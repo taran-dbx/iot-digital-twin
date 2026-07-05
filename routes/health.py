@@ -43,6 +43,13 @@ async def app_defaults():
         lakebase_project_id = parts[1]
         lakebase_branch_id = parts[3]
 
+    # Zerobus OAuth builds "<workspace_url>/oidc/v1/token"; a bare host (no
+    # scheme) raises "No scheme supplied" and produces an invalid UC token.
+    # Ensure the workspace URL the frontend receives carries an https:// scheme.
+    workspace_url = os.getenv("DATABRICKS_HOST", "")
+    if workspace_url and not workspace_url.startswith("http"):
+        workspace_url = f"https://{workspace_url}"
+
     return {
         "zerobus_endpoint": os.getenv("ZEROBUS_SERVER_ENDPOINT", ""),
         "zerobus_client_id": os.getenv("ZEROBUS_CLIENT_ID", ""),
@@ -50,7 +57,7 @@ async def app_defaults():
             os.getenv("ZEROBUS_CLIENT_SECRET")
             or (os.getenv("ZEROBUS_SECRET_SCOPE") and os.getenv("ZEROBUS_SECRET_KEY"))
         ),
-        "workspace_url": os.getenv("DATABRICKS_HOST", ""),
+        "workspace_url": workspace_url,
         "lakebase_endpoint": lakebase_endpoint,
         "lakebase_project_id": lakebase_project_id,
         "lakebase_branch_id": lakebase_branch_id,

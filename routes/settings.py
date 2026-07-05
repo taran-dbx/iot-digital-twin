@@ -30,7 +30,9 @@ from services.provisioning_service import (
     provision_lakebase_role,
     save_direct_creds_to_secrets,
     provision_metrics_table,
+    ensure_streaming_sp,
 )
+from services.app_permissions import grant_app_can_use, _app_name
 
 logger = logging.getLogger("iot_digital_twin.routes.settings")
 
@@ -190,88 +192,23 @@ async def provision_secrets_settings(request: Request, user_email: str = Depends
     secrets = body.get("secrets", {})
     scope_name = (secrets.get("scope") or "").strip()
     provisioned: list[dict] = []
-    if scope_name:
-        result = await provision_secrets_scope(scope_name)
-        provisioned.append(result)
-    else:
+
+    if not scope_name:
         provisioned.append({"resource": "Secret scope", "status": "failed", "error": "Scope name is empty"})
-
-    # Create a service principal + OAuth secret and store credentials in scope
-    if scope_name and any(r.get("status") in ("created", "already_exists") for r in provisioned):
-        try:
-            from databricks.sdk import WorkspaceClient
-            w = WorkspaceClient()
-
-            zb_id_key = secrets.get("zb_client_id_key", "zerobus-client-id")
-            zb_secret_key = secrets.get("zb_client_secret_key", "zerobus-client-secret")
-
-            # Check if credentials already exist in scope (idempotent)
-            existing_keys = {s.key for s in w.secrets.list_secrets(scope=scope_name)}
-            if zb_id_key in existing_keys and zb_secret_key in existing_keys:
-                provisioned.append({"resource": "Service principal credentials", "status": "already_exists"})
-            else:
-                # Create a new service principal
-                sp_name = f"iot-sss-{scope_name}"
-                sp = w.service_principals.create(display_name=sp_name, active=True)
-                sp_id = sp.id
-                client_id = sp.application_id
-                provisioned.append({"resource": f"Service principal '{sp_name}' (id={sp_id})", "status": "created"})
-
-                # Generate an OAuth secret using SDK's internal ApiClient
-                # (handles auth correctly, unlike raw httpx which gets 401)
-                # We avoid service_principal_secrets_proxy.create() because it has
-                # deserialization issues in SP context, but use the same ApiClient.do()
-                secret_data = w.api_client.do(
-                    "POST",
-                    f"/api/2.0/accounts/servicePrincipals/{sp_id}/credentials/secrets",
-                    body={},
-                    headers={"Accept": "application/json", "Content-Type": "application/json"},
-                )
-                client_secret = secret_data.get("secret", "")
-                if not client_secret:
-                    raise RuntimeError(f"No secret returned for SP {sp_id}: keys={list(secret_data.keys())}")
-                provisioned.append({"resource": "OAuth secret", "status": "created"})
-
-                # Store client_id and client_secret in the scope
-                w.secrets.put_secret(scope=scope_name, key=zb_id_key, string_value=client_id)
-                provisioned.append({"resource": f"Secret '{zb_id_key}' in '{scope_name}'", "status": "created"})
-
-                w.secrets.put_secret(scope=scope_name, key=zb_secret_key, string_value=client_secret)
-                provisioned.append({"resource": f"Secret '{zb_secret_key}' in '{scope_name}'", "status": "created"})
-
-                logger.info("Created SP '%s' (app_id=%s) and stored credentials in scope '%s'",
-                           sp_name, client_id, scope_name)
-
-        except Exception as exc:
-            logger.warning("Failed to create service principal / store credentials: %s", exc)
-            err_text = str(exc).lower()
-            # Permission and SDK-deserialization errors mean the runtime
-            # identity can't mint account-level SP credentials (common on
-            # FEVM / shared demo workspaces, where account-admin is scoped
-            # to another principal).  This is only needed for Zerobus
-            # ingest — mark as ``skipped`` so the overall secret-scope
-            # provisioning flow stays green.
-            is_skippable = (
-                "unable to parse response" in err_text
-                or "not authorized" in err_text
-                or "permission denied" in err_text
-                or "forbidden" in err_text
-                or "unauthorized" in err_text
-            )
-            if is_skippable:
-                provisioned.append({
-                    "resource": "Service principal credentials",
-                    "status": "skipped",
-                    "error": "Service-principal credential minting isn't available on "
-                             "this workspace (needs account-admin).  This is only "
-                             "required for Zerobus ingest — skip unless you plan to use Zerobus.",
-                })
-            else:
-                provisioned.append({
-                    "resource": "Service principal credentials",
-                    "status": "failed",
-                    "error": str(exc)[:200],
-                })
+    else:
+        # Scope + streaming SP + OAuth secret + app grant — delegated to the
+        # reusable provisioning helper.  Module-level (patchable) references
+        # are injected so route-level test patches still take effect.
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        sp_result = await ensure_streaming_sp(
+            w,
+            scope_name,
+            provision_scope=provision_secrets_scope,
+            grant_fn=grant_app_can_use,
+            app_name_fn=_app_name,
+        )
+        provisioned.extend(sp_result["results"])
 
     validation = await validate_secrets({"secrets": secrets})
     return {"provisioned": provisioned, "validation": validation}
@@ -309,11 +246,18 @@ async def provision_lakebase_settings(request: Request, user_email: str = Depend
             validation = await validate_lakebase({"lakebase": lb})
             return {"provisioned": provisioned, "validation": validation}
 
-        # Step 2: Create Postgres role with auto-generated password
+        # Step 2: Register the current SP as an OAuth-auth Postgres role.
+        # The old flow created a password-authenticated ``iot_app_user`` role;
+        # the new flow grants the SP itself DML on the sink tables and uses
+        # short-lived OAuth credentials per connection.
         import secrets as secrets_mod
         database = (lb.get("database") or "databricks_postgres").strip()
-        role_password = secrets_mod.token_urlsafe(24)
-        role_results = await provision_lakebase_role(project_id, branch_id, role_password, database)
+        role_password = secrets_mod.token_urlsafe(24)  # kept for back-compat UI
+        role_results = await provision_lakebase_role(
+            project_id=project_id,
+            branch_id=branch_id,
+            database=database,
+        )
         provisioned.extend(role_results)
         if any(r.get("status") == "failed" for r in role_results):
             validation = await validate_lakebase({"lakebase": lb})

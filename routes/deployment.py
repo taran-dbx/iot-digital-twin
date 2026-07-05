@@ -18,6 +18,18 @@ from core.state import AppState, get_app_state
 from services.databricks_sdk import detect_cloud
 from services.pipeline_service import track_resource
 
+# LakeTS operational jobs (partition manager, rollup, retention). Owned by a
+# sibling refactor in services.lakets_deploy_service; tolerate its absence so
+# this module still imports during the interim. Tests patch this symbol via
+# ``routes.deployment.deploy_lakets_ops_jobs`` so the patch target exists either way.
+try:
+    from services.lakets_deploy_service import deploy_lakets_ops_jobs  # type: ignore
+except ImportError:  # pragma: no cover — transitional fallback
+    def deploy_lakets_ops_jobs(*_args: Any, **_kwargs: Any) -> list[dict]:  # type: ignore[no-redef]
+        raise RuntimeError(
+            "deploy_lakets_ops_jobs is not yet available in services.lakets_deploy_service"
+        )
+
 logger = logging.getLogger("iot_digital_twin.routes.deployment")
 
 router = APIRouter(tags=["deployment"])
@@ -342,6 +354,89 @@ async def validate_on_cluster(cluster_id: str, request: Request, user_email: str
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+async def _maybe_deploy_lakets_ops_jobs(
+    state: AppState,
+    body: dict,
+    pipeline_id: str | None,
+    w: Any,
+) -> dict | None:
+    """Deploy LakeTS operational jobs when LakeTS is enabled for the pipeline.
+
+    LakeTS is considered enabled when the pipeline's ``sink_config`` carries a
+    tiering block OR its ``source_config`` carries an ``lb_project_id`` — the
+    same signal the provisioning flow uses. Returns a result dict (status +
+    jobs/error) or ``None`` when LakeTS is not enabled. Always non-raising.
+    """
+    if not pipeline_id:
+        return None
+
+    source_config: dict = {}
+    sink_config: dict = {}
+    if state.db_available and state.db:
+        try:
+            row = await state.db.fetchrow(
+                "SELECT source_config, sink_config FROM pipelines WHERE id = $1::uuid",
+                pipeline_id,
+            )
+            if row:
+                source_config = _coerce_json_dict(row["source_config"])
+                sink_config = _coerce_json_dict(row["sink_config"])
+        except Exception as exc:
+            logger.warning("deploy_job: failed to load pipeline %s config: %s", pipeline_id, exc)
+            return None
+
+    tiering = sink_config.get("tiering") if isinstance(sink_config, dict) else None
+    lb_project_id = (
+        source_config.get("lb_project_id") if isinstance(source_config, dict) else None
+    ) or body.get("project_id")
+    lakets_enabled = bool(tiering) or bool(lb_project_id)
+    if not lakets_enabled:
+        return None
+
+    if not lb_project_id:
+        logger.warning(
+            "deploy_job: LakeTS enabled for pipeline %s but no lb_project_id resolvable",
+            pipeline_id,
+        )
+        return {"status": "skipped", "error": "No lb_project_id resolvable"}
+
+    branch_id = (
+        (source_config.get("lb_branch_id") if isinstance(source_config, dict) else None)
+        or body.get("branch_id")
+        or "production"
+    )
+    database = (
+        (source_config.get("lb_database") if isinstance(source_config, dict) else None)
+        or body.get("database")
+        or "databricks_postgres"
+    )
+
+    try:
+        results = deploy_lakets_ops_jobs(
+            w,
+            lb_project_id,
+            branch_id,
+            database=database,
+        )
+        return {"status": "deployed", "jobs": results}
+    except Exception as exc:
+        logger.exception("deploy_job: deploy_lakets_ops_jobs failed for %s", pipeline_id)
+        return {"status": "failed", "error": str(exc)}
+
+
+def _coerce_json_dict(raw: Any) -> dict:
+    """Return ``raw`` as a dict, parsing JSON strings; ``{}`` on any failure."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 @router.post("/api/cluster/deploy-job")
 async def deploy_job(request: Request, user_email: str = Depends(get_current_user), state: AppState = Depends(get_app_state)):
     """Create a Databricks job with a job cluster and optionally start it.
@@ -536,11 +631,20 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
             await track_resource(state.db, state.db_available, pipeline_id, "job_id", str(job_id))
             await track_resource(state.db, state.db_available, pipeline_id, "notebook_path", notebook_path)
 
-        return {
+        response: dict[str, Any] = {
             "job_id": job_id,
             "job_url": job_url,
             "notebook_path": notebook_path,
         }
+
+        # If LakeTS is enabled for this pipeline, deploy the operational jobs
+        # (partition manager, rollup, retention) against its Lakebase. Non-fatal:
+        # a failure here is reported but does not fail the consumer-job deploy.
+        lakets_jobs_result = await _maybe_deploy_lakets_ops_jobs(state, body, pipeline_id, w)
+        if lakets_jobs_result is not None:
+            response["lakets_jobs"] = lakets_jobs_result
+
+        return response
 
     except Exception as exc:
         logger.error("Job deployment failed: %s\n%s", exc, traceback.format_exc())

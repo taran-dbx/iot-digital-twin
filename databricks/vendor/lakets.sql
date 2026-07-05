@@ -1,9 +1,9 @@
 -- =============================================================================
--- LakeTS v0.1.2 — Time Series Toolkit for Databricks Lakebase
+-- LakeTS v0.1.0 — Time Series Toolkit for Databricks Lakebase
 --
--- Version:    0.1.2
--- Built:      2026-04-13T17:36:16Z
--- Git SHA:    7410c9c
+-- Version:    0.1.0
+-- Built:      2026-06-07T13:21:10Z
+-- Git SHA:    fc73bcf
 --
 -- Install:    psql -f lakets.sql
 --         or: conn.cursor().execute(open('lakets.sql').read())
@@ -21,6 +21,12 @@
 -- Manages install/upgrade lifecycle. Must be the first module executed.
 -- =============================================================================
 
+-- Suppress the "already exists" / "does not exist, skipping" notices that
+-- idempotent CREATE/DROP ... IF EXISTS statements emit. The version banner below
+-- and the closing summary restore NOTICE so they still print. (Add `psql -q` to
+-- also hide per-statement tags.)
+SET client_min_messages TO WARNING;
+
 CREATE SCHEMA IF NOT EXISTS lakets;
 
 CREATE TABLE IF NOT EXISTS lakets._version (
@@ -30,10 +36,11 @@ CREATE TABLE IF NOT EXISTS lakets._version (
 );
 
 -- Version guard: prevents downgrades, allows reinstall and upgrade.
+SET client_min_messages TO NOTICE;
 DO $$
 DECLARE
     v_installed       TEXT;
-    v_incoming        TEXT := coalesce(nullif('0.1.2', '__LAKE' || 'TS_VERSION__'), '0.1.2');
+    v_incoming        TEXT := coalesce(nullif('0.1.0', '__LAKE' || 'TS_VERSION__'), '0.1.0');
     v_installed_parts INT[];
     v_incoming_parts  INT[];
 BEGIN
@@ -76,6 +83,9 @@ BEGIN
     END IF;
 END $$;
 
+-- Quiet the remaining modules; the closing summary restores NOTICE.
+SET client_min_messages TO WARNING;
+
 
 -- ######################################################################
 -- ## MODULE: 01_schema.sql
@@ -83,17 +93,17 @@ END $$;
 
 -- =============================================================================
 -- LakeTS Core Schema
--- Metadata tables for hypertable management, chunk tracking, and policies.
+-- Metadata tables for ChronoTable management, chunk tracking, and policies.
 -- Requires: 00_version.sql (creates the lakets schema)
 --
--- Multi-tenant install: pass -v lakets_schema=<name> to psql to install
--- metadata under a custom schema instead of the default 'lakets'.
--- Example: psql -v lakets_schema=lakets_dev -f sql/99_install.sql
--- If the variable is not set, psql substitutes it as the literal string
--- ':lakets_schema' which is intentionally not used -- all objects use the
--- 'lakets' schema by default, hardcoded for compatibility with v0.1.x.
--- Full parameterization is planned for v0.3.0 (see docs/design/multi-tenant-namespacing.md).
+-- All objects are hardcoded to the 'lakets' schema in v0.1.x. A custom-schema
+-- (-v lakets_schema=<name>) install is planned for v0.3.0; the variable is read
+-- but not yet honored. See docs/design/multi-tenant-namespacing.md.
 -- =============================================================================
+
+-- Dedicated, partition-free schema for CDF shadow tables.
+-- CDF is enabled only on this schema; partitioned ChronoTable parents stay in public.
+CREATE SCHEMA IF NOT EXISTS lakets_cdf;
 
 -- ---------------------------------------------------------------------------
 -- ChronoTable Registry: tracks all tables converted to time-partitioned tables
@@ -106,7 +116,7 @@ CREATE TABLE IF NOT EXISTS lakets._chronotable_registry (
     chunk_interval INTERVAL NOT NULL DEFAULT '7 days',
     space_column TEXT,
     space_partitions INT DEFAULT 1,
-    compression_enabled BOOLEAN DEFAULT FALSE,
+    tiering_enabled BOOLEAN DEFAULT FALSE,
     retention_interval INTERVAL,
     shadow_table_name TEXT,
     sync_enabled BOOLEAN DEFAULT FALSE,
@@ -116,7 +126,7 @@ CREATE TABLE IF NOT EXISTS lakets._chronotable_registry (
 );
 
 -- ---------------------------------------------------------------------------
--- Chunk Metadata: tracks individual partitions (chunks) of each hypertable
+-- Chunk Metadata: tracks individual partitions (chunks) of each ChronoTable
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS lakets._chunk_metadata (
     id SERIAL PRIMARY KEY,
@@ -127,20 +137,23 @@ CREATE TABLE IF NOT EXISTS lakets._chunk_metadata (
     status TEXT NOT NULL DEFAULT 'active',
     row_count BIGINT,
     size_bytes BIGINT,
-    compressed_at TIMESTAMPTZ,
     tiered_at TIMESTAMPTZ,
+    -- Highest WAL position written to this chunk, stamped by the tiering
+    -- write-tracking trigger. The tiering durability gate drops a chunk only
+    -- once CDF's committed_lsn for the shadow has flushed past this mark.
+    last_write_lsn PG_LSN,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT valid_status CHECK (status IN ('active', 'compressed', 'tiered', 'dropped'))
+    CONSTRAINT valid_status CHECK (status IN ('active', 'tiered', 'dropped'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_chunk_metadata_hypertable
+CREATE INDEX IF NOT EXISTS idx_chunk_metadata_chronotable
     ON lakets._chunk_metadata(chronotable_id);
 
 CREATE INDEX IF NOT EXISTS idx_chunk_metadata_range
     ON lakets._chunk_metadata(range_start, range_end);
 
 -- ---------------------------------------------------------------------------
--- Policy Registry: tracks compression, retention, and tiering policies
+-- Policy Registry: tracks tiering, retention, and tiered-retention policies
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS lakets._policy_registry (
     id SERIAL PRIMARY KEY,
@@ -150,7 +163,7 @@ CREATE TABLE IF NOT EXISTS lakets._policy_registry (
     enabled BOOLEAN DEFAULT TRUE,
     last_run_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT valid_policy_type CHECK (policy_type IN ('compression', 'retention', 'tiered_retention'))
+    CONSTRAINT valid_policy_type CHECK (policy_type IN ('tiering', 'retention', 'tiered_retention'))
 );
 
 -- ---------------------------------------------------------------------------
@@ -163,13 +176,11 @@ CREATE TABLE IF NOT EXISTS lakets._rollup_registry (
     rollup_table          TEXT NOT NULL,
     realtime_view         TEXT,
     bucket_interval       INTERVAL NOT NULL,
-    refresh_mode          TEXT NOT NULL DEFAULT 'incremental',
     refresh_lag           INTERVAL DEFAULT '1 hour',
     watermark             TIMESTAMPTZ,
     query_text            TEXT NOT NULL,
     last_refreshed_at     TIMESTAMPTZ,
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT valid_refresh_mode CHECK (refresh_mode IN ('full', 'incremental'))
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ---------------------------------------------------------------------------
@@ -179,14 +190,12 @@ CREATE TABLE IF NOT EXISTS lakets._rollup_invalidation_log (
     id             SERIAL PRIMARY KEY,
     rollup_id      INT NOT NULL REFERENCES lakets._rollup_registry(id) ON DELETE CASCADE,
     bucket_start   TIMESTAMPTZ NOT NULL,
-    tier           TEXT NOT NULL DEFAULT 'hot',
     invalidated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_rollup_invalidation UNIQUE (rollup_id, bucket_start),
-    CONSTRAINT valid_tier CHECK (tier IN ('hot', 'cold'))
+    CONSTRAINT uq_rollup_invalidation UNIQUE (rollup_id, bucket_start)
 );
 
 CREATE INDEX IF NOT EXISTS idx_rollup_invalidation_rollup_id
-    ON lakets._rollup_invalidation_log(rollup_id, tier, bucket_start);
+    ON lakets._rollup_invalidation_log(rollup_id, bucket_start);
 
 -- ---------------------------------------------------------------------------
 -- LVC Registry: tracks Last Value Cache configs per ChronoTable
@@ -200,23 +209,6 @@ CREATE TABLE IF NOT EXISTS lakets._lvc_registry (
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chronotable_id)
-);
-
--- ---------------------------------------------------------------------------
--- Downsample Registry: tracks multi-resolution pipeline definitions
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS lakets._downsample_registry (
-    id              SERIAL PRIMARY KEY,
-    name            TEXT UNIQUE NOT NULL,
-    source_table    TEXT NOT NULL,
-    source_schema   TEXT NOT NULL DEFAULT 'public',
-    intervals       INTERVAL[] NOT NULL,
-    retention       INTERVAL[] NOT NULL,
-    agg_expressions TEXT[] NOT NULL,
-    group_by        TEXT[],
-    delta_catalog   TEXT NOT NULL DEFAULT 'main',
-    delta_schema    TEXT NOT NULL DEFAULT 'lakets_rollups',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ---------------------------------------------------------------------------
@@ -234,14 +226,17 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunk_metadata_chunk_name
     ON lakets._chunk_metadata(chunk_name);
 
--- FK index on _policy_registry (scanned by compression/retention jobs)
+-- FK index on _policy_registry (scanned by tiering/retention jobs)
 CREATE INDEX IF NOT EXISTS idx_policy_registry_ct_type
     ON lakets._policy_registry(chronotable_id, policy_type) WHERE enabled = TRUE;
 
+-- Migration: drop legacy refresh_mode (auto-drops valid_refresh_mode CHECK and the old
+-- partial index that referenced it). No-op on fresh installs.
+ALTER TABLE lakets._rollup_registry DROP COLUMN IF EXISTS refresh_mode;
+
 -- FK index on _rollup_registry (scanned on every data write via invalidation trigger)
 CREATE INDEX IF NOT EXISTS idx_rollup_registry_source_ct
-    ON lakets._rollup_registry(source_chronotable_id, refresh_mode)
-    WHERE refresh_mode = 'incremental';
+    ON lakets._rollup_registry(source_chronotable_id);
 
 -- ---------------------------------------------------------------------------
 -- _resolve_partition_parent: Resolves a partition's parent table name.
@@ -271,7 +266,7 @@ $$;
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
--- _ensure_partitions: Pre-creates partitions for a hypertable.
+-- _ensure_partitions: Pre-creates partitions for a ChronoTable.
 -- Supports both relative (past/future count) and explicit range.
 -- Idempotent — skips partitions that already exist.
 -- ---------------------------------------------------------------------------
@@ -302,7 +297,7 @@ BEGIN
     WHERE id = p_chronotable_id;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Hypertable with id % not found', p_chronotable_id;
+        RAISE EXCEPTION 'ChronoTable with id % not found', p_chronotable_id;
     END IF;
 
     -- Use explicit range if provided, otherwise calculate from now
@@ -356,10 +351,10 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- create_hypertable: Converts a regular table to a time-partitioned table.
+-- create_chronotable: Converts a regular table to a time-partitioned table.
 -- Scans existing data to create partitions covering the full range.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.create_hypertable(
+CREATE OR REPLACE FUNCTION lakets.create_chronotable(
     p_table_name TEXT,
     p_time_column TEXT,
     p_chunk_interval INTERVAL DEFAULT '7 days',
@@ -512,7 +507,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- show_chunks: Lists partitions with metadata for a hypertable.
+-- show_chunks: Lists partitions with metadata for a ChronoTable.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION lakets.show_chunks(
     p_table_name TEXT,
@@ -604,18 +599,95 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- create_chronotable: V2 alias for create_hypertable.
+-- drop_chronotable: Drops a ChronoTable and all associated objects.
+-- Cleans up: LVC cache, shadow sync, rollups (views + tables), policies,
+-- chunk metadata, and the registry entry.
+-- The physical table is dropped with CASCADE (removes all partitions).
+-- Idempotent — safe to call even if some objects were already removed.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.create_chronotable(
+CREATE OR REPLACE FUNCTION lakets.drop_chronotable(
     p_table_name TEXT,
-    p_time_column TEXT,
-    p_chunk_interval INTERVAL DEFAULT '7 days',
     p_schema_name TEXT DEFAULT 'public'
 )
-RETURNS INT
-LANGUAGE sql
+RETURNS VOID
+LANGUAGE plpgsql
 AS $$
-    SELECT lakets.create_hypertable(p_table_name, p_time_column, p_chunk_interval, p_schema_name);
+DECLARE
+    v_ct_id INT;
+    v_rollup RECORD;
+    v_lvc RECORD;
+    v_shadow TEXT;
+BEGIN
+    -- Look up the ChronoTable
+    SELECT id INTO v_ct_id
+    FROM lakets._chronotable_registry
+    WHERE schema_name = p_schema_name AND table_name = p_table_name;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Table %.% is not a registered ChronoTable',
+            p_schema_name, p_table_name;
+    END IF;
+
+    -- 1. Drop RollUps that source from this ChronoTable
+    FOR v_rollup IN
+        SELECT name, rollup_table, realtime_view
+        FROM lakets._rollup_registry
+        WHERE source_chronotable_id = v_ct_id
+    LOOP
+        EXECUTE format('DROP VIEW IF EXISTS public.%I', v_rollup.realtime_view);
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', v_rollup.rollup_table);
+
+        RAISE NOTICE 'Dropped RollUp: %', v_rollup.name;
+    END LOOP;
+
+    -- 2. Disable LVC (drop cache table + trigger)
+    FOR v_lvc IN
+        SELECT cache_table_name
+        FROM lakets._lvc_registry
+        WHERE chronotable_id = v_ct_id
+    LOOP
+        BEGIN
+            EXECUTE format(
+                'DROP TRIGGER IF EXISTS trg_lakets_lvc ON %I.%I',
+                p_schema_name, p_table_name
+            );
+        EXCEPTION WHEN undefined_object THEN NULL;
+        END;
+
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', v_lvc.cache_table_name);
+
+        RAISE NOTICE 'Dropped LVC cache: %', v_lvc.cache_table_name;
+    END LOOP;
+
+    -- 3. Disable shadow sync (drop shadow table + trigger)
+    SELECT shadow_table_name INTO v_shadow
+    FROM lakets._chronotable_registry
+    WHERE id = v_ct_id AND sync_enabled = TRUE;
+
+    IF v_shadow IS NOT NULL THEN
+        BEGIN
+            EXECUTE format(
+                'DROP TRIGGER IF EXISTS trg_lakets_sync ON %I.%I',
+                p_schema_name, p_table_name
+            );
+        EXCEPTION WHEN undefined_object THEN NULL;
+        END;
+
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', v_shadow);
+
+        RAISE NOTICE 'Dropped shadow table: %', v_shadow;
+    END IF;
+
+    -- 4. Delete the registry entry (ON DELETE CASCADE cleans:
+    --    _chunk_metadata, _rollup_registry, _rollup_invalidation_log,
+    --    _policy_registry, _lvc_registry)
+    DELETE FROM lakets._chronotable_registry WHERE id = v_ct_id;
+
+    -- 5. Drop the physical table (CASCADE drops all partitions)
+    EXECUTE format('DROP TABLE IF EXISTS %I.%I CASCADE', p_schema_name, p_table_name);
+
+    RAISE NOTICE 'Dropped ChronoTable: %.%', p_schema_name, p_table_name;
+END;
 $$;
 
 
@@ -928,7 +1000,7 @@ $$;
 -- LakeTS RollUp Engine
 -- Incrementally-maintained time-bucketed aggregations over ChronoTables.
 -- Backed by regular tables (not materialized views) for surgical per-bucket
--- refresh. Supports hot-tier (Lakebase) and cold-tier (Delta Lake) data.
+-- refresh. RollUps are maintained from Lakebase-resident source data.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -940,7 +1012,6 @@ CREATE OR REPLACE FUNCTION lakets.create_rollup(
     p_bucket_interval INTERVAL DEFAULT '1 hour',
     p_source_table    TEXT     DEFAULT NULL,
     p_source_schema   TEXT     DEFAULT 'public',
-    p_refresh_mode    TEXT     DEFAULT 'incremental',
     p_depends_on      TEXT[]   DEFAULT '{}'
 )
 RETURNS INT
@@ -1020,10 +1091,10 @@ BEGIN
     -- Register with new columns
     INSERT INTO lakets._rollup_registry
         (name, source_chronotable_id, rollup_table, realtime_view,
-         bucket_interval, refresh_mode, query_text, watermark, last_refreshed_at,
+         bucket_interval, query_text, watermark, last_refreshed_at,
          bucket_column, source_time_column, depends_on)
     VALUES (p_name, v_chronotable_id, v_rollup_table, v_rt_view,
-            p_bucket_interval, p_refresh_mode, p_query, v_watermark, now(),
+            p_bucket_interval, p_query, v_watermark, now(),
             v_bucket_col, v_time_col, v_dep_ids)
     RETURNING id INTO v_rollup_id;
 
@@ -1073,53 +1144,46 @@ BEGIN
     -- Use detected bucket column or default (M27)
     v_bucket_col := COALESCE(v_rec.bucket_column, 'bucket');
 
-    IF v_rec.refresh_mode = 'full' THEN
-        -- Full mode: TRUNCATE + re-INSERT
-        EXECUTE format('TRUNCATE public.%I', v_rec.rollup_table);
-        EXECUTE format('INSERT INTO public.%I %s', v_rec.rollup_table, v_rec.query_text);
-    ELSE
-        -- Incremental mode: only re-compute dirty window
-        v_dirty_from := COALESCE(v_rec.watermark, '-infinity'::timestamptz)
-                        - v_rec.bucket_interval;
+    -- Always incremental: re-compute only the dirty window
+    v_dirty_from := COALESCE(v_rec.watermark, '-infinity'::timestamptz)
+                    - v_rec.bucket_interval;
 
-        -- Phase 1: Watermark-based refresh (current window)
-        -- Attempt predicate injection for scan-level pruning (M23)
-        IF COALESCE(v_rec.predicate_injection, TRUE) AND v_rec.source_time_column IS NOT NULL THEN
-            v_query := lakets._inject_time_predicate(
-                v_rec.query_text, v_rec.source_time_column, v_dirty_from
-            );
-        ELSE
-            v_query := v_rec.query_text;
-        END IF;
-
-        EXECUTE format('DELETE FROM public.%I WHERE %I >= %L',
-            v_rec.rollup_table, v_bucket_col, v_dirty_from);
-
-        EXECUTE format(
-            'INSERT INTO public.%I SELECT * FROM (%s) _q WHERE _q.%I >= %L',
-            v_rec.rollup_table, v_query, v_bucket_col, v_dirty_from
+    -- Phase 1: Watermark-based refresh (current window)
+    -- Attempt predicate injection for scan-level pruning (M23)
+    IF COALESCE(v_rec.predicate_injection, TRUE) AND v_rec.source_time_column IS NOT NULL THEN
+        v_query := lakets._inject_time_predicate(
+            v_rec.query_text, v_rec.source_time_column, v_dirty_from
         );
-
-        -- Phase 2: Batch refresh of hot-tier invalidation log entries (M24)
-        SELECT array_agg(DISTINCT bucket_start ORDER BY bucket_start)
-        INTO v_dirty_buckets
-        FROM lakets._rollup_invalidation_log
-        WHERE rollup_id = v_rec.id
-          AND tier = 'hot'
-          AND bucket_start < v_dirty_from;
-
-        IF v_dirty_buckets IS NOT NULL AND array_length(v_dirty_buckets, 1) > 0 THEN
-            PERFORM lakets._refresh_buckets_chunked(
-                v_rec.id, v_rec.rollup_table, v_rec.query_text,
-                v_bucket_col, v_dirty_buckets, 100
-            );
-        END IF;
-
-        -- Clear only processed hot-tier entries (scoped to avoid racing with concurrent writes)
-        DELETE FROM lakets._rollup_invalidation_log
-        WHERE rollup_id = v_rec.id AND tier = 'hot'
-          AND bucket_start < v_dirty_from;
+    ELSE
+        v_query := v_rec.query_text;
     END IF;
+
+    EXECUTE format('DELETE FROM public.%I WHERE %I >= %L',
+        v_rec.rollup_table, v_bucket_col, v_dirty_from);
+
+    EXECUTE format(
+        'INSERT INTO public.%I SELECT * FROM (%s) _q WHERE _q.%I >= %L',
+        v_rec.rollup_table, v_query, v_bucket_col, v_dirty_from
+    );
+
+    -- Phase 2: Batch refresh of invalidated buckets below the watermark (M24)
+    SELECT array_agg(DISTINCT bucket_start ORDER BY bucket_start)
+    INTO v_dirty_buckets
+    FROM lakets._rollup_invalidation_log
+    WHERE rollup_id = v_rec.id
+      AND bucket_start < v_dirty_from;
+
+    IF v_dirty_buckets IS NOT NULL AND array_length(v_dirty_buckets, 1) > 0 THEN
+        PERFORM lakets._refresh_buckets_chunked(
+            v_rec.id, v_rec.rollup_table, v_rec.query_text,
+            v_bucket_col, v_dirty_buckets, 100
+        );
+    END IF;
+
+    -- Clear processed entries (scoped to avoid racing with concurrent writers)
+    DELETE FROM lakets._rollup_invalidation_log
+    WHERE rollup_id = v_rec.id
+      AND bucket_start < v_dirty_from;
 
     -- Advance watermark using detected bucket column
     EXECUTE format('SELECT max(%I) FROM public.%I', v_bucket_col, v_rec.rollup_table)
@@ -1198,6 +1262,11 @@ BEGIN
         RAISE EXCEPTION 'RollUp % not found', p_name;
     END IF;
 
+    -- Tear down CDF sync (drops shadow + trigger) before the rollup table is dropped
+    IF EXISTS (SELECT 1 FROM lakets._rollup_registry WHERE name = p_name AND sync_enabled = TRUE) THEN
+        PERFORM lakets._disable_rollup_sync(p_name);
+    END IF;
+
     EXECUTE format('DROP VIEW IF EXISTS public.%I', v_rt_view);
     EXECUTE format('DROP TABLE IF EXISTS public.%I', v_rollup_table);
     DELETE FROM lakets._rollup_registry WHERE name = p_name;
@@ -1213,14 +1282,12 @@ RETURNS TABLE (
     rollup_table      TEXT,
     realtime_view     TEXT,
     bucket_interval   INTERVAL,
-    refresh_mode      TEXT,
     refresh_lag       INTERVAL,
     watermark         TIMESTAMPTZ,
     last_refreshed_at TIMESTAMPTZ,
     source_table      TEXT,
     bucket_column     TEXT,
-    depends_on        INT[],
-    export_enabled    BOOLEAN
+    depends_on        INT[]
 )
 LANGUAGE plpgsql
 AS $$
@@ -1231,14 +1298,12 @@ BEGIN
         r.rollup_table,
         r.realtime_view,
         r.bucket_interval,
-        r.refresh_mode,
         r.refresh_lag,
         r.watermark,
         r.last_refreshed_at,
         COALESCE(cr.schema_name || '.' || cr.table_name, 'N/A'),
         COALESCE(r.bucket_column, 'bucket'),
-        r.depends_on,
-        COALESCE(r.export_enabled, FALSE)
+        r.depends_on
     FROM lakets._rollup_registry r
     LEFT JOIN lakets._chronotable_registry cr ON r.source_chronotable_id = cr.id
     ORDER BY r.name;
@@ -1273,14 +1338,13 @@ BEGIN
         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
     END IF;
 
-    -- Find all incremental RollUps registered against this ChronoTable
+    -- Find all RollUps registered against this ChronoTable
     FOR v_rec IN
         SELECT r.id, r.bucket_interval
         FROM lakets._rollup_registry r
         JOIN lakets._chronotable_registry cr ON r.source_chronotable_id = cr.id
         WHERE cr.schema_name = TG_TABLE_SCHEMA
           AND cr.table_name = COALESCE(v_parent_table, TG_TABLE_NAME)
-          AND r.refresh_mode = 'incremental'
     LOOP
         IF TG_OP = 'DELETE' THEN
             EXECUTE format('SELECT date_bin(%L, ($1).%I, %L::timestamptz)',
@@ -1292,11 +1356,11 @@ BEGIN
                 INTO v_bucket_start USING NEW;
         END IF;
 
-        -- Upsert into invalidation log (tier = 'hot' for Lakebase mutations)
-        INSERT INTO lakets._rollup_invalidation_log (rollup_id, bucket_start, tier)
-        VALUES (v_rec.id, v_bucket_start, 'hot')
+        -- Record the affected bucket as dirty
+        INSERT INTO lakets._rollup_invalidation_log (rollup_id, bucket_start)
+        VALUES (v_rec.id, v_bucket_start)
         ON CONFLICT (rollup_id, bucket_start) DO UPDATE
-            SET invalidated_at = now(), tier = 'hot';
+            SET invalidated_at = now();
     END LOOP;
 
     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
@@ -1314,20 +1378,15 @@ AS $$
 DECLARE
     v_schema TEXT;
     v_table TEXT;
-    v_mode TEXT;
 BEGIN
-    SELECT cr.schema_name, cr.table_name, r.refresh_mode
-    INTO v_schema, v_table, v_mode
+    SELECT cr.schema_name, cr.table_name
+    INTO v_schema, v_table
     FROM lakets._rollup_registry r
     JOIN lakets._chronotable_registry cr ON r.source_chronotable_id = cr.id
     WHERE r.name = p_rollup_name;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'RollUp % not found', p_rollup_name;
-    END IF;
-
-    IF v_mode != 'incremental' THEN
-        RAISE EXCEPTION 'Invalidation requires refresh_mode = incremental (current: %)', v_mode;
     END IF;
 
     -- Per-row trigger for UPDATE/DELETE (existing behavior)
@@ -1402,13 +1461,12 @@ BEGIN
     -- Clear invalidation log entries for this RollUp
     DELETE FROM lakets._rollup_invalidation_log WHERE rollup_id = v_rollup_id;
 
-    -- Check if other incremental RollUps on the same source table still need the trigger
+    -- Check if other RollUps on the same source table still need the trigger
     SELECT count(*) INTO v_other_count
     FROM lakets._rollup_registry r
     JOIN lakets._chronotable_registry cr ON r.source_chronotable_id = cr.id
     WHERE cr.schema_name = v_schema AND cr.table_name = v_table
-      AND r.name != p_rollup_name
-      AND r.refresh_mode = 'incremental';
+      AND r.name != p_rollup_name;
 
     IF v_other_count = 0 THEN
         EXECUTE format(
@@ -1425,14 +1483,19 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- invalidate_rollup_range: Manually marks a time range as dirty.
--- Use for bulk imports (COPY bypasses triggers) or cold-tier corrections.
+-- invalidate_rollup_range: Manually marks a time range as dirty so the next
+-- refresh re-aggregates it. Use after a bulk import (COPY bypasses per-row
+-- triggers) or a correction to historical data still resident in Lakebase.
+-- Buckets whose source partition has been dropped from Lakebase are skipped:
+-- they cannot be re-aggregated, so the RollUp keeps its last computed value.
 -- ---------------------------------------------------------------------------
+-- DROP first: the signature dropped the old p_tier argument, and CREATE OR
+-- REPLACE would leave the 4-arg overload in place (making a 3-arg call ambiguous).
+DROP FUNCTION IF EXISTS lakets.invalidate_rollup_range(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT);
 CREATE OR REPLACE FUNCTION lakets.invalidate_rollup_range(
     p_name TEXT,
     p_from TIMESTAMPTZ,
-    p_to   TIMESTAMPTZ,
-    p_tier TEXT DEFAULT NULL  -- NULL = auto-detect from chunk metadata (M26)
+    p_to   TIMESTAMPTZ
 )
 RETURNS INT
 LANGUAGE plpgsql
@@ -1440,7 +1503,6 @@ AS $$
 DECLARE
     v_rec RECORD;
     v_bucket TIMESTAMPTZ;
-    v_tier TEXT;
     v_count INT := 0;
 BEGIN
     SELECT r.id, r.bucket_interval, r.source_chronotable_id
@@ -1459,20 +1521,21 @@ BEGIN
             v_rec.bucket_interval
         )
     LOOP
-        -- Auto-detect tier if not specified (M26)
-        IF p_tier IS NULL THEN
-            v_tier := COALESCE(
-                lakets._resolve_bucket_tier(v_rec.source_chronotable_id, v_bucket),
-                'hot'
-            );
-        ELSE
-            v_tier := p_tier;
+        -- Skip buckets whose source partition has been dropped from Lakebase;
+        -- re-aggregating them would scan no source rows and zero the RollUp.
+        IF EXISTS (
+            SELECT 1 FROM lakets._chunk_metadata cm
+            WHERE cm.chronotable_id = v_rec.source_chronotable_id
+              AND v_bucket >= cm.range_start AND v_bucket < cm.range_end
+              AND cm.status = 'dropped'
+        ) THEN
+            CONTINUE;
         END IF;
 
-        INSERT INTO lakets._rollup_invalidation_log (rollup_id, bucket_start, tier)
-        VALUES (v_rec.id, v_bucket, v_tier)
+        INSERT INTO lakets._rollup_invalidation_log (rollup_id, bucket_start)
+        VALUES (v_rec.id, v_bucket)
         ON CONFLICT (rollup_id, bucket_start) DO UPDATE
-            SET invalidated_at = now(), tier = v_tier;
+            SET invalidated_at = now();
         v_count := v_count + 1;
     END LOOP;
 
@@ -1482,28 +1545,166 @@ $$;
 
 
 -- ######################################################################
--- ## MODULE: 05_compression.sql
+-- ## MODULE: 05_tiering.sql
 -- ######################################################################
 
 -- =============================================================================
--- LakeTS Compression & Tiering Policies
--- Register policies for automatic data tiering from Lakebase to Delta Lake.
--- Actual tiering is executed by Databricks workflow jobs.
+-- LakeTS Tiering Policies
+-- A tiering policy VALIDATES that cold ChronoTable partitions are durable in the
+-- Unity Catalog Managed Table (via Lakebase CDF) and flags them 'tiered' (ready
+-- to drop). The data stays in Lakebase and remains queryable; the partition is
+-- physically removed later by retention at drop_after. Executed by the
+-- Databricks tiering job. tier_chunk validates and flags; it never drops.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
--- add_compression_policy: Registers a compression/tiering policy.
--- After compress_after interval, the Databricks compression job will:
---   1. Ensure data is synced to Delta via Lakehouse Sync
---   2. Optimize the Delta table (Z-ORDER / Liquid Clustering)
---   3. Drop the Lakebase partition
---   4. Update chunk metadata status to 'tiered'
+-- _cdf_committed_lsn: returns the CDF-flushed LSN for a shadow table, but
+-- ONLY if it is actively STREAMING in wal2delta.tables. Returns NULL (fail
+-- closed) if the wal2delta subsystem is absent, the shadow does not exist,
+-- or the table is not STREAMING (e.g. SKIPPED for missing REPLICA IDENTITY).
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.add_compression_policy(
+CREATE OR REPLACE FUNCTION lakets._cdf_committed_lsn(p_shadow_name TEXT)
+RETURNS PG_LSN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_oid OID;
+    v_lsn PG_LSN;
+BEGIN
+    IF to_regclass('wal2delta.tables') IS NULL THEN
+        RETURN NULL;
+    END IF;
+    v_oid := to_regclass('lakets_cdf.' || quote_ident(p_shadow_name))::oid;
+    IF v_oid IS NULL THEN
+        RETURN NULL;
+    END IF;
+    SELECT committed_lsn INTO v_lsn
+    FROM wal2delta.tables
+    WHERE table_oid = v_oid AND status = 'STREAMING';
+    RETURN v_lsn;  -- NULL if no STREAMING row
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- _stamp_tiered_chunk_lsn: statement-level trigger that records the current
+-- WAL position on every chunk that just received writes. Installed on the
+-- ChronoTable PARENT (with a transition table) so it covers all current and
+-- future partitions in one trigger and stamps ONLY the chunks actually
+-- touched -- a write to today's hot chunk never advances a cold chunk's
+-- watermark, which is what lets cold chunks become tier-eligible.
+--
+-- Why parent + transition table: a statement-level trigger on a partition does
+-- not fire for inserts routed through the parent, and chunk_name is stored
+-- schema-qualified, so the row->chunk mapping is recomputed here via date_bin
+-- (same origin '2000-01-01' as _ensure_partitions).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets._stamp_tiered_chunk_lsn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_parent   TEXT;
+    v_ct_id    INT;
+    v_time_col TEXT;
+    v_interval INTERVAL;
+BEGIN
+    v_parent := lakets._resolve_partition_parent(TG_TABLE_SCHEMA, TG_TABLE_NAME);
+
+    SELECT cr.id, cr.time_column, cr.chunk_interval
+    INTO v_ct_id, v_time_col, v_interval
+    FROM lakets._chronotable_registry cr
+    WHERE cr.schema_name = TG_TABLE_SCHEMA
+      AND cr.table_name = COALESCE(v_parent, TG_TABLE_NAME);
+
+    IF v_ct_id IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    -- pg_current_wal_lsn() here is a lower bound on the writing txn's commit
+    -- LSN. That imprecision is immaterial: tier_chunk only ever drops chunks
+    -- whose time window ended at least p_after ago (days), by which point
+    -- committed_lsn has long flushed past this mark.
+    IF TG_OP = 'DELETE' THEN
+        EXECUTE format(
+            'UPDATE lakets._chunk_metadata cm
+                SET last_write_lsn = pg_current_wal_lsn()
+              WHERE cm.chronotable_id = $1
+                AND cm.range_start IN (SELECT DISTINCT date_bin($2, %I, $3) FROM _old_rows)',
+            v_time_col)
+        USING v_ct_id, v_interval, '2000-01-01'::timestamptz;
+    ELSE
+        EXECUTE format(
+            'UPDATE lakets._chunk_metadata cm
+                SET last_write_lsn = pg_current_wal_lsn()
+              WHERE cm.chronotable_id = $1
+                AND cm.range_start IN (SELECT DISTINCT date_bin($2, %I, $3) FROM _new_rows)',
+            v_time_col)
+        USING v_ct_id, v_interval, '2000-01-01'::timestamptz;
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- _install_tiering_write_tracking / _remove_tiering_write_tracking: attach or
+-- detach the per-chunk write-LSN triggers on a ChronoTable parent. Three
+-- triggers: PostgreSQL allows a transition table for only ONE event each, so
+-- INSERT and UPDATE get separate NEW TABLE triggers and DELETE gets an OLD
+-- TABLE trigger. All three call the same trigger function.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets._install_tiering_write_tracking(
+    p_schema_name TEXT, p_table_name TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    EXECUTE format(
+        'CREATE OR REPLACE TRIGGER trg_lakets_tier_lsn_insert
+         AFTER INSERT ON %I.%I
+         REFERENCING NEW TABLE AS _new_rows
+         FOR EACH STATEMENT EXECUTE FUNCTION lakets._stamp_tiered_chunk_lsn()',
+        p_schema_name, p_table_name);
+    EXECUTE format(
+        'CREATE OR REPLACE TRIGGER trg_lakets_tier_lsn_update
+         AFTER UPDATE ON %I.%I
+         REFERENCING NEW TABLE AS _new_rows
+         FOR EACH STATEMENT EXECUTE FUNCTION lakets._stamp_tiered_chunk_lsn()',
+        p_schema_name, p_table_name);
+    EXECUTE format(
+        'CREATE OR REPLACE TRIGGER trg_lakets_tier_lsn_delete
+         AFTER DELETE ON %I.%I
+         REFERENCING OLD TABLE AS _old_rows
+         FOR EACH STATEMENT EXECUTE FUNCTION lakets._stamp_tiered_chunk_lsn()',
+        p_schema_name, p_table_name);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION lakets._remove_tiering_write_tracking(
+    p_schema_name TEXT, p_table_name TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_tier_lsn_insert ON %I.%I',
+        p_schema_name, p_table_name);
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_tier_lsn_update ON %I.%I',
+        p_schema_name, p_table_name);
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_tier_lsn_delete ON %I.%I',
+        p_schema_name, p_table_name);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- add_tiering_policy: register a tiering policy. Chunks older than p_after are
+-- validated and flagged 'tiered' (ready to drop) once CDF has flushed their data
+-- to UC; the partitions themselves are dropped later by retention at drop_after.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets.add_tiering_policy(
     p_table_name TEXT,
-    p_compress_after INTERVAL,
-    p_segment_by TEXT DEFAULT NULL,
-    p_order_by TEXT DEFAULT NULL,
+    p_after INTERVAL,
     p_schema_name TEXT DEFAULT 'public'
 )
 RETURNS INT
@@ -1512,9 +1713,9 @@ AS $$
 DECLARE
     v_chronotable_id INT;
     v_policy_id INT;
-    v_config JSONB;
+    v_sync_enabled BOOLEAN;
 BEGIN
-    SELECT id INTO v_chronotable_id
+    SELECT id, sync_enabled INTO v_chronotable_id, v_sync_enabled
     FROM lakets._chronotable_registry
     WHERE schema_name = p_schema_name AND table_name = p_table_name;
 
@@ -1523,185 +1724,131 @@ BEGIN
             p_schema_name, p_table_name;
     END IF;
 
-    -- Check for existing compression policy
-    IF EXISTS (
-        SELECT 1 FROM lakets._policy_registry
-        WHERE chronotable_id = v_chronotable_id AND policy_type = 'compression'
-    ) THEN
-        RAISE EXCEPTION 'Compression policy already exists for %.%',
+    IF NOT COALESCE(v_sync_enabled, FALSE) THEN
+        RAISE NOTICE 'Table %.% is not CDF-synced yet; tiering will not flag any '
+            'chunks until enable_sync is called and CDF is streaming.',
             p_schema_name, p_table_name;
     END IF;
 
-    v_config := jsonb_build_object(
-        'compress_after', p_compress_after::TEXT,
-        'segment_by', p_segment_by,
-        'order_by', COALESCE(p_order_by, (
-            SELECT time_column FROM lakets._chronotable_registry WHERE id = v_chronotable_id
-        ) || ' DESC')
-    );
+    -- _policy_registry has no unique constraint on (chronotable_id, policy_type),
+    -- so guard with an existence check.
+    IF EXISTS (
+        SELECT 1 FROM lakets._policy_registry
+        WHERE chronotable_id = v_chronotable_id AND policy_type = 'tiering'
+    ) THEN
+        RAISE EXCEPTION 'Tiering policy already exists for %.%', p_schema_name, p_table_name;
+    END IF;
 
-    INSERT INTO lakets._policy_registry
-        (chronotable_id, policy_type, config, enabled)
-    VALUES (v_chronotable_id, 'compression', v_config, TRUE)
+    INSERT INTO lakets._policy_registry (chronotable_id, policy_type, config, enabled)
+    VALUES (v_chronotable_id, 'tiering', jsonb_build_object('after', p_after::TEXT), TRUE)
     RETURNING id INTO v_policy_id;
 
-    -- Mark the hypertable as compression-enabled
     UPDATE lakets._chronotable_registry
-    SET compression_enabled = TRUE
+    SET tiering_enabled = TRUE
     WHERE id = v_chronotable_id;
+
+    -- Track per-chunk write positions from now on.
+    PERFORM lakets._install_tiering_write_tracking(p_schema_name, p_table_name);
+
+    -- Backfill: stamp existing active chunks with the current WAL head as a
+    -- conservative upper bound on their writes. A chunk is flagged 'tiered' only
+    -- once CDF has flushed past this mark, so pre-policy data is never marked
+    -- durable before it actually is. (NULL last_write_lsn is treated as "cannot
+    -- prove durable" by tier_chunk, so this backfill is what makes existing
+    -- chunks eligible at all.)
+    UPDATE lakets._chunk_metadata
+    SET last_write_lsn = pg_current_wal_lsn()
+    WHERE chronotable_id = v_chronotable_id
+      AND status = 'active'
+      AND last_write_lsn IS NULL;
 
     RETURN v_policy_id;
 END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- compress_chunk: Marks a chunk for compression/tiering.
--- The actual tiering to Delta is done by the Databricks workflow job.
+-- remove_tiering_policy: Removes the tiering policy for a ChronoTable.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.compress_chunk(
-    p_chunk_name TEXT
-)
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE lakets._chunk_metadata
-    SET status = 'compressed',
-        compressed_at = now()
-    WHERE chunk_name = p_chunk_name AND status = 'active';
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Chunk % not found or not active', p_chunk_name;
-    END IF;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- decompress_chunk: Marks a tiered chunk for re-ingestion.
--- The actual data restoration from Delta is done by the Databricks workflow.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.decompress_chunk(
-    p_chunk_name TEXT
-)
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE lakets._chunk_metadata
-    SET status = 'active',
-        compressed_at = NULL,
-        tiered_at = NULL
-    WHERE chunk_name = p_chunk_name AND status IN ('compressed', 'tiered');
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Chunk % not found or not compressed/tiered', p_chunk_name;
-    END IF;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- show_compression_policy: Returns the compression policy for a hypertable.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.show_compression_policy(
-    p_table_name TEXT,
-    p_schema_name TEXT DEFAULT 'public'
-)
-RETURNS TABLE (
-    policy_id INT,
-    compress_after TEXT,
-    segment_by TEXT,
-    order_by TEXT,
-    enabled BOOLEAN,
-    last_run_at TIMESTAMPTZ
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_chronotable_id INT;
-BEGIN
-    SELECT id INTO v_chronotable_id
-    FROM lakets._chronotable_registry
-    WHERE schema_name = p_schema_name AND table_name = p_table_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Table %.% is not a registered ChronoTable',
-            p_schema_name, p_table_name;
-    END IF;
-
-    RETURN QUERY
-    SELECT
-        pr.id,
-        pr.config->>'compress_after',
-        pr.config->>'segment_by',
-        pr.config->>'order_by',
-        pr.enabled,
-        pr.last_run_at
-    FROM lakets._policy_registry pr
-    WHERE pr.chronotable_id = v_chronotable_id AND pr.policy_type = 'compression';
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- remove_compression_policy: Removes the compression policy.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.remove_compression_policy(
+CREATE OR REPLACE FUNCTION lakets.remove_tiering_policy(
     p_table_name TEXT,
     p_schema_name TEXT DEFAULT 'public'
 )
 RETURNS VOID
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    v_chronotable_id INT;
+DECLARE v_chronotable_id INT;
 BEGIN
     SELECT id INTO v_chronotable_id
     FROM lakets._chronotable_registry
     WHERE schema_name = p_schema_name AND table_name = p_table_name;
-
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Table %.% is not a registered ChronoTable',
-            p_schema_name, p_table_name;
+        RAISE EXCEPTION 'Table %.% is not a registered ChronoTable', p_schema_name, p_table_name;
     END IF;
 
     DELETE FROM lakets._policy_registry
-    WHERE chronotable_id = v_chronotable_id AND policy_type = 'compression';
+    WHERE chronotable_id = v_chronotable_id AND policy_type = 'tiering';
 
     UPDATE lakets._chronotable_registry
-    SET compression_enabled = FALSE
+    SET tiering_enabled = FALSE
     WHERE id = v_chronotable_id;
+
+    PERFORM lakets._remove_tiering_write_tracking(p_schema_name, p_table_name);
 END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- _get_chunks_to_compress: Returns chunks eligible for compression.
--- Used by the Databricks compression job to find work.
+-- show_tiering_policy: Returns the tiering policy for a ChronoTable.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets._get_chunks_to_compress(
+CREATE OR REPLACE FUNCTION lakets.show_tiering_policy(
     p_table_name TEXT,
     p_schema_name TEXT DEFAULT 'public'
 )
-RETURNS TABLE (
-    chunk_id INT,
-    chunk_name TEXT,
-    range_start TIMESTAMPTZ,
-    range_end TIMESTAMPTZ
+RETURNS TABLE (policy_id INT, after TEXT, enabled BOOLEAN, last_run_at TIMESTAMPTZ)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT pr.id, pr.config->>'after', pr.enabled, pr.last_run_at
+    FROM lakets._policy_registry pr
+    JOIN lakets._chronotable_registry hr ON hr.id = pr.chronotable_id
+    WHERE hr.schema_name = p_schema_name
+      AND hr.table_name = p_table_name
+      AND pr.policy_type = 'tiering';
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- _get_chunks_to_tier: candidate chunks to validate — active, older than the
+-- policy 'after' interval, AND the table's shadow is STREAMING in CDF. The exact
+-- per-chunk durability check is enforced in tier_chunk before it flags a chunk.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets._get_chunks_to_tier(
+    p_table_name TEXT,
+    p_schema_name TEXT DEFAULT 'public'
 )
+RETURNS TABLE (chunk_id INT, chunk_name TEXT, range_start TIMESTAMPTZ, range_end TIMESTAMPTZ)
 LANGUAGE plpgsql
 AS $$
 DECLARE
     v_chronotable_id INT;
-    v_compress_after INTERVAL;
+    v_after INTERVAL;
+    v_shadow TEXT;
 BEGIN
-    SELECT hr.id, (pr.config->>'compress_after')::INTERVAL
-    INTO v_chronotable_id, v_compress_after
+    SELECT hr.id, (pr.config->>'after')::INTERVAL, hr.shadow_table_name
+    INTO v_chronotable_id, v_after, v_shadow
     FROM lakets._chronotable_registry hr
     JOIN lakets._policy_registry pr ON hr.id = pr.chronotable_id
     WHERE hr.schema_name = p_schema_name
       AND hr.table_name = p_table_name
-      AND pr.policy_type = 'compression'
+      AND pr.policy_type = 'tiering'
       AND pr.enabled = TRUE;
 
     IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    -- Hard gate: skip entirely unless the shadow is actively STREAMING.
+    IF v_shadow IS NULL OR lakets._cdf_committed_lsn(v_shadow) IS NULL THEN
         RETURN;
     END IF;
 
@@ -1710,8 +1857,182 @@ BEGIN
     FROM lakets._chunk_metadata cm
     WHERE cm.chronotable_id = v_chronotable_id
       AND cm.status = 'active'
-      AND cm.range_end <= (now() - v_compress_after)
+      AND cm.range_end <= (now() - v_after)
     ORDER BY cm.range_start;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- tier_chunk: VALIDATE that Lakebase CDF has durably flushed every write to a
+-- chunk into the Unity Catalog Managed Table, then flag the chunk 'tiered'
+-- (ready to drop). The chunk's data STAYS in Lakebase and remains fully
+-- queryable -- the partition is physically removed later by retention, at
+-- drop_after. Gate (all must hold):
+--   shadow is STREAMING  AND  chunk.last_write_lsn IS NOT NULL
+--   AND  committed_lsn >= chunk.last_write_lsn.
+-- The comparison is against the chunk's own recorded write position (stamped by
+-- _stamp_tiered_chunk_lsn), NOT the global WAL head -- the head keeps advancing
+-- from unrelated activity while a quiescent shadow's committed_lsn freezes, so a
+-- head comparison would never pass for the cold chunks we want to validate.
+-- Returns TRUE if flagged, FALSE if deferred (caller retries next run).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets.tier_chunk(p_chunk_name TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_chronotable_id INT;
+    v_shadow TEXT;
+    v_committed PG_LSN;
+    v_chunk_lsn PG_LSN;
+BEGIN
+    SELECT cm.chronotable_id, cm.last_write_lsn INTO v_chronotable_id, v_chunk_lsn
+    FROM lakets._chunk_metadata cm
+    WHERE cm.chunk_name = p_chunk_name AND cm.status = 'active';
+    IF NOT FOUND THEN
+        RAISE NOTICE 'tier_chunk: % not found or not active', p_chunk_name;
+        RETURN FALSE;
+    END IF;
+
+    SELECT shadow_table_name INTO v_shadow
+    FROM lakets._chronotable_registry WHERE id = v_chronotable_id;
+
+    v_committed := lakets._cdf_committed_lsn(v_shadow);
+    IF v_committed IS NULL THEN
+        RAISE NOTICE 'tier_chunk: % skipped — shadow not STREAMING', p_chunk_name;
+        RETURN FALSE;
+    END IF;
+
+    IF v_chunk_lsn IS NULL THEN
+        RAISE NOTICE 'tier_chunk: % skipped — no recorded write position (cannot prove durable)',
+            p_chunk_name;
+        RETURN FALSE;
+    END IF;
+
+    IF v_committed < v_chunk_lsn THEN
+        RAISE NOTICE 'tier_chunk: % deferred — CDF has not flushed the chunk yet '
+            '(committed=%, chunk_last_write=%)', p_chunk_name, v_committed, v_chunk_lsn;
+        RETURN FALSE;
+    END IF;
+
+    -- Validated: every write to this chunk is at or below committed_lsn, i.e.
+    -- provably durable in the Unity Catalog Managed Table. Flag it ready to drop;
+    -- the data stays in Lakebase until retention removes it at drop_after.
+    UPDATE lakets._chunk_metadata
+    SET status = 'tiered', tiered_at = now()
+    WHERE chunk_name = p_chunk_name;
+
+    RETURN TRUE;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- untier_chunk: restore a tiered chunk's metadata to active (e.g. before a
+-- backfill re-ingests the partition from UC).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets.untier_chunk(p_chunk_name TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE lakets._chunk_metadata
+    SET status = 'active', tiered_at = NULL
+    WHERE chunk_name = p_chunk_name AND status = 'tiered';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Chunk % not found or not tiered', p_chunk_name;
+    END IF;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- show_tiering_status: per-table tiering observability, including the CDF gate
+-- state so deferrals are self-explaining.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets.show_tiering_status(
+    p_table_name TEXT DEFAULT NULL,
+    p_schema_name TEXT DEFAULT 'public'
+)
+RETURNS TABLE (
+    schema_name TEXT,
+    table_name TEXT,
+    after TEXT,
+    active_chunks INT,
+    tiered_chunks INT,
+    pending_chunks INT,
+    reclaimable_bytes BIGINT,
+    reclaimed_bytes BIGINT,
+    cdf_status TEXT,
+    cdf_lag_bytes BIGINT,
+    caught_up BOOLEAN,
+    last_run_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    r RECORD;
+    v_after INTERVAL;
+    v_committed PG_LSN;
+    v_max_pending_lsn PG_LSN;
+    v_pending_unstamped INT;
+BEGIN
+    FOR r IN
+        SELECT hr.id, hr.schema_name AS sname, hr.table_name AS tname,
+               hr.shadow_table_name AS shadow,
+               pr.config->>'after' AS after_txt, pr.last_run_at AS lra
+        FROM lakets._chronotable_registry hr
+        JOIN lakets._policy_registry pr ON hr.id = pr.chronotable_id
+        WHERE pr.policy_type = 'tiering'
+          AND (p_table_name IS NULL OR
+               (hr.table_name = p_table_name AND hr.schema_name = p_schema_name))
+    LOOP
+        v_after := r.after_txt::INTERVAL;
+        v_committed := lakets._cdf_committed_lsn(r.shadow);
+
+        schema_name := r.sname;
+        table_name := r.tname;
+        after := r.after_txt;
+        last_run_at := r.lra;
+
+        -- tiered  = validated durable in UC, still resident in Lakebase (ready to drop).
+        -- pending = active AND aged past tier_after, awaiting validation.
+        -- reclaimable_bytes = tiered chunks (resident, droppable at drop_after).
+        -- reclaimed_bytes   = dropped chunks (Lakebase storage already freed).
+        -- v_max_pending_lsn is the furthest WAL position CDF must flush past to
+        -- validate the whole pending backlog; v_pending_unstamped counts pending
+        -- chunks with no recorded position (cannot be proven durable).
+        SELECT
+            count(*) FILTER (WHERE cm.status = 'active'),
+            count(*) FILTER (WHERE cm.status = 'tiered'),
+            count(*) FILTER (WHERE cm.status = 'active' AND cm.range_end <= now() - v_after),
+            COALESCE(sum(cm.size_bytes) FILTER (WHERE cm.status = 'tiered'), 0),
+            COALESCE(sum(cm.size_bytes) FILTER (WHERE cm.status = 'dropped'), 0),
+            max(cm.last_write_lsn) FILTER (
+                WHERE cm.status = 'active' AND cm.range_end <= now() - v_after),
+            count(*) FILTER (
+                WHERE cm.status = 'active' AND cm.range_end <= now() - v_after
+                  AND cm.last_write_lsn IS NULL)
+        INTO active_chunks, tiered_chunks, pending_chunks, reclaimable_bytes,
+             reclaimed_bytes, v_max_pending_lsn, v_pending_unstamped
+        FROM lakets._chunk_metadata cm
+        WHERE cm.chronotable_id = r.id;
+
+        IF v_committed IS NULL THEN
+            cdf_status := CASE WHEN r.shadow IS NULL THEN 'NONE' ELSE 'SKIPPED' END;
+            cdf_lag_bytes := NULL;
+            caught_up := FALSE;
+        ELSE
+            cdf_status := 'STREAMING';
+            -- How far CDF still has to flush to clear the pending backlog.
+            cdf_lag_bytes := GREATEST(
+                0, COALESCE(pg_wal_lsn_diff(v_max_pending_lsn, v_committed), 0))::BIGINT;
+            -- Caught up iff CDF has flushed past every stamped pending chunk and
+            -- no pending chunk is unstamped.
+            caught_up := (v_pending_unstamped = 0)
+                AND (v_max_pending_lsn IS NULL OR v_committed >= v_max_pending_lsn);
+        END IF;
+
+        RETURN NEXT;
+    END LOOP;
 END;
 $$;
 
@@ -1722,7 +2043,8 @@ $$;
 
 -- =============================================================================
 -- LakeTS Retention Policies
--- Automated data lifecycle management across Lakebase and Delta Lake tiers.
+-- Drops aged Lakebase partitions once they are durable in the Unity Catalog
+-- cold tier (fail-closed, with a p_force override). Never deletes from UC.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -1772,8 +2094,10 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- add_tiered_retention_policy: Tier to Delta after tier_after,
--- delete from Delta after drop_after.
+-- add_tiered_retention_policy: two horizons for the Lakebase (hot) copy —
+-- validate-and-flag the chunk as durable in UC after tier_after (tiering job),
+-- then drop the Lakebase partition after drop_after (retention job). The Unity
+-- Catalog copy is retained; LakeTS never deletes from the cold tier.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION lakets.add_tiered_retention_policy(
     p_table_name TEXT,
@@ -1856,12 +2180,31 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- execute_retention: Runs retention policy — drops expired chunks.
--- Called by the Databricks retention job.
+-- execute_retention: Physically drops a chunk's Lakebase partition once it is
+-- older than drop_after. This is the ONLY step that removes data from Lakebase;
+-- tiering (tier_chunk) merely validates and flags chunks 'tiered' beforehand.
+--
+-- Durability is enforced at drop time, fail-closed. A drop is gated whenever the
+-- chunk's data is expected to live on in UC:
+--   * CDF-synced table, OR a 'tiered_retention' policy (whose intent is a cold
+--     copy): a chunk is dropped only if provably durable —
+--     committed_lsn >= chunk.last_write_lsn. Otherwise it is DEFERRED and retried.
+--     Gating tiered_retention by intent (not just the sync flag) means a policy
+--     created before enable_sync never silently deletes un-mirrored data.
+--   * Plain 'retention' on an un-synced table (no cold copy): dropped outright.
+--   * p_force => TRUE bypasses the durability check and drops regardless. Use
+--     only when you accept that an un-validated chunk's data may not yet be in UC.
+--
+-- LakeTS never deletes from the Unity Catalog tier; only the Lakebase partition
+-- is removed. Called by the Databricks retention job.
 -- ---------------------------------------------------------------------------
+-- DROP first: the signature gained p_force, and CREATE OR REPLACE would leave
+-- the old 2-arg overload in place (making execute_retention('t') ambiguous).
+DROP FUNCTION IF EXISTS lakets.execute_retention(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION lakets.execute_retention(
     p_table_name TEXT,
-    p_schema_name TEXT DEFAULT 'public'
+    p_schema_name TEXT DEFAULT 'public',
+    p_force BOOLEAN DEFAULT FALSE
 )
 RETURNS INT
 LANGUAGE plpgsql
@@ -1869,10 +2212,19 @@ AS $$
 DECLARE
     v_chronotable_id INT;
     v_drop_after INTERVAL;
-    v_dropped INT;
+    v_synced BOOLEAN;
+    v_policy_type TEXT;
+    v_shadow TEXT;
+    v_committed PG_LSN;
+    v_cutoff TIMESTAMPTZ;
+    v_gated BOOLEAN;
+    v_chunk RECORD;
+    v_parts TEXT[];
+    v_dropped INT := 0;
 BEGIN
-    SELECT hr.id, (pr.config->>'drop_after')::INTERVAL
-    INTO v_chronotable_id, v_drop_after
+    SELECT hr.id, (pr.config->>'drop_after')::INTERVAL,
+           COALESCE(hr.sync_enabled, FALSE), pr.policy_type, hr.shadow_table_name
+    INTO v_chronotable_id, v_drop_after, v_synced, v_policy_type, v_shadow
     FROM lakets._chronotable_registry hr
     JOIN lakets._policy_registry pr ON hr.id = pr.chronotable_id
     WHERE hr.schema_name = p_schema_name
@@ -1884,10 +2236,50 @@ BEGIN
         RETURN 0;
     END IF;
 
-    SELECT lakets.drop_chunks(p_table_name, v_drop_after, p_schema_name)
-    INTO v_dropped;
+    v_cutoff := now() - v_drop_after;
+    v_committed := lakets._cdf_committed_lsn(v_shadow);  -- NULL unless STREAMING
 
-    -- Update policy last_run_at
+    -- A drop is durability-gated whenever the chunk's data is expected to live on
+    -- in UC: the table is CDF-synced, OR the policy is tiered_retention (whose very
+    -- intent is to keep a cold copy — so we must NOT drop ungated even if the user
+    -- forgot to enable_sync; we defer until it is provably durable, or forced).
+    -- Only plain 'retention' on an un-synced table drops outright.
+    v_gated := v_synced OR v_policy_type = 'tiered_retention';
+
+    FOR v_chunk IN
+        SELECT cm.id, cm.chunk_name, cm.last_write_lsn
+        FROM lakets._chunk_metadata cm
+        WHERE cm.chronotable_id = v_chronotable_id
+          AND cm.status IN ('active', 'tiered')
+          AND cm.range_end <= v_cutoff
+        ORDER BY cm.range_start
+    LOOP
+        -- Durability check (skipped only when forced, or for plain retention on an
+        -- un-synced table with no cold copy to protect).
+        IF NOT p_force AND v_gated THEN
+            IF v_committed IS NULL
+               OR v_chunk.last_write_lsn IS NULL
+               OR v_committed < v_chunk.last_write_lsn THEN
+                RAISE NOTICE 'execute_retention: % deferred — not yet durable in UC '
+                    '(pass p_force => TRUE to drop anyway)', v_chunk.chunk_name;
+                CONTINUE;
+            END IF;
+        END IF;
+
+        v_parts := string_to_array(v_chunk.chunk_name, '.');
+        BEGIN
+            IF array_length(v_parts, 1) = 2 THEN
+                EXECUTE format('DROP TABLE IF EXISTS %I.%I', v_parts[1], v_parts[2]);
+            ELSE
+                EXECUTE format('DROP TABLE IF EXISTS %I', v_chunk.chunk_name);
+            END IF;
+            UPDATE lakets._chunk_metadata SET status = 'dropped' WHERE id = v_chunk.id;
+            v_dropped := v_dropped + 1;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'Failed to drop chunk %: %', v_chunk.chunk_name, SQLERRM;
+        END;
+    END LOOP;
+
     UPDATE lakets._policy_registry
     SET last_run_at = now()
     WHERE chronotable_id = v_chronotable_id
@@ -1963,9 +2355,9 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    -- Hypertable count
+    -- ChronoTable count
     RETURN QUERY
-    SELECT 'lakets_hypertables_total'::TEXT, count(*)::DOUBLE PRECISION, '{}'::JSONB
+    SELECT 'lakets_chronotables_total'::TEXT, count(*)::DOUBLE PRECISION, '{}'::JSONB
     FROM lakets._chronotable_registry;
 
     -- Total chunks by status
@@ -1975,7 +2367,7 @@ BEGIN
     FROM lakets._chunk_metadata cm
     GROUP BY cm.status;
 
-    -- Total row estimate per hypertable (from pg_stat)
+    -- Total row estimate per ChronoTable (from pg_stat)
     RETURN QUERY
     SELECT 'lakets_estimated_rows'::TEXT,
            COALESCE(s.n_live_tup, 0)::DOUBLE PRECISION,
@@ -1984,18 +2376,31 @@ BEGIN
     LEFT JOIN pg_stat_user_tables s
         ON s.schemaname = hr.schema_name AND s.relname = hr.table_name;
 
-    -- Compression policy status
+    -- Tiering metrics, sourced from show_tiering_status so the gate logic lives
+    -- in exactly one place (per-chunk committed_lsn >= last_write_lsn).
+    -- pending = aged-out chunks awaiting eviction; caught_up = CDF has flushed
+    -- past every pending chunk (the durability gate currently passes).
     RETURN QUERY
-    SELECT 'lakets_compression_enabled'::TEXT,
-           (CASE WHEN hr.compression_enabled THEN 1 ELSE 0 END)::DOUBLE PRECISION,
-           jsonb_build_object('table', hr.schema_name || '.' || hr.table_name)
-    FROM lakets._chronotable_registry hr;
+    SELECT 'lakets_tiering_pending_chunks'::TEXT, sts.pending_chunks::DOUBLE PRECISION,
+           jsonb_build_object('table', sts.schema_name || '.' || sts.table_name)
+    FROM lakets.show_tiering_status() sts;
+
+    RETURN QUERY
+    SELECT 'lakets_tiering_tiered_chunks_total'::TEXT, sts.tiered_chunks::DOUBLE PRECISION,
+           jsonb_build_object('table', sts.schema_name || '.' || sts.table_name)
+    FROM lakets.show_tiering_status() sts;
+
+    RETURN QUERY
+    SELECT 'lakets_tiering_caught_up'::TEXT,
+           (CASE WHEN sts.caught_up THEN 1 ELSE 0 END)::DOUBLE PRECISION,
+           jsonb_build_object('table', sts.schema_name || '.' || sts.table_name)
+    FROM lakets.show_tiering_status() sts;
 
     -- RollUp watermark lag (seconds between now and watermark per RollUp)
     RETURN QUERY
     SELECT 'lakets_rollup_watermark_lag_seconds'::TEXT,
            EXTRACT(EPOCH FROM (now() - r.watermark))::DOUBLE PRECISION,
-           jsonb_build_object('rollup', r.name, 'refresh_mode', r.refresh_mode)
+           jsonb_build_object('rollup', r.name)
     FROM lakets._rollup_registry r
     WHERE r.watermark IS NOT NULL;
 
@@ -2016,7 +2421,7 @@ BEGIN
     JOIN lakets._rollup_registry r ON il.rollup_id = r.id
     GROUP BY r.name, il.tier;
 
-    -- Sync status per hypertable
+    -- Sync status per ChronoTable
     RETURN QUERY
     SELECT 'lakets_sync_enabled'::TEXT,
            (CASE WHEN hr.sync_enabled THEN 1 ELSE 0 END)::DOUBLE PRECISION,
@@ -2040,14 +2445,16 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- chunk_health: Detailed per-hypertable chunk health report.
+-- chunk_health: Detailed per-ChronoTable chunk health report.
 -- ---------------------------------------------------------------------------
+-- DROP first: the leading result column was renamed to `chronotable`, and
+-- CREATE OR REPLACE cannot change an existing function's OUT parameters.
+DROP FUNCTION IF EXISTS lakets.chunk_health();
 CREATE OR REPLACE FUNCTION lakets.chunk_health()
 RETURNS TABLE (
-    hypertable TEXT,
+    chronotable TEXT,
     total_chunks BIGINT,
     active_chunks BIGINT,
-    compressed_chunks BIGINT,
     tiered_chunks BIGINT,
     dropped_chunks BIGINT,
     oldest_active TIMESTAMPTZ,
@@ -2061,7 +2468,6 @@ BEGIN
         hr.schema_name || '.' || hr.table_name,
         count(*)::BIGINT,
         count(*) FILTER (WHERE cm.status = 'active')::BIGINT,
-        count(*) FILTER (WHERE cm.status = 'compressed')::BIGINT,
         count(*) FILTER (WHERE cm.status = 'tiered')::BIGINT,
         count(*) FILTER (WHERE cm.status = 'dropped')::BIGINT,
         min(cm.range_start) FILTER (WHERE cm.status = 'active'),
@@ -2110,7 +2516,7 @@ $$;
 
 -- =============================================================================
 -- LakeTS Multi-Metric ChronoTables
--- InfluxDB-style tag + field model with cardinality management.
+-- Tag + field model with cardinality management.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2149,7 +2555,7 @@ BEGIN
     EXECUTE format('CREATE TABLE %I.%I (%s)', p_schema_name, p_table_name, v_col_defs);
 
     -- Convert to ChronoTable (partitioned by time)
-    v_chronotable_id := lakets.create_hypertable(
+    v_chronotable_id := lakets.create_chronotable(
         p_table_name, 'time', p_chunk_interval, p_schema_name
     );
 
@@ -2285,7 +2691,8 @@ $$;
 
 -- =============================================================================
 -- LakeTS Last Value Cache (LVC)
--- Trigger-maintained cache for sub-10ms latest-state queries.
+-- Trigger-maintained table holding the latest row per key, for fast
+-- latest-state lookups without scanning the ChronoTable.
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -2447,7 +2854,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- latest_values: Reads from LVC cache table. Sub-10ms.
+-- latest_values: Reads the latest cached row per key from the LVC cache table.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION lakets.latest_values(
     p_table_name TEXT,
@@ -2512,146 +2919,6 @@ BEGIN
         enabled := v_rec.enabled;
         RETURN NEXT;
     END LOOP;
-END;
-$$;
-
-
--- ######################################################################
--- ## MODULE: 10_downsample.sql
--- ######################################################################
-
--- =============================================================================
--- LakeTS Downsampling Pipeline Registry
--- Metadata-only on Lakebase; execution happens on Databricks.
--- =============================================================================
-
--- ---------------------------------------------------------------------------
--- create_downsample_pipeline: Registers a multi-resolution pipeline.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.create_downsample_pipeline(
-    p_name TEXT,
-    p_source_table TEXT,
-    p_intervals INTERVAL[],
-    p_retention INTERVAL[],
-    p_agg_expressions TEXT[],
-    p_group_by TEXT[] DEFAULT NULL,
-    p_delta_catalog TEXT DEFAULT 'main',
-    p_delta_schema TEXT DEFAULT 'lakets_rollups',
-    p_source_schema TEXT DEFAULT 'public'
-)
-RETURNS INT
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_id INT;
-BEGIN
-    IF array_length(p_intervals, 1) != array_length(p_retention, 1) THEN
-        RAISE EXCEPTION 'intervals and retention arrays must have same length';
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM lakets._downsample_registry WHERE name = p_name) THEN
-        RAISE EXCEPTION 'Downsample pipeline % already exists', p_name;
-    END IF;
-
-    INSERT INTO lakets._downsample_registry
-        (name, source_table, source_schema, intervals, retention,
-         agg_expressions, group_by, delta_catalog, delta_schema)
-    VALUES (p_name, p_source_table, p_source_schema, p_intervals, p_retention,
-            p_agg_expressions, p_group_by, p_delta_catalog, p_delta_schema)
-    RETURNING id INTO v_id;
-
-    RETURN v_id;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- show_downsample_pipelines: Lists all registered pipelines.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.show_downsample_pipelines()
-RETURNS TABLE (
-    name TEXT,
-    source TEXT,
-    intervals TEXT,
-    retention TEXT,
-    agg_expressions TEXT,
-    delta_target TEXT
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        dr.name,
-        dr.source_schema || '.' || dr.source_table,
-        array_to_string(dr.intervals::TEXT[], ', '),
-        array_to_string(dr.retention::TEXT[], ', '),
-        array_to_string(dr.agg_expressions, ', '),
-        dr.delta_catalog || '.' || dr.delta_schema
-    FROM lakets._downsample_registry dr
-    ORDER BY dr.name;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- query_auto_resolution: Returns the best Delta table for a given time range.
--- Picks the finest resolution whose retention covers the requested range.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.query_auto_resolution(
-    p_name TEXT,
-    p_start TIMESTAMPTZ,
-    p_end TIMESTAMPTZ DEFAULT now()
-)
-RETURNS TABLE (
-    resolution INTERVAL,
-    delta_table TEXT,
-    covers_range BOOLEAN
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_rec RECORD;
-    v_range INTERVAL;
-    v_i INT;
-BEGIN
-    SELECT * INTO v_rec FROM lakets._downsample_registry WHERE name = p_name;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Downsample pipeline % not found', p_name;
-    END IF;
-
-    v_range := p_end - p_start;
-
-    -- Check each resolution from finest to coarsest
-    FOR v_i IN 1..array_length(v_rec.intervals, 1) LOOP
-        resolution := v_rec.intervals[v_i];
-        delta_table := format('%s.%s.%s_%s',
-            v_rec.delta_catalog, v_rec.delta_schema,
-            v_rec.source_table,
-            regexp_replace(v_rec.intervals[v_i]::TEXT, ' ', '_')
-        );
-        covers_range := (v_range <= v_rec.retention[v_i]);
-        RETURN NEXT;
-    END LOOP;
-
-    -- Also include raw source (hot data in Lakebase)
-    resolution := '0 seconds'::INTERVAL;
-    delta_table := v_rec.source_schema || '.' || v_rec.source_table || ' (Lakebase hot)';
-    covers_range := TRUE;
-    RETURN NEXT;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- drop_downsample_pipeline: Removes a pipeline from the registry.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.drop_downsample_pipeline(p_name TEXT)
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    DELETE FROM lakets._downsample_registry WHERE name = p_name;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Downsample pipeline % not found', p_name;
-    END IF;
 END;
 $$;
 
@@ -2840,13 +3107,24 @@ $$;
 
 -- =============================================================================
 -- LakeTS Shadow Sync
--- Shadow table + trigger pattern for Lakehouse Sync (wal2delta CDC).
--- Required because Lakehouse Sync does not support partitioned tables.
+-- Shadow table + true-mirror trigger feeding Lakebase CDF (wal2delta).
+-- Required because Lakebase CDF rejects schemas containing partitioned tables,
+-- so the partitioned ChronoTable parent stays in public and is mirrored here.
 -- =============================================================================
 
+-- Sync bookkeeping columns on the RollUp registry (ChronoTable registry already has them).
+ALTER TABLE lakets._rollup_registry
+    ADD COLUMN IF NOT EXISTS sync_enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS shadow_table_name TEXT;
+
 -- ---------------------------------------------------------------------------
--- _sync_trigger_fn: Trigger function that forwards writes to shadow table.
--- Dynamically routes based on TG_TABLE_SCHEMA and TG_TABLE_NAME.
+-- _sync_trigger_fn: true-mirror trigger that forwards writes to the shadow
+-- table in lakets_cdf. Dispatches via dual-registry shadow lookup:
+--   1. ChronoTable registry (keyed on schema + parent/table name)
+--   2. RollUp registry (keyed on physical rollup table name)
+-- INSERT → INSERT into shadow
+-- UPDATE → DELETE matching old row + INSERT new row into shadow
+-- DELETE → DELETE matching row from shadow
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION lakets._sync_trigger_fn()
 RETURNS TRIGGER
@@ -2856,141 +3134,265 @@ DECLARE
     v_shadow TEXT;
     v_parent TEXT;
 BEGIN
-    -- For partitioned tables, TG_TABLE_NAME is the partition name.
-    -- Look up the parent table to find the shadow table name.
-    SELECT lakets._resolve_partition_parent(TG_TABLE_SCHEMA, TG_TABLE_NAME)
-    INTO v_parent;
+    -- Partition parent (NULL for unpartitioned tables such as RollUps)
+    SELECT lakets._resolve_partition_parent(TG_TABLE_SCHEMA, TG_TABLE_NAME) INTO v_parent;
 
+    -- ChronoTable shadow (keyed on parent/table name)
     SELECT shadow_table_name INTO v_shadow
     FROM lakets._chronotable_registry
     WHERE schema_name = TG_TABLE_SCHEMA
-      AND table_name = COALESCE(v_parent, TG_TABLE_NAME);
+      AND table_name = COALESCE(v_parent, TG_TABLE_NAME)
+      AND sync_enabled = TRUE;
+
+    -- RollUp shadow (keyed on physical rollup table name)
+    IF v_shadow IS NULL THEN
+        SELECT shadow_table_name INTO v_shadow
+        FROM lakets._rollup_registry
+        WHERE rollup_table = TG_TABLE_NAME AND sync_enabled = TRUE;
+    END IF;
 
     IF v_shadow IS NULL THEN
         IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
     END IF;
 
     IF TG_OP = 'DELETE' THEN
-        EXECUTE format('INSERT INTO %I.%I SELECT ($1).*', TG_TABLE_SCHEMA, v_shadow)
-        USING OLD;
+        EXECUTE format(
+            'DELETE FROM lakets_cdf.%1$I WHERE ctid = '
+            '(SELECT ct.ctid FROM lakets_cdf.%1$I ct '
+            ' WHERE ROW(ct.*) IS NOT DISTINCT FROM ROW(($1).*) LIMIT 1)',
+            v_shadow) USING OLD;
         RETURN OLD;
-    ELSE
-        EXECUTE format('INSERT INTO %I.%I SELECT ($1).*', TG_TABLE_SCHEMA, v_shadow)
-        USING NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        EXECUTE format(
+            'DELETE FROM lakets_cdf.%1$I WHERE ctid = '
+            '(SELECT ct.ctid FROM lakets_cdf.%1$I ct '
+            ' WHERE ROW(ct.*) IS NOT DISTINCT FROM ROW(($1).*) LIMIT 1)',
+            v_shadow) USING OLD;
+        EXECUTE format('INSERT INTO lakets_cdf.%I SELECT ($1).*', v_shadow) USING NEW;
+        RETURN NEW;
+    ELSE  -- INSERT
+        EXECUTE format('INSERT INTO lakets_cdf.%I SELECT ($1).*', v_shadow) USING NEW;
         RETURN NEW;
     END IF;
 END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- enable_sync: Creates shadow table and trigger for Lakehouse Sync.
+-- _build_shadow_table: create an unpartitioned shadow in lakets_cdf mirroring
+-- the source columns, with REPLICA IDENTITY FULL for CDC.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.enable_sync(
-    p_table_name TEXT,
-    p_schema_name TEXT DEFAULT 'public'
+CREATE OR REPLACE FUNCTION lakets._build_shadow_table(
+    p_src_schema TEXT, p_src_table TEXT, p_shadow_name TEXT
 )
 RETURNS VOID
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_chronotable_id INT;
-    v_shadow_name TEXT;
     v_col_rec RECORD;
     v_col_defs TEXT := '';
-    v_time_col TEXT;
 BEGIN
-    SELECT id, time_column INTO v_chronotable_id, v_time_col
-    FROM lakets._chronotable_registry
-    WHERE schema_name = p_schema_name AND table_name = p_table_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Table %.% is not a registered ChronoTable',
-            p_schema_name, p_table_name;
-    END IF;
-
-    v_shadow_name := '_shadow_' || p_table_name;
-
-    -- Build column definitions from the partitioned table
     FOR v_col_rec IN
-        SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod) as col_type,
+        SELECT a.attname,
+               pg_catalog.format_type(a.atttypid, a.atttypmod) AS col_type,
                a.attnotnull
         FROM pg_attribute a
         JOIN pg_class c ON a.attrelid = c.oid
         JOIN pg_namespace n ON c.relnamespace = n.oid
-        WHERE n.nspname = p_schema_name AND c.relname = p_table_name
+        WHERE n.nspname = p_src_schema AND c.relname = p_src_table
           AND a.attnum > 0 AND NOT a.attisdropped
         ORDER BY a.attnum
     LOOP
-        IF v_col_defs != '' THEN v_col_defs := v_col_defs || ', '; END IF;
+        IF v_col_defs <> '' THEN v_col_defs := v_col_defs || ', '; END IF;
         v_col_defs := v_col_defs || format('%I %s', v_col_rec.attname, v_col_rec.col_type);
         IF v_col_rec.attnotnull THEN
             v_col_defs := v_col_defs || ' NOT NULL';
         END IF;
     END LOOP;
 
-    -- Create shadow table (unpartitioned)
-    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.%I (%s)',
-        p_schema_name, v_shadow_name, v_col_defs);
-
-    -- Set REPLICA IDENTITY FULL for CDC capture
-    EXECUTE format('ALTER TABLE %I.%I REPLICA IDENTITY FULL',
-        p_schema_name, v_shadow_name);
-
-    -- Create trigger on the partitioned parent table
-    EXECUTE format(
-        'CREATE OR REPLACE TRIGGER trg_lakets_sync
-         AFTER INSERT OR UPDATE OR DELETE ON %I.%I
-         FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn()',
-        p_schema_name, p_table_name
-    );
-
-    -- Update registry
-    UPDATE lakets._chronotable_registry
-    SET shadow_table_name = v_shadow_name,
-        sync_enabled = TRUE
-    WHERE id = v_chronotable_id;
+    EXECUTE format('CREATE TABLE IF NOT EXISTS lakets_cdf.%I (%s)', p_shadow_name, v_col_defs);
+    EXECUTE format('ALTER TABLE lakets_cdf.%I REPLICA IDENTITY FULL', p_shadow_name);
 END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- disable_sync: Removes shadow table and trigger.
+-- enable_sync: dispatch by table type (ChronoTable path or RollUp path).
+-- Accepts either a ChronoTable name (schema+table) or a RollUp name.
+-- Raises on ambiguous or unknown input.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.disable_sync(
-    p_table_name TEXT,
-    p_schema_name TEXT DEFAULT 'public'
+CREATE OR REPLACE FUNCTION lakets.enable_sync(
+    p_table_name TEXT, p_schema_name TEXT DEFAULT 'public'
 )
 RETURNS VOID
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_chronotable_id INT;
-    v_shadow_name TEXT;
+    v_is_ct BOOLEAN;
+    v_is_ru BOOLEAN;
 BEGIN
-    SELECT id, shadow_table_name INTO v_chronotable_id, v_shadow_name
+    SELECT EXISTS(SELECT 1 FROM lakets._chronotable_registry
+                  WHERE schema_name = p_schema_name AND table_name = p_table_name) INTO v_is_ct;
+    SELECT EXISTS(SELECT 1 FROM lakets._rollup_registry WHERE name = p_table_name) INTO v_is_ru;
+
+    -- Preflight: LakeTS cannot enable Lakebase CDF itself -- it is a prerequisite
+    -- enabled on the lakets_cdf schema via Databricks. Without it, the shadow is
+    -- created but never streams to Unity Catalog, and tiering stays fail-closed
+    -- (nothing is ever evicted). Warn loudly rather than failing, so sync can be
+    -- wired before CDF is turned on.
+    IF to_regclass('wal2delta.tables') IS NULL THEN
+        RAISE WARNING 'Lakebase CDF (wal2delta) is not enabled on this database. The '
+            'shadow will be created but will not replicate to Unity Catalog, and '
+            'tiering will not evict any partitions. Enable CDF on the lakets_cdf '
+            'schema (see the LakeTS prerequisites) to activate sync.';
+    END IF;
+
+    IF v_is_ct AND v_is_ru THEN
+        RAISE EXCEPTION 'Ambiguous: % is both a ChronoTable and a RollUp', p_table_name;
+    ELSIF v_is_ct THEN
+        PERFORM lakets._enable_chronotable_sync(p_table_name, p_schema_name);
+    ELSIF v_is_ru THEN
+        PERFORM lakets._enable_rollup_sync(p_table_name);
+    ELSE
+        RAISE EXCEPTION '% is not a registered ChronoTable or RollUp', p_table_name;
+    END IF;
+END;
+$$;
+
+-- _enable_chronotable_sync: shadow in lakets_cdf + trigger on the partitioned parent.
+CREATE OR REPLACE FUNCTION lakets._enable_chronotable_sync(
+    p_table_name TEXT, p_schema_name TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE v_id INT; v_already BOOLEAN; v_shadow TEXT;
+BEGIN
+    SELECT id, sync_enabled INTO v_id, v_already
     FROM lakets._chronotable_registry
     WHERE schema_name = p_schema_name AND table_name = p_table_name;
 
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Table %.% is not a registered ChronoTable',
-            p_schema_name, p_table_name;
+    IF v_already THEN
+        RAISE NOTICE 'ChronoTable %.% is already synced', p_schema_name, p_table_name;
+        RETURN;
     END IF;
 
-    -- Drop trigger
+    v_shadow := '_shadow_' || p_table_name;
+    PERFORM lakets._build_shadow_table(p_schema_name, p_table_name, v_shadow);
+
     EXECUTE format(
-        'DROP TRIGGER IF EXISTS trg_lakets_sync ON %I.%I',
-        p_schema_name, p_table_name
-    );
+        'CREATE OR REPLACE TRIGGER trg_lakets_sync
+         AFTER INSERT OR UPDATE OR DELETE ON %I.%I
+         FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn()',
+        p_schema_name, p_table_name);
 
-    -- Drop shadow table
-    IF v_shadow_name IS NOT NULL THEN
-        EXECUTE format('DROP TABLE IF EXISTS %I.%I', p_schema_name, v_shadow_name);
+    UPDATE lakets._chronotable_registry
+    SET shadow_table_name = v_shadow, sync_enabled = TRUE
+    WHERE id = v_id;
+END;
+$$;
+
+-- _enable_rollup_sync: shadow in lakets_cdf + trigger on the unpartitioned rollup table.
+CREATE OR REPLACE FUNCTION lakets._enable_rollup_sync(p_rollup_name TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE v_rollup_table TEXT; v_already BOOLEAN; v_shadow TEXT;
+BEGIN
+    SELECT rollup_table, sync_enabled INTO v_rollup_table, v_already
+    FROM lakets._rollup_registry WHERE name = p_rollup_name;
+
+    IF v_already THEN
+        RAISE NOTICE 'RollUp % is already synced', p_rollup_name;
+        RETURN;
     END IF;
 
-    -- Update registry
+    v_shadow := '_shadow_rollup_' || p_rollup_name;
+    PERFORM lakets._build_shadow_table('public', v_rollup_table, v_shadow);
+
+    EXECUTE format(
+        'CREATE OR REPLACE TRIGGER trg_lakets_sync
+         AFTER INSERT OR UPDATE OR DELETE ON public.%I
+         FOR EACH ROW EXECUTE FUNCTION lakets._sync_trigger_fn()',
+        v_rollup_table);
+
+    UPDATE lakets._rollup_registry
+    SET shadow_table_name = v_shadow, sync_enabled = TRUE
+    WHERE name = p_rollup_name;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- disable_sync: dispatch by table type; tears down shadow + trigger + flag.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets.disable_sync(
+    p_table_name TEXT, p_schema_name TEXT DEFAULT 'public'
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE v_is_ct BOOLEAN; v_is_ru BOOLEAN;
+BEGIN
+    SELECT EXISTS(SELECT 1 FROM lakets._chronotable_registry
+                  WHERE schema_name = p_schema_name AND table_name = p_table_name) INTO v_is_ct;
+    SELECT EXISTS(SELECT 1 FROM lakets._rollup_registry WHERE name = p_table_name) INTO v_is_ru;
+
+    IF v_is_ct AND v_is_ru THEN
+        RAISE EXCEPTION 'Ambiguous: % is both a ChronoTable and a RollUp', p_table_name;
+    ELSIF v_is_ct THEN
+        PERFORM lakets._disable_chronotable_sync(p_table_name, p_schema_name);
+    ELSIF v_is_ru THEN
+        PERFORM lakets._disable_rollup_sync(p_table_name);
+    ELSE
+        RAISE EXCEPTION '% is not a registered ChronoTable or RollUp', p_table_name;
+    END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION lakets._disable_chronotable_sync(
+    p_table_name TEXT, p_schema_name TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE v_id INT; v_shadow TEXT; v_sync BOOLEAN;
+BEGIN
+    SELECT id, shadow_table_name, sync_enabled INTO v_id, v_shadow, v_sync
+    FROM lakets._chronotable_registry
+    WHERE schema_name = p_schema_name AND table_name = p_table_name;
+
+    IF NOT COALESCE(v_sync, FALSE) THEN
+        RAISE NOTICE 'ChronoTable %.% is not synced', p_schema_name, p_table_name;
+        RETURN;
+    END IF;
+
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_sync ON %I.%I', p_schema_name, p_table_name);
+    IF v_shadow IS NOT NULL THEN
+        EXECUTE format('DROP TABLE IF EXISTS lakets_cdf.%I', v_shadow);
+    END IF;
     UPDATE lakets._chronotable_registry
-    SET shadow_table_name = NULL,
-        sync_enabled = FALSE
-    WHERE id = v_chronotable_id;
+    SET shadow_table_name = NULL, sync_enabled = FALSE WHERE id = v_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION lakets._disable_rollup_sync(p_rollup_name TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE v_rollup_table TEXT; v_shadow TEXT; v_sync BOOLEAN;
+BEGIN
+    SELECT rollup_table, shadow_table_name, sync_enabled INTO v_rollup_table, v_shadow, v_sync
+    FROM lakets._rollup_registry WHERE name = p_rollup_name;
+
+    IF NOT COALESCE(v_sync, FALSE) THEN
+        RAISE NOTICE 'RollUp % is not synced', p_rollup_name;
+        RETURN;
+    END IF;
+
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_lakets_sync ON public.%I', v_rollup_table);
+    IF v_shadow IS NOT NULL THEN
+        EXECUTE format('DROP TABLE IF EXISTS lakets_cdf.%I', v_shadow);
+    END IF;
+    UPDATE lakets._rollup_registry
+    SET shadow_table_name = NULL, sync_enabled = FALSE WHERE name = p_rollup_name;
 END;
 $$;
 
@@ -3000,11 +3402,11 @@ $$;
 -- ######################################################################
 
 -- =============================================================================
--- LakeTS RollUp Optimization — Modules 23–28
--- Smart refresh, batch processing, DAG orchestration, tier routing,
--- bulk import invalidation, and RollUp export.
+-- LakeTS RollUp Optimization — Modules 23–27
+-- Smart refresh, batch processing, DAG orchestration, and bulk import
+-- invalidation.
 --
--- Requires: 00_schema.sql, 03_rollup.sql (applied first via 99_install.sql)
+-- Requires: 01_schema.sql, 04_rollup.sql (applied first via 99_install.sql)
 -- =============================================================================
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -3015,17 +3417,19 @@ $$;
 ALTER TABLE lakets._chunk_metadata
     ADD COLUMN IF NOT EXISTS last_modified_at TIMESTAMPTZ;
 
--- M23–M28: New columns on _rollup_registry
+-- M23–M27: New columns on _rollup_registry
 ALTER TABLE lakets._rollup_registry
     ADD COLUMN IF NOT EXISTS bucket_column       TEXT    DEFAULT 'bucket',
     ADD COLUMN IF NOT EXISTS source_time_column  TEXT,
     ADD COLUMN IF NOT EXISTS predicate_injection BOOLEAN DEFAULT TRUE,
-    ADD COLUMN IF NOT EXISTS depends_on          INT[]   DEFAULT '{}',
-    ADD COLUMN IF NOT EXISTS cold_query_text     TEXT,
-    ADD COLUMN IF NOT EXISTS export_enabled      BOOLEAN DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS export_delta_table  TEXT,
-    ADD COLUMN IF NOT EXISTS export_mode         TEXT    DEFAULT 'incremental',
-    ADD COLUMN IF NOT EXISTS last_exported_at    TIMESTAMPTZ;
+    ADD COLUMN IF NOT EXISTS depends_on          INT[]   DEFAULT '{}';
+
+-- Path B removal: drop legacy RollUp->UC export columns (superseded by CDF sync)
+ALTER TABLE lakets._rollup_registry
+    DROP COLUMN IF EXISTS export_enabled,
+    DROP COLUMN IF EXISTS export_delta_table,
+    DROP COLUMN IF EXISTS export_mode,
+    DROP COLUMN IF EXISTS last_exported_at;
 
 -- M26: Covering index for fast tier lookups on chunk metadata
 CREATE INDEX IF NOT EXISTS idx_chunk_metadata_ct_status_range
@@ -3491,32 +3895,8 @@ $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- MODULE 26: Intelligent Tier Router
+-- MODULE 26: (reserved — covering index added under SCHEMA EXTENSIONS above)
 -- ═══════════════════════════════════════════════════════════════════════════════
-
--- ---------------------------------------------------------------------------
--- _resolve_bucket_tier: Auto-detects whether a bucket's source data is in
--- the hot tier (Lakebase) or cold tier (Delta Lake) by checking chunk status.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets._resolve_bucket_tier(
-    p_chronotable_id  INT,
-    p_bucket_start    TIMESTAMPTZ
-)
-RETURNS TEXT
-LANGUAGE sql STABLE
-AS $$
-    SELECT CASE
-        WHEN cm.status IN ('active', 'compressed') THEN 'hot'
-        WHEN cm.status = 'tiered' THEN 'cold'
-        ELSE 'hot'
-    END
-    FROM lakets._chunk_metadata cm
-    WHERE cm.chronotable_id = p_chronotable_id
-      AND p_bucket_start >= cm.range_start
-      AND p_bucket_start < cm.range_end
-    LIMIT 1;
-$$;
-
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- MODULE 27: Bulk Import Invalidation
@@ -3566,7 +3946,6 @@ BEGIN
         SELECT r.id, r.name, r.bucket_interval, r.watermark
         FROM lakets._rollup_registry r
         WHERE r.source_chronotable_id = v_ct_id
-          AND r.refresh_mode = 'incremental'
     LOOP
         -- Only invalidate buckets below the watermark (above is handled by Phase 1)
         IF v_min_time < COALESCE(v_rollup.watermark, 'infinity'::timestamptz) THEN
@@ -3589,282 +3968,20 @@ END;
 $$;
 
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- MODULE 28: RollUp Export Pipeline (Lakebase API)
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- ---------------------------------------------------------------------------
--- enable_rollup_export: Enables periodic export of RollUp rows to Delta Lake.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.enable_rollup_export(
-    p_rollup_name  TEXT,
-    p_delta_table  TEXT,
-    p_export_mode  TEXT DEFAULT 'incremental'
-)
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF p_export_mode NOT IN ('full', 'incremental') THEN
-        RAISE EXCEPTION 'export_mode must be ''full'' or ''incremental'', got: %', p_export_mode;
-    END IF;
-
-    UPDATE lakets._rollup_registry
-    SET export_enabled = TRUE,
-        export_delta_table = p_delta_table,
-        export_mode = p_export_mode
-    WHERE name = p_rollup_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'RollUp % not found', p_rollup_name;
-    END IF;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- disable_rollup_export: Disables RollUp export.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.disable_rollup_export(p_rollup_name TEXT)
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    UPDATE lakets._rollup_registry
-    SET export_enabled = FALSE
-    WHERE name = p_rollup_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'RollUp % not found', p_rollup_name;
-    END IF;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- show_rollup_exports: Shows export status and lag for all export-enabled RollUps.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.show_rollup_exports()
-RETURNS TABLE(
-    rollup_name      TEXT,
-    delta_table      TEXT,
-    export_mode      TEXT,
-    last_exported_at TIMESTAMPTZ,
-    watermark        TIMESTAMPTZ,
-    export_lag       INTERVAL
-)
-LANGUAGE sql STABLE
-AS $$
-    SELECT
-        r.name,
-        r.export_delta_table,
-        r.export_mode,
-        r.last_exported_at,
-        r.watermark,
-        CASE
-            WHEN r.last_exported_at IS NOT NULL AND r.watermark IS NOT NULL
-            THEN r.watermark - r.last_exported_at
-            ELSE NULL
-        END
-    FROM lakets._rollup_registry r
-    WHERE r.export_enabled = TRUE
-    ORDER BY r.name;
-$$;
-
-
--- ######################################################################
--- ## MODULE: 15_uc_integration.sql
--- ######################################################################
-
--- =============================================================================
--- LakeTS Unity Catalog Integration -- Module 14
--- Auto-register and tag Delta tables written by LakeTS under Unity Catalog.
---
--- Requires: 00_schema.sql, 13_rollup_optimization.sql (applied first via 99_install.sql)
--- =============================================================================
-
--- Schema extension: UC registration tracking table
-CREATE TABLE IF NOT EXISTS lakets._uc_registry (
-    id              SERIAL PRIMARY KEY,
-    rollup_name     TEXT NOT NULL,
-    uc_catalog      TEXT NOT NULL,
-    uc_schema       TEXT NOT NULL,
-    uc_table        TEXT NOT NULL,
-    registered_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_tagged_at  TIMESTAMPTZ,
-    tags            JSONB NOT NULL DEFAULT '{}',
-    UNIQUE(rollup_name),
-    UNIQUE(uc_catalog, uc_schema, uc_table)
-);
-
-CREATE INDEX IF NOT EXISTS idx_uc_registry_rollup_name
-    ON lakets._uc_registry(rollup_name);
-
--- ---------------------------------------------------------------------------
--- register_uc_table: Record that a RollUp Delta export has been registered
--- in Unity Catalog (called by uc_registration.py after the REST API call).
--- Returns the registry row id.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.register_uc_table(
-    p_rollup_name TEXT,
-    p_uc_catalog  TEXT,
-    p_uc_schema   TEXT
-)
-RETURNS INT
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_rollup     lakets._rollup_registry%ROWTYPE;
-    v_uc_table   TEXT;
-    v_id         INT;
-BEGIN
-    SELECT * INTO v_rollup
-    FROM lakets._rollup_registry
-    WHERE name = p_rollup_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'RollUp % not found in _rollup_registry', p_rollup_name;
-    END IF;
-
-    IF v_rollup.export_delta_table IS NULL THEN
-        RAISE EXCEPTION
-            'RollUp % has no export_delta_table configured; enable export first',
-            p_rollup_name;
-    END IF;
-
-    -- Derive UC table name from leaf of the Delta table 3-part name
-    v_uc_table := split_part(v_rollup.export_delta_table, '.', 3);
-    IF v_uc_table = '' THEN
-        v_uc_table := regexp_replace(p_rollup_name, '[^a-zA-Z0-9_]', '_', 'g');
-    END IF;
-
-    INSERT INTO lakets._uc_registry (rollup_name, uc_catalog, uc_schema, uc_table, registered_at)
-    VALUES (p_rollup_name, p_uc_catalog, p_uc_schema, v_uc_table, now())
-    ON CONFLICT (rollup_name) DO UPDATE
-        SET uc_catalog    = EXCLUDED.uc_catalog,
-            uc_schema     = EXCLUDED.uc_schema,
-            uc_table      = EXCLUDED.uc_table,
-            registered_at = now()
-    RETURNING id INTO v_id;
-
-    RAISE NOTICE 'Registered % -> %.%.%', p_rollup_name, p_uc_catalog, p_uc_schema, v_uc_table;
-    RETURN v_id;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- tag_uc_table: Persist UC tag metadata. Merges system tags
--- (lakets.source, lakets.version, lakets.rollup_name) with user tags.
--- User tags take precedence on key collision.
--- Returns the merged tag set.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.tag_uc_table(
-    p_rollup_name TEXT,
-    p_tags        JSONB DEFAULT '{}'
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_version     TEXT;
-    v_system_tags JSONB;
-    v_merged_tags JSONB;
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM lakets._uc_registry WHERE rollup_name = p_rollup_name) THEN
-        RAISE EXCEPTION
-            'RollUp % not found in _uc_registry; call register_uc_table first',
-            p_rollup_name;
-    END IF;
-
-    SELECT version INTO v_version FROM lakets._version LIMIT 1;
-
-    v_system_tags := jsonb_build_object(
-        'lakets.source',      'lakets',
-        'lakets.version',     COALESCE(v_version, 'unknown'),
-        'lakets.rollup_name', p_rollup_name
-    );
-
-    v_merged_tags := v_system_tags || p_tags;
-
-    UPDATE lakets._uc_registry
-    SET tags           = v_merged_tags,
-        last_tagged_at = now()
-    WHERE rollup_name = p_rollup_name;
-
-    RETURN v_merged_tags;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- get_uc_registrations: Return all UC-registered exports (optional filter).
--- Used by uc_registration.py to build its work list.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.get_uc_registrations(
-    p_rollup_name TEXT DEFAULT NULL
-)
-RETURNS TABLE (
-    rollup_name    TEXT,
-    uc_catalog     TEXT,
-    uc_schema      TEXT,
-    uc_table       TEXT,
-    full_uc_name   TEXT,
-    delta_table    TEXT,
-    registered_at  TIMESTAMPTZ,
-    last_tagged_at TIMESTAMPTZ,
-    tags           JSONB
-)
-LANGUAGE sql
-STABLE
-AS $$
-    SELECT
-        r.rollup_name,
-        r.uc_catalog,
-        r.uc_schema,
-        r.uc_table,
-        r.uc_catalog || '.' || r.uc_schema || '.' || r.uc_table AS full_uc_name,
-        rr.export_delta_table                                     AS delta_table,
-        r.registered_at,
-        r.last_tagged_at,
-        r.tags
-    FROM lakets._uc_registry r
-    JOIN lakets._rollup_registry rr ON rr.name = r.rollup_name
-    WHERE p_rollup_name IS NULL OR r.rollup_name = p_rollup_name
-    ORDER BY r.rollup_name;
-$$;
-
--- ---------------------------------------------------------------------------
--- unregister_uc_table: Remove a UC registration record.
--- Does NOT drop the actual UC table in Databricks.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION lakets.unregister_uc_table(
-    p_rollup_name TEXT
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_deleted INT;
-BEGIN
-    DELETE FROM lakets._uc_registry WHERE rollup_name = p_rollup_name;
-    GET DIAGNOSTICS v_deleted = ROW_COUNT;
-    IF v_deleted = 0 THEN
-        RAISE NOTICE 'No UC registration found for %', p_rollup_name;
-        RETURN FALSE;
-    END IF;
-    RAISE NOTICE 'Removed UC registration for %', p_rollup_name;
-    RETURN TRUE;
-END;
-$$;
-
 
 -- ######################################################################
 -- ## INSTALLATION VERIFICATION
 -- ######################################################################
 
 UPDATE lakets._version
-SET modules = ARRAY['00_version.sql','01_schema.sql','02_chronotable.sql','03_timeseries_functions.sql','04_rollup.sql','05_compression.sql','06_retention.sql','07_monitoring.sql','08_metric_table.sql','09_lvc.sql','10_downsample.sql','11_alerts.sql','12_ingest.sql','13_shadow_sync.sql','14_rollup_optimization.sql','15_uc_integration.sql']
-WHERE version = '0.1.2'
+SET modules = ARRAY['00_version.sql','01_schema.sql','02_chronotable.sql','03_timeseries_functions.sql','04_rollup.sql','05_tiering.sql','06_retention.sql','07_monitoring.sql','08_metric_table.sql','09_lvc.sql','11_alerts.sql','12_ingest.sql','13_shadow_sync.sql','14_rollup_optimization.sql']
+WHERE version = '0.1.0'
   AND installed_at = (
-      SELECT MAX(installed_at) FROM lakets._version WHERE version = '0.1.2'
+      SELECT MAX(installed_at) FROM lakets._version WHERE version = '0.1.0'
   );
+
+-- Restore NOTICE so the success summary prints (install body is quieted above).
+SET client_min_messages TO NOTICE;
 
 DO $$
 DECLARE

@@ -18,22 +18,89 @@ def validate_catalog(catalog: str) -> bool:
     return bool(_CATALOG_RE.fullmatch(catalog))
 
 
+# Reserved user_settings key holding APP-GLOBAL (service-principal-scoped)
+# config. DBSQL queries always run as the app service principal, so the
+# warehouse is shared app-wide rather than tied to any human user.
+APP_GLOBAL_SETTINGS_KEY = "__app__"
+
+
+async def _warehouse_from_settings_row(db: Any, key: str) -> str:
+    """Return the saved warehouse_id for a user_settings key, or '' if none."""
+    row = await db.fetchrow(
+        "SELECT settings FROM user_settings WHERE user_email = $1", key
+    )
+    if not row:
+        return ""
+    settings = (
+        json.loads(row["settings"]) if isinstance(row["settings"], str) else row["settings"]
+    ) or {}
+    return settings.get("warehouse", {}).get("warehouse_id", "") or ""
+
+
 async def resolve_warehouse_id(db: Any, db_available: bool, user_email: str) -> str:
-    """Resolve the SQL warehouse ID from user settings or environment."""
-    warehouse_id = os.getenv("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    """Resolve the SQL warehouse for DBSQL queries.
+
+    DBSQL always executes as the APP SERVICE PRINCIPAL (``execute_dbsql`` uses
+    the ambient ``WorkspaceClient`` = the app SP in the Apps runtime), so the
+    warehouse is resolved app-globally rather than per-user. Resolution order:
+
+        1. ``DATABRICKS_SQL_WAREHOUSE_ID`` env (explicit ops override)
+        2. the shared ``__app__`` global config row
+        3. the calling user's saved warehouse (legacy fallback)
+
+    This keeps queries working regardless of which user (or ``anonymous``)
+    initiates the request.
+    """
+    env_wh = os.getenv("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    if env_wh:
+        return env_wh
     if db_available and db:
         try:
-            row = await db.fetchrow(
-                "SELECT settings FROM user_settings WHERE user_email = $1", user_email
-            )
-            if row:
-                settings = json.loads(row["settings"]) if isinstance(row["settings"], str) else row["settings"]
-                saved = settings.get("warehouse", {}).get("warehouse_id", "")
-                if saved:
-                    warehouse_id = saved
+            wh = await _warehouse_from_settings_row(db, APP_GLOBAL_SETTINGS_KEY)
+            if wh:
+                return wh
+            wh = await _warehouse_from_settings_row(db, user_email)
+            if wh:
+                return wh
         except Exception:
             pass
-    return warehouse_id
+    return ""
+
+
+def _execute_dbsql_sync(sql: str, warehouse_id: str, timeout: str) -> dict:
+    """Blocking SQL execution via the SDK Statement Execution API.
+
+    Uses the WorkspaceClient so auth works under the app's SP OAuth (a raw
+    httpx call with ``w.config.token`` returns 401 in the Apps runtime because
+    there is no PAT — the token is empty/invalid).  Run via ``asyncio.to_thread``
+    so the event loop is never blocked.
+    """
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.service.sql import Disposition, Format, StatementState
+
+    w = WorkspaceClient()
+    resp = w.statement_execution.execute_statement(
+        statement=sql,
+        warehouse_id=warehouse_id,
+        wait_timeout=timeout,
+        disposition=Disposition.INLINE,
+        format=Format.JSON_ARRAY,
+    )
+
+    state = resp.status.state if resp.status else None
+    if state not in (StatementState.SUCCEEDED, None):
+        err = resp.status.error.message if resp.status and resp.status.error else str(state)
+        raise RuntimeError(f"DBSQL statement {state}: {err}")
+
+    manifest = resp.manifest
+    columns = (
+        [c.name for c in manifest.schema.columns]
+        if manifest and manifest.schema and manifest.schema.columns
+        else []
+    )
+    data_array = (resp.result.data_array if resp.result else None) or []
+    rows: list[dict] = [dict(zip(columns, chunk)) for chunk in data_array]
+    return {"columns": columns, "data": rows, "row_count": len(rows)}
 
 
 async def execute_dbsql(
@@ -44,37 +111,11 @@ async def execute_dbsql(
     """Execute a SQL statement via the Databricks SQL Statement Execution API.
 
     Returns {"columns": [...], "data": [...], "row_count": int}.
-    Raises on HTTP or API errors.
+    Raises on API errors.
     """
-    import httpx
+    import asyncio
 
-    host = os.getenv("DATABRICKS_HOST", "")
-    token = os.getenv("DATABRICKS_TOKEN", "")
-    if not token:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
-        token = w.config.token
-        if not host:
-            host = f"https://{w.config.host}" if w.config.host and not w.config.host.startswith("https") else w.config.host
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{host}/api/2.0/sql/statements",
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "statement": sql,
-                "warehouse_id": warehouse_id,
-                "wait_timeout": timeout,
-                "disposition": "INLINE",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-    result = data.get("result", {})
-    columns = [c["name"] for c in result.get("manifest", {}).get("schema", {}).get("columns", [])]
-    rows: list[dict] = [dict(zip(columns, chunk)) for chunk in result.get("data_array", [])]
-    return {"columns": columns, "data": rows, "row_count": len(rows)}
+    return await asyncio.to_thread(_execute_dbsql_sync, sql, warehouse_id, timeout)
 
 
 async def get_pipeline_catalog(

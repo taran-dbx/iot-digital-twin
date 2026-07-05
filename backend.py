@@ -21,15 +21,19 @@ import asyncpg
 logger = logging.getLogger("iot_digital_twin.backend")
 
 
-def _get_lakebase_credentials() -> tuple[str, str]:
+def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, str]:
     """Generate a short-lived OAuth token via the Databricks SDK.
+
+    ``endpoint_name`` overrides the ``LAKEBASE_ENDPOINT`` env var — used by
+    per-pipeline Lakebase pools that target a different project than the
+    app backend.
 
     Returns (pg_user, pg_password).
     """
     from databricks.sdk import WorkspaceClient
 
     w = WorkspaceClient()
-    endpoint_name = os.getenv("LAKEBASE_ENDPOINT")
+    endpoint_name = endpoint_name or os.getenv("LAKEBASE_ENDPOINT")
     if not endpoint_name:
         raise RuntimeError("LAKEBASE_ENDPOINT env var not set")
 
@@ -52,12 +56,14 @@ class LakebaseConnectionManager:
         pg_port: int = 5432,
         pool_min: int = 2,
         pool_max: int = 8,
+        endpoint_name: str | None = None,
     ) -> None:
         self._pg_host = pg_host or os.getenv("PGHOST")
         self._pg_database = pg_database or os.getenv("PGDATABASE", "databricks_postgres")
         self._pg_port = pg_port if pg_port != 5432 else int(os.getenv("PGPORT", "5432"))
         self._pool_min = pool_min
         self._pool_max = pool_max
+        self._endpoint_name = endpoint_name
         self._pool: asyncpg.Pool | None = None
         self._refresh_task: asyncio.Task | None = None
         self._pg_user: str | None = None
@@ -80,7 +86,7 @@ class LakebaseConnectionManager:
             self._pg_password = os.getenv("PGPASSWORD")
             self._uses_static_creds = True
         else:
-            self._pg_user, self._pg_password = _get_lakebase_credentials()
+            self._pg_user, self._pg_password = _get_lakebase_credentials(self._endpoint_name)
             self._uses_static_creds = False
 
         ssl_mode = os.getenv("PGSSLMODE", "require")
@@ -107,7 +113,7 @@ class LakebaseConnectionManager:
         while True:
             await asyncio.sleep(50 * 60)  # 50 minutes
             try:
-                self._pg_user, self._pg_password = _get_lakebase_credentials()
+                self._pg_user, self._pg_password = _get_lakebase_credentials(self._endpoint_name)
                 old_pool = self._pool
                 ssl_mode = os.getenv("PGSSLMODE", "require")
                 self._pool = await asyncpg.create_pool(
@@ -159,10 +165,41 @@ class LakebaseConnectionManager:
         async with self.acquire() as conn:
             return await conn.fetchrow(query, *args)
 
+    async def fetchval(self, query: str, *args):
+        """Execute a query and return the first column of the first row (or None)."""
+        async with self.acquire() as conn:
+            return await conn.fetchval(query, *args)
+
     async def execute(self, query: str, *args) -> str:
         """Execute a statement (INSERT, UPDATE, DDL, etc.)."""
         async with self.acquire() as conn:
             return await conn.execute(query, *args)
+
+    async def executemany(self, query: str, args: list) -> int:
+        """Batch-execute a statement with multiple tuples of parameters.
+
+        Wraps the call in an explicit transaction so rows actually commit.
+        asyncpg's ``executemany`` runs inside an implicit transaction that
+        is rolled back when the connection is released to the pool unless
+        explicitly committed — leading to silent data loss.
+
+        Returns the COUNT(*) seen on this same connection immediately after
+        insert, inside the same transaction, for verification.
+        """
+        async with self.acquire() as conn:
+            async with conn.transaction():
+                await conn.executemany(query, args)
+                # In-transaction sanity check. If this returns 0 after an INSERT,
+                # the INSERT statement is a no-op (e.g., WHERE clause false,
+                # wrong table, trigger drops rows).
+                try:
+                    # Match the INSERT target — assumes INSERT INTO sensor_readings
+                    if "sensor_readings" in query.lower():
+                        n = await conn.fetchval("SELECT COUNT(*) FROM sensor_readings")
+                        return int(n or 0)
+                except Exception:
+                    pass
+                return -1
 
     async def ensure_pipelines_table(self) -> None:
         """Create the pipelines table if it does not exist.
@@ -218,3 +255,22 @@ class LakebaseConnectionManager:
                 "user_settings table exists (owned by another role) — skipping DDL, DML OK"
             )
         logger.info("Ensured user_settings table exists")
+
+    async def ensure_source_bindings_table(self) -> None:
+        """Create the source_bindings table if it does not exist.
+
+        This backs the source-claim feature (one streaming source ↔ one active
+        pipeline).  Without it, ``check_source_available`` / ``claim_source``
+        raise UndefinedTableError on every POST that carries a source_type,
+        surfacing as an unhandled 500.  See ensure_pipelines_table for
+        ownership notes.
+        """
+        from models.sql_ddl import SOURCE_BINDINGS_DDL
+
+        try:
+            await self.execute(SOURCE_BINDINGS_DDL)
+        except asyncpg.InsufficientPrivilegeError:
+            logger.info(
+                "source_bindings table exists (owned by another role) — skipping DDL, DML OK"
+            )
+        logger.info("Ensured source_bindings table exists")

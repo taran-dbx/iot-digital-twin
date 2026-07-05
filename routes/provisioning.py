@@ -22,6 +22,86 @@ logger = logging.getLogger("iot_digital_twin.routes.provisioning")
 router = APIRouter()
 
 
+_MISSING_STORAGE_ROOT_HINT = (
+    "Catalog provisioning failed: this workspace's metastore has no default "
+    "storage root configured. Open Settings → Unity Catalog and set "
+    "'Storage root' to an external location URL (e.g. s3://my-bucket/uc-root) "
+    "that the app's service principal has CREATE_MANAGED_STORAGE on, then "
+    "retry the pipeline. The catalog will be created at "
+    "<storage_root>/<catalog_name>."
+)
+
+
+def _is_missing_metastore_storage(exc: Exception) -> bool:
+    """Detect the 'metastore has no default storage root' UC error.
+
+    UC raises this when ``CREATE CATALOG`` is issued without an explicit
+    ``storage_root`` and the metastore's own default location is missing
+    or invalid. The message we match against is the one produced by the
+    Catalogs API today; we keep the matcher loose so future wording
+    changes still trigger the user-friendly hint.
+    """
+    msg = str(exc).lower()
+    return (
+        "metastore storage root" in msg
+        or "default storage" in msg
+        or "managed location" in msg
+    )
+
+
+async def _load_user_settings(state: AppState, user_email: str) -> dict:
+    """Return the calling user's saved settings JSON, or ``{}``.
+
+    Used to resolve fallback config (e.g. UC ``storage_root``) when the
+    workspace metastore has no default managed-storage location.
+    """
+    if not user_email or not state.db_available or not state.db:
+        return {}
+    try:
+        row = await state.db.fetchrow(
+            "SELECT settings FROM user_settings WHERE user_email = $1", user_email
+        )
+    except Exception as exc:
+        logger.warning("Failed to load user_settings for %s: %s", user_email, exc)
+        return {}
+    if not row:
+        return {}
+    raw = row["settings"]
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw) if raw is not None else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+async def _resolve_uc_storage_root(
+    state: AppState,
+    user_email: str,
+    body_value: str | None = None,
+) -> str:
+    """Resolve the UC catalog ``storage_root`` to use for catalog creation.
+
+    Resolution order (first non-empty wins):
+        1. Explicit ``storage_root`` in the request body.
+        2. ``uc.storage_root`` from the user's saved global settings.
+        3. ``UC_STORAGE_ROOT`` environment variable.
+
+    Returns ``""`` if none are configured, in which case the caller falls
+    back to the metastore's default managed-storage root (which may not
+    exist on workspaces without one configured).
+    """
+    if body_value and body_value.strip():
+        return body_value.strip().rstrip("/")
+    settings = await _load_user_settings(state, user_email)
+    saved = ((settings.get("uc") or {}).get("storage_root") or "").strip()
+    if saved:
+        return saved.rstrip("/")
+    env_root = (os.getenv("UC_STORAGE_ROOT") or "").strip()
+    return env_root.rstrip("/") if env_root else ""
+
+
 async def _load_pipeline_sink_config(
     state: AppState, pipeline_id: str | None
 ) -> dict:
@@ -77,6 +157,158 @@ def _extract_valid_tiering(sink_config: dict) -> dict | None:
     return clean
 
 
+def _resolve_workspace_id(w) -> int | None:
+    """Return the current workspace id, or ``None`` if undeterminable.
+
+    Preferred source is the SDK's ``WorkspaceClient.get_workspace_id()``.
+    Falls back to the ``DATABRICKS_WORKSPACE_ID`` env var when the SDK
+    method is unavailable (older SDKs) or raises. Returns ``None`` when
+    neither yields a usable integer so the caller can skip binding.
+    """
+    getter = getattr(w, "get_workspace_id", None)
+    if callable(getter):
+        try:
+            ws_id = getter()
+            if ws_id is not None:
+                return int(ws_id)
+        except Exception as exc:  # SDK call failed — fall through to env
+            logger.warning("get_workspace_id() failed: %s", exc)
+    env_id = (os.getenv("DATABRICKS_WORKSPACE_ID") or "").strip()
+    if env_id:
+        try:
+            return int(env_id)
+        except ValueError:
+            logger.warning("DATABRICKS_WORKSPACE_ID is not an integer: %r", env_id)
+    return None
+
+
+def _bind_catalog_to_workspace(w, catalog_name: str) -> dict:
+    """Bind ``catalog_name`` READ_WRITE to the current workspace (idempotent).
+
+    A freshly-created catalog is not guaranteed to be accessible from the
+    workspace that created it depending on metastore isolation defaults;
+    this caused a production failure where a consumer's checkpoint Volume
+    catalog was reported "not accessible in current workspace". We use
+    ``add`` (merge) semantics so existing bindings are preserved.
+
+    Always non-fatal: any failure is logged and reported as ``skipped`` so
+    provisioning continues. Returns a provisioned-result entry describing
+    the outcome (``bound`` | ``skipped``).
+    """
+    resource = f"Workspace binding for catalog {catalog_name}"
+    workspace_id = _resolve_workspace_id(w)
+    if workspace_id is None:
+        logger.warning(
+            "Skipping workspace binding for catalog '%s': workspace id unavailable "
+            "(no get_workspace_id() and no DATABRICKS_WORKSPACE_ID)",
+            catalog_name,
+        )
+        return {"resource": resource, "status": "skipped", "reason": "workspace_id_unavailable"}
+    try:
+        from databricks.sdk.service.catalog import (
+            WorkspaceBinding,
+            WorkspaceBindingBindingType,
+        )
+
+        w.workspace_bindings.update_bindings(
+            securable_type="catalog",
+            securable_name=catalog_name,
+            add=[
+                WorkspaceBinding(
+                    workspace_id=workspace_id,
+                    binding_type=WorkspaceBindingBindingType.BINDING_TYPE_READ_WRITE,
+                )
+            ],
+        )
+        logger.info(
+            "Bound catalog '%s' READ_WRITE to workspace %s", catalog_name, workspace_id
+        )
+        return {"resource": resource, "status": "bound", "workspace_id": workspace_id}
+    except Exception as exc:
+        logger.warning(
+            "Failed to bind catalog '%s' to workspace %s (non-fatal): %s",
+            catalog_name,
+            workspace_id,
+            exc,
+        )
+        return {"resource": resource, "status": "skipped", "reason": str(exc)}
+
+
+def _grant_zerobus_sp(w, catalog_name: str, schemas: list[str], sp_app_id: str) -> list[dict]:
+    """Grant the Zerobus service principal UC privileges (idempotent).
+
+    The Zerobus Ingest client authenticates as a service principal identified
+    by its ``application_id`` (the OAuth client UUID). For it to write to the
+    per-pipeline Delta table it needs USE_CATALOG on the catalog and
+    USE_SCHEMA/MODIFY/SELECT/CREATE_TABLE on the schemas. Granting at the
+    schema level cascades to every table the client creates underneath.
+
+    Critical: the UC permissions REST API expects the securable *type* as a
+    lowercase string token (``"catalog"`` / ``"schema"``) interpolated into
+    the request path. Passing the SDK ``SecurableType`` enum stringifies to
+    ``"SecurableType.SCHEMA"`` and produces a malformed request that throws —
+    the original bug, which was then swallowed by a broad ``except`` so the
+    grant silently never applied. We pass the lowercase string explicitly.
+
+    Each grant's outcome is captured in the returned list (``created`` |
+    ``failed`` with an ``error``) so the caller can surface it in the response.
+    Failures are logged at error level but never raised: a missing grant is
+    reported, not fatal to the rest of provisioning.
+    """
+    results: list[dict] = []
+    try:
+        from databricks.sdk.service.catalog import Privilege, PermissionsChange
+    except ImportError as exc:
+        logger.error("SDK grant enums unavailable; cannot grant Zerobus SP: %s", exc)
+        return [{
+            "resource": f"Zerobus SP grants on {catalog_name}",
+            "principal": sp_app_id,
+            "status": "failed",
+            "error": f"SDK grant enums unavailable: {exc}",
+        }]
+
+    def _apply(securable_type: str, full_name: str, privileges: list) -> None:
+        try:
+            w.grants.update(
+                securable_type=securable_type,
+                full_name=full_name,
+                changes=[PermissionsChange(principal=sp_app_id, add=list(privileges))],
+            )
+            results.append({
+                "resource": f"{securable_type}:{full_name}",
+                "principal": sp_app_id,
+                "privileges": [p.value for p in privileges],
+                "status": "created",
+            })
+        except Exception as grant_exc:
+            logger.error(
+                "Zerobus SP grant on %s '%s' for principal %s FAILED (non-fatal): %s",
+                securable_type, full_name, sp_app_id, grant_exc,
+            )
+            results.append({
+                "resource": f"{securable_type}:{full_name}",
+                "principal": sp_app_id,
+                "privileges": [p.value for p in privileges],
+                "status": "failed",
+                "error": str(grant_exc),
+            })
+
+    # Catalog first so USE_CATALOG exists before schema-level access is used.
+    _apply("catalog", catalog_name, [Privilege.USE_CATALOG])
+    for schema in schemas:
+        _apply(
+            "schema",
+            f"{catalog_name}.{schema}",
+            [
+                Privilege.USE_SCHEMA,
+                Privilege.MODIFY,
+                Privilege.SELECT,
+                Privilege.CREATE_TABLE,
+            ],
+        )
+    return results
+
+
 def _extract_sse_metrics(sink_config: dict) -> list[str]:
     """Return the list of SSE metrics from sink_config, or ``[]`` if malformed."""
     if not isinstance(sink_config, dict):
@@ -130,7 +362,9 @@ async def provision_uc(
 
         catalog_created = False
         try:
-            storage_root = os.getenv("UC_STORAGE_ROOT")
+            storage_root = await _resolve_uc_storage_root(
+                state, user_email, body.get("storage_root")
+            )
             create_kwargs = {"name": catalog_name}
             if storage_root:
                 create_kwargs["storage_root"] = f"{storage_root}/{catalog_name}"
@@ -139,6 +373,11 @@ async def provision_uc(
         except Exception as e:
             if _is_already_exists(e):
                 logger.info("Catalog '%s' already exists — skipping", catalog_name)
+            elif _is_missing_metastore_storage(e):
+                return JSONResponse(
+                    status_code=409,
+                    content={"error": _MISSING_STORAGE_ROOT_HINT},
+                )
             else:
                 raise
 
@@ -238,13 +477,22 @@ async def provision_pipeline_catalog(
         w = WorkspaceClient()
 
         try:
-            storage_root = os.getenv("UC_STORAGE_ROOT")
+            storage_root = await _resolve_uc_storage_root(
+                state, user_email, body.get("storage_root")
+            )
             create_kwargs = {"name": catalog_name}
             if storage_root:
                 create_kwargs["storage_root"] = f"{storage_root}/{catalog_name}"
             w.catalogs.create(**create_kwargs)
         except AlreadyExists:
             pass
+        except Exception as e:
+            if _is_missing_metastore_storage(e):
+                return JSONResponse(
+                    status_code=409,
+                    content={"error": _MISSING_STORAGE_ROOT_HINT},
+                )
+            raise
 
         for schema in schemas:
             try:
@@ -262,41 +510,24 @@ async def provision_pipeline_catalog(
         except AlreadyExists:
             pass
 
+        # Explicitly bind the just-created catalog to THIS workspace so it is
+        # always accessible here (guards against metastore isolation defaults
+        # that leave a fresh catalog unbound). Idempotent and non-fatal.
+        workspace_binding = _bind_catalog_to_workspace(w, catalog_name)
+
         zb_client_id = os.getenv("ZEROBUS_CLIENT_ID", "")
+        grants: list[dict] = []
         if zb_client_id:
-            try:
-                from databricks.sdk.service.catalog import (
-                    Privilege,
-                    SecurableType,
-                    PermissionsChange,
+            grants = _grant_zerobus_sp(w, catalog_name, schemas, zb_client_id)
+            failed = [g for g in grants if g.get("status") == "failed"]
+            if failed:
+                logger.error(
+                    "Zerobus SP grants partially failed for catalog '%s': %d of %d "
+                    "grant(s) failed — the SP may be unable to write to the Delta "
+                    "table. Failures: %s",
+                    catalog_name, len(failed), len(grants),
+                    [g.get("resource") for g in failed],
                 )
-                for schema in schemas:
-                    full_schema = f"{catalog_name}.{schema}"
-                    try:
-                        w.grants.update(
-                            securable_type=SecurableType.SCHEMA,
-                            full_name=full_schema,
-                            changes=[PermissionsChange(
-                                principal=zb_client_id,
-                                add=[Privilege.USE_SCHEMA, Privilege.MODIFY,
-                                     Privilege.SELECT, Privilege.CREATE_TABLE],
-                            )],
-                        )
-                    except Exception as grant_exc:
-                        logger.warning("Grant on %s failed: %s", full_schema, grant_exc)
-                try:
-                    w.grants.update(
-                        securable_type=SecurableType.CATALOG,
-                        full_name=catalog_name,
-                        changes=[PermissionsChange(
-                            principal=zb_client_id,
-                            add=[Privilege.USE_CATALOG],
-                        )],
-                    )
-                except Exception as grant_exc:
-                    logger.warning("Grant on catalog %s failed: %s", catalog_name, grant_exc)
-            except ImportError:
-                logger.warning("SDK grant enums unavailable; skipping grants")
 
         volume_path = f"/Volumes/{catalog_name}/checkpoints/{volume_name}"
         if pipeline_id:
@@ -309,6 +540,8 @@ async def provision_pipeline_catalog(
             "schemas": schemas,
             "volume": volume_path,
             "status": "created",
+            "workspace_binding": workspace_binding,
+            "grants": grants,
         }
 
     except Exception as exc:
@@ -490,6 +723,10 @@ async def provision_lakebase_table(
             response["tiering_applied"] = svc_result["tiering_applied"]
         if "tiering_error" in svc_result:
             response["tiering_error"] = svc_result["tiering_error"]
+        if "sync_enabled" in svc_result:
+            response["sync_enabled"] = svc_result["sync_enabled"]
+        if "sync_error" in svc_result:
+            response["sync_error"] = svc_result["sync_error"]
         return response
 
     try:

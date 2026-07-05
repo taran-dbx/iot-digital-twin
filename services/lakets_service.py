@@ -129,6 +129,130 @@ async def install_lakets(
 
 
 # ---------------------------------------------------------------------------
+# Per-endpoint idempotent install (used by provisioning + heal endpoints)
+# ---------------------------------------------------------------------------
+
+
+async def install_lakets_if_missing(
+    endpoint_name: str,
+    database: str = "databricks_postgres",
+) -> dict:
+    """Install LakeTS on the given Lakebase endpoint if not already present.
+
+    Generates an OAuth credential for ``endpoint_name`` via the Databricks
+    SDK, opens an asyncpg connection to ``database``, and checks
+    ``lakets._version``.  If the toolkit is already installed, returns
+    ``{"status": "already_exists", "version": "..."}``.  Otherwise reads
+    the SQL from ``LAKETS_SQL_PATH`` (or ``LAKETS_GIT_URL``), executes it,
+    and re-verifies the version.
+
+    Returns a single result dict compatible with the other provisioning
+    helpers:
+        {"resource": "lakets extension", "status": "...", "version": "...", "error": "..."}
+
+    Never raises — all failures are surfaced in the ``error`` field.  Safe
+    to call multiple times.
+    """
+    resource = f"LakeTS on {endpoint_name}"
+    result: dict = {"resource": resource, "status": "failed"}
+
+    try:
+        import asyncpg
+        from databricks.sdk import WorkspaceClient
+    except Exception as exc:
+        result["error"] = f"import failure: {exc}"[:200]
+        return result
+
+    try:
+        w = WorkspaceClient()
+        # Host resolution with REST fallback for older SDKs.
+        try:
+            endpoint = w.postgres.get_endpoint(name=endpoint_name)
+            pg_host = endpoint.status.hosts.host
+        except AttributeError:
+            resp = w.api_client.do("GET", f"/api/2.0/{endpoint_name}")
+            pg_host = resp["status"]["hosts"]["host"]
+
+        # Credential with REST fallback.
+        try:
+            cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
+            pg_token = cred.token
+        except AttributeError:
+            cred_resp = w.api_client.do(
+                "POST",
+                "/api/2.0/postgres/credentials",
+                body={"endpoint": endpoint_name},
+            )
+            pg_token = cred_resp["token"]
+
+        pg_user = w.current_user.me().user_name
+    except Exception as exc:
+        result["error"] = f"credential resolution failed: {exc}"[:200]
+        return result
+
+    try:
+        conn = await asyncpg.connect(
+            host=pg_host, database=database,
+            user=pg_user, password=pg_token, port=5432, ssl="require",
+        )
+    except Exception as exc:
+        result["error"] = f"connect failed: {exc}"[:200]
+        return result
+
+    try:
+        # Step 1: probe the version.  ``get_installed_version`` returns None
+        # if the table doesn't exist yet.
+        existing = await get_installed_version(conn)
+        if existing:
+            return {
+                "resource": resource,
+                "status": "already_exists",
+                "version": existing,
+            }
+
+        # Step 2: resolve the source SQL — prefers LAKETS_SQL_PATH, then
+        # LAKETS_GIT_URL.  Errors bubble up as a "failed" result.
+        try:
+            sql_path = resolve_lakets_source(None)
+        except Exception as exc:
+            return {
+                "resource": resource,
+                "status": "failed",
+                "error": f"cannot resolve LakeTS SQL source: {exc}"[:200],
+            }
+
+        # Step 3: execute the SQL.
+        try:
+            sql_text = sql_path.read_text(encoding="utf-8")
+            await conn.execute(sql_text)
+        except Exception as exc:
+            return {
+                "resource": resource,
+                "status": "failed",
+                "error": f"SQL execution failed: {exc}"[:200],
+            }
+
+        # Step 4: re-verify.
+        version = await get_installed_version(conn)
+        if not version:
+            return {
+                "resource": resource,
+                "status": "failed",
+                "error": "LakeTS install completed but _version is empty",
+            }
+        return {
+            "resource": resource,
+            "status": "created",
+            "version": version,
+        }
+    finally:
+        try:
+            await conn.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # ChronoTable + tier-policy helpers (Phase 2)
 # ---------------------------------------------------------------------------
 _CHRONOTABLE_PROBE_SQL = (
@@ -218,6 +342,141 @@ async def apply_tier_policy(
     return False
 
 
+# ---------------------------------------------------------------------------
+# RollUp creation (Phase 3) — incrementally-maintained time-bucketed aggregates
+# over a ChronoTable.  Wraps the vendored SQL:
+#   lakets.create_rollup(p_name, p_query, p_bucket_interval,
+#                        p_source_table, p_source_schema, p_depends_on)
+# The toolkit takes a full SELECT in ``p_query``; this helper builds that query
+# from a high-level ``aggregates`` spec so callers don't hand-roll SQL.
+# ---------------------------------------------------------------------------
+_ROLLUP_PROBE_SQL = "SELECT id FROM lakets._rollup_registry WHERE name = $1"
+_ROLLUP_CREATE_SQL = (
+    "SELECT lakets.create_rollup($1, $2, $3::interval, $4, $5)"
+)
+
+
+# Aggregate function names the rollup editor offers as bare strings. A bare
+# name (e.g. "avg") means "apply this function to the metric column", which the
+# UI does not spell out — it sends just ["avg", "min", "max"]. Without this
+# mapping those land in the SELECT verbatim ("…, avg, min, max …") and Postgres
+# fails with `column "avg" does not exist`.
+_KNOWN_AGG_FNS = {"avg", "min", "max", "sum", "count"}
+
+
+def _aggregate_to_sql(agg: Any, value_column: str = "value") -> str:
+    """Map one aggregate definition to a SQL select-list fragment.
+
+    Accepts:
+      * a dict ``{"fn": "avg", "column": "value", "as": "avg_v"}`` (the ``as``
+        alias is optional and defaults to ``<fn>_<column>``);
+      * a bare aggregate function name from the UI (``"avg"``, ``"min"``,
+        ``"max"``, ``"sum"``, ``"count"``), expanded to
+        ``<fn>(<value_column>) AS <fn>_<value_column>`` (``count`` →
+        ``count(*) AS count_<value_column>``);
+      * any other raw SQL string, passed through verbatim.
+    """
+    if isinstance(agg, str):
+        token = agg.strip()
+        fn = token.lower()
+        if fn in _KNOWN_AGG_FNS:
+            if fn == "count":
+                return f"count(*) AS count_{value_column}"
+            return f"{fn}({value_column}) AS {fn}_{value_column}"
+        # Not a recognized bare function — assume a raw SQL fragment.
+        return token
+    if not isinstance(agg, dict):
+        raise ValueError(f"unsupported aggregate spec: {agg!r}")
+    fn = agg.get("fn")
+    column = agg.get("column")
+    if not fn or not column:
+        raise ValueError(f"aggregate spec needs 'fn' and 'column': {agg!r}")
+    alias = agg.get("as") or f"{fn}_{column}"
+    return f"{fn}({column}) AS {alias}"
+
+
+def _build_rollup_query(
+    *,
+    table: str,
+    schema: str,
+    bucket: str,
+    time_col: str,
+    aggregates: Any,
+    value_column: str = "value",
+) -> str:
+    """Compose the time-bucketed aggregation SELECT for ``create_rollup``.
+
+    ``aggregates`` is either a list of aggregate specs (dict/bare-fn/raw-str)
+    or a single raw SQL select-list string.  The first column is always the
+    time bucket.
+    """
+    if isinstance(aggregates, str):
+        agg_sql = aggregates
+    else:
+        agg_sql = ", ".join(_aggregate_to_sql(a, value_column) for a in aggregates)
+
+    bucket_expr = f"lakets.time_bucket('{bucket}'::interval, {time_col}) AS bucket"
+    return (
+        f"SELECT {bucket_expr}, {agg_sql} "
+        f"FROM {schema}.{table} "
+        f"GROUP BY bucket"
+    )
+
+
+async def create_rollup(
+    pool: Any,
+    *,
+    table: str,
+    name: str,
+    bucket: str,
+    aggregates: Any,
+    schema: str = "public",
+    time_col: str = "event_time",
+    value_column: str = "value",
+) -> dict:
+    """Create a LakeTS RollUp over ``schema.table``. Idempotent. Never raises.
+
+    Args:
+        table: source ChronoTable name.
+        name: rollup name (also the registry key).
+        bucket: Postgres interval string for the time bucket (e.g. ``"1 hour"``).
+        aggregates: either a list of aggregate specs — each a dict like
+            ``{"fn": "avg", "column": "value", "as": "avg_v"}`` (``as`` optional)
+            — or a raw SQL select-list string (e.g. ``"avg(value) AS v"``).  This
+            is mapped into the ``p_query`` SELECT that ``lakets.create_rollup``
+            stores and incrementally refreshes.
+        schema: source schema (default ``public``); passed as ``p_source_schema``.
+        time_col: time column on the source table used for bucketing.
+
+    Returns ``{"resource", "status"}`` where status is
+    ``created`` | ``already_exists`` | ``failed`` (with ``error`` on failure).
+    """
+    resource = f"LakeTS rollup {name}"
+    try:
+        existing = await pool.fetchval(_ROLLUP_PROBE_SQL, name)
+        if existing is not None:
+            logger.info("RollUp %s already exists (id=%s)", name, existing)
+            return {"resource": resource, "status": "already_exists"}
+
+        query = _build_rollup_query(
+            table=table, schema=schema, bucket=bucket,
+            time_col=time_col, aggregates=aggregates, value_column=value_column,
+        )
+        rollup_id = await pool.fetchval(
+            _ROLLUP_CREATE_SQL,
+            name,
+            query,
+            _interval_to_timedelta(bucket),
+            table,
+            schema,
+        )
+        logger.info("RollUp %s created (id=%s)", name, rollup_id)
+        return {"resource": resource, "status": "created"}
+    except Exception as exc:
+        logger.warning("create_rollup %s failed: %s", name, exc)
+        return {"resource": resource, "status": "failed", "error": str(exc)[:200]}
+
+
 # Approximate ordering of Postgres interval strings for client-side validation.
 # LakeTS enforces the same rule server-side — this just fails fast with a clearer error.
 _UNIT_SECONDS = {
@@ -246,6 +505,65 @@ def _interval_seconds(s: str) -> float:
     if seconds_per_unit is None:
         raise ValueError(f"unknown interval unit: {unit!r}")
     return float(n) * seconds_per_unit
+
+
+# ---------------------------------------------------------------------------
+# Shadow-sync enablement (enable_sync) — prepares the unpartitioned shadow in
+# the lakets_cdf schema (REPLICA IDENTITY FULL) + mirror trigger, REQUIRED
+# before Lakebase CDF / cold-tiering can stream.  The managed sync itself is
+# still enabled once via the Databricks UI on the lakets_cdf schema; this only
+# prepares the shadow.  Signature mirrors the vendored SQL:
+#   lakets.enable_sync(p_table_name TEXT, p_schema_name TEXT DEFAULT 'public')
+# ---------------------------------------------------------------------------
+_SYNC_STATE_PROBE_SQL = (
+    "SELECT id, sync_enabled FROM lakets._chronotable_registry "
+    "WHERE schema_name = $2 AND table_name = $1"
+)
+_ENABLE_SYNC_SQL = "SELECT lakets.enable_sync($1, $2)"
+
+# Substrings that mean the shadow / sync is already in place — treated as
+# success (already_exists), never as a failure.
+_ALREADY_SYNCED_HINTS = ("already", "exists", "duplicate")
+
+
+async def enable_sync(pool: Any, table: str, schema: str = "public") -> dict:
+    """Prepare the LakeTS shadow table + mirror trigger for ``schema.table``.
+
+    Runs ``SELECT lakets.enable_sync(table, schema)``, which creates the
+    unpartitioned shadow in the ``lakets_cdf`` schema (REPLICA IDENTITY FULL)
+    and the mirror trigger on the source.  Idempotent: if the ChronoTable's
+    registry row already has ``sync_enabled = TRUE`` the call is skipped, and
+    any "already exists" race from the SQL is swallowed.
+
+    Never raises — all outcomes are returned as a result dict:
+        {"resource": "...", "status": "created|already_exists|failed", "error": ...}
+    """
+    resource = f"LakeTS sync on {schema}.{table}"
+
+    # Idempotency fast-path: if the registry already records sync_enabled,
+    # there's nothing to do.
+    try:
+        row = await pool.fetchrow(_SYNC_STATE_PROBE_SQL, table, schema)
+    except Exception as exc:
+        logger.debug("enable_sync registry probe failed for %s.%s: %s", schema, table, exc)
+        row = None
+
+    if row is not None and row.get("sync_enabled"):
+        logger.info("LakeTS sync on %s.%s already enabled", schema, table)
+        return {"resource": resource, "status": "already_exists"}
+
+    try:
+        await pool.fetchval(_ENABLE_SYNC_SQL, table, schema)
+    except Exception as exc:
+        msg = str(exc)
+        if any(hint in msg.lower() for hint in _ALREADY_SYNCED_HINTS):
+            logger.info("LakeTS sync on %s.%s already present (%s)", schema, table, msg[:80])
+            return {"resource": resource, "status": "already_exists"}
+        logger.warning("LakeTS enable_sync on %s.%s failed: %s", schema, table, exc)
+        return {"resource": resource, "status": "failed", "error": msg[:200]}
+
+    logger.info("LakeTS sync enabled on %s.%s", schema, table)
+    return {"resource": resource, "status": "created"}
 
 
 # ---------------------------------------------------------------------------

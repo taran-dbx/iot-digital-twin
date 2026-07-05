@@ -56,4 +56,24 @@ async def save_user_settings(
         user_email,
         json.dumps(body),
     )
+
+    # Mirror the warehouse selection into the APP-GLOBAL config row so DBSQL
+    # (which queries as the app service principal) resolves it for every
+    # caller, independent of per-user / anonymous identity.
+    warehouse = body.get("warehouse") or {}
+    if warehouse.get("warehouse_id"):
+        from services.dbsql_service import APP_GLOBAL_SETTINGS_KEY
+
+        await state.db.execute(
+            """
+            INSERT INTO user_settings (user_email, settings, updated_at)
+            VALUES ($1, $2::jsonb, NOW())
+            ON CONFLICT (user_email) DO UPDATE
+            SET settings = COALESCE(user_settings.settings, '{}'::jsonb) || $2::jsonb,
+                updated_at = NOW()
+            """,
+            APP_GLOBAL_SETTINGS_KEY,
+            json.dumps({"warehouse": warehouse}),
+        )
+
     return body

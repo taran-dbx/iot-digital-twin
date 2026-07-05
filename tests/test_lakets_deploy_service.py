@@ -89,3 +89,238 @@ class TestDeployRetentionJob:
             "branch_id": "staging",
             "database": "custom_db",
         }
+
+
+def _ops_workspace_client() -> MagicMock:
+    """A WorkspaceClient mock suitable for the ops-job deployers (w passed in)."""
+    w = MagicMock()
+    w.current_user.me.return_value = MagicMock(user_name="taran@databricks.com")
+    w.workspace.mkdirs = MagicMock(return_value=None)
+    w.workspace.import_ = MagicMock(return_value=None)
+    w.jobs.list.return_value = []
+    w.jobs.create.return_value = MagicMock(job_id=7)
+    w.jobs.reset = MagicMock(return_value=None)
+    w.config.host = "https://e2.cloud.databricks.com"
+    return w
+
+
+def _existing_job(name: str, job_id: int) -> MagicMock:
+    existing = MagicMock(job_id=job_id, settings=MagicMock())
+    existing.settings.name = name
+    return existing
+
+
+class TestDeployPartitionManagerJob:
+    def test_raises_on_missing_project_id(self) -> None:
+        w = _ops_workspace_client()
+        with pytest.raises(ValueError, match="project_id is required"):
+            lakets_deploy_service.deploy_partition_manager_job(w, "", "production")
+
+    def test_creates_job_when_none_exists(self) -> None:
+        w = _ops_workspace_client()
+        result = lakets_deploy_service.deploy_partition_manager_job(
+            w, "iot-lakets-demo", "production"
+        )
+
+        assert result["job_id"] == 7
+        assert result["status"] == "created"
+        assert result["job"] == "LakeTS Partition Manager — iot-lakets-demo/production"
+        w.workspace.import_.assert_called_once()
+        w.jobs.create.assert_called_once()
+        w.jobs.reset.assert_not_called()
+
+        _, kwargs = w.jobs.create.call_args
+        assert kwargs["schedule"].quartz_cron_expression == "0 0/10 * * * ?"
+        assert kwargs["max_concurrent_runs"] == 1
+
+    def test_updates_job_when_exists(self) -> None:
+        w = _ops_workspace_client()
+        name = "LakeTS Partition Manager — iot-lakets-demo/production"
+        w.jobs.list.return_value = [_existing_job(name, 55)]
+
+        result = lakets_deploy_service.deploy_partition_manager_job(
+            w, "iot-lakets-demo", "production"
+        )
+
+        assert result["job_id"] == 55
+        assert result["status"] == "updated"
+        w.jobs.reset.assert_called_once()
+        w.jobs.create.assert_not_called()
+
+
+class TestDeployRollupRefreshJob:
+    def test_raises_on_missing_project_id(self) -> None:
+        w = _ops_workspace_client()
+        with pytest.raises(ValueError, match="project_id is required"):
+            lakets_deploy_service.deploy_rollup_refresh_job(w, "", "production")
+
+    def test_creates_job_when_none_exists(self) -> None:
+        w = _ops_workspace_client()
+        result = lakets_deploy_service.deploy_rollup_refresh_job(
+            w, "iot-lakets-demo", "production"
+        )
+
+        assert result["job_id"] == 7
+        assert result["status"] == "created"
+        assert result["job"] == "LakeTS Rollup Refresh — iot-lakets-demo/production"
+        w.jobs.create.assert_called_once()
+        w.jobs.reset.assert_not_called()
+
+        _, kwargs = w.jobs.create.call_args
+        assert kwargs["schedule"].quartz_cron_expression == "0 0/15 * * * ?"
+
+    def test_updates_job_when_exists(self) -> None:
+        w = _ops_workspace_client()
+        name = "LakeTS Rollup Refresh — iot-lakets-demo/production"
+        w.jobs.list.return_value = [_existing_job(name, 88)]
+
+        result = lakets_deploy_service.deploy_rollup_refresh_job(
+            w, "iot-lakets-demo", "production"
+        )
+
+        assert result["job_id"] == 88
+        assert result["status"] == "updated"
+        w.jobs.reset.assert_called_once()
+        w.jobs.create.assert_not_called()
+
+
+class TestDeployTieringJob:
+    def test_raises_on_missing_project_id(self) -> None:
+        w = _ops_workspace_client()
+        with pytest.raises(ValueError, match="project_id is required"):
+            lakets_deploy_service.deploy_tiering_job(w, "", "production")
+
+    def test_creates_job_when_none_exists(self) -> None:
+        w = _ops_workspace_client()
+        result = lakets_deploy_service.deploy_tiering_job(
+            w, "iot-lakets-demo", "production"
+        )
+
+        assert result["job_id"] == 7
+        assert result["status"] == "created"
+        assert result["job"] == "LakeTS Tiering — iot-lakets-demo/production"
+        w.workspace.import_.assert_called_once()
+        w.jobs.create.assert_called_once()
+        w.jobs.reset.assert_not_called()
+
+        _, kwargs = w.jobs.create.call_args
+        assert kwargs["schedule"].quartz_cron_expression == "0 0/30 * * * ?"
+        assert kwargs["max_concurrent_runs"] == 1
+
+    def test_updates_job_when_exists(self) -> None:
+        w = _ops_workspace_client()
+        name = "LakeTS Tiering — iot-lakets-demo/production"
+        w.jobs.list.return_value = [_existing_job(name, 77)]
+
+        result = lakets_deploy_service.deploy_tiering_job(
+            w, "iot-lakets-demo", "production"
+        )
+
+        assert result["job_id"] == 77
+        assert result["status"] == "updated"
+        w.jobs.reset.assert_called_once()
+        w.jobs.create.assert_not_called()
+
+    def test_notebook_calls_tier_chunk(self) -> None:
+        # The inlined notebook must drive cold-tiering via tier_chunk over the
+        # chunks returned by _get_chunks_to_tier.
+        src = lakets_deploy_service._TIERING_NOTEBOOK_SOURCE.decode("utf-8")
+        assert "lakets.tier_chunk" in src
+        assert "lakets._get_chunks_to_tier" in src
+        assert "policy_type = 'tiering'" in src
+
+
+class TestDeployLakeTSOpsJobs:
+    def test_raises_on_missing_project_id(self) -> None:
+        w = _ops_workspace_client()
+        with pytest.raises(ValueError, match="project_id is required"):
+            lakets_deploy_service.deploy_lakets_ops_jobs(w, "", "production")
+
+    def test_deploys_all_by_default(self) -> None:
+        w = _ops_workspace_client()
+        with patch.object(
+            lakets_deploy_service,
+            "deploy_retention_job",
+            return_value={"job_id": 1, "job_name": "ret", "action": "created"},
+        ) as mock_ret:
+            results = lakets_deploy_service.deploy_lakets_ops_jobs(
+                w, "iot-lakets-demo", "production"
+            )
+
+        assert len(results) == 4
+        jobs = {r["job"] for r in results}
+        assert "LakeTS Partition Manager — iot-lakets-demo/production" in jobs
+        assert "LakeTS Rollup Refresh — iot-lakets-demo/production" in jobs
+        assert "LakeTS Tiering — iot-lakets-demo/production" in jobs
+        mock_ret.assert_called_once()
+        for r in results:
+            assert set(r) == {"job", "job_id", "status"}
+            assert r["status"] in {"created", "updated"}
+
+    def test_tiering_entry_omitted_when_disabled(self) -> None:
+        w = _ops_workspace_client()
+        with patch.object(lakets_deploy_service, "deploy_retention_job"):
+            results = lakets_deploy_service.deploy_lakets_ops_jobs(
+                w,
+                "iot-lakets-demo",
+                "production",
+                partition_manager=False,
+                rollup=False,
+                retention=False,
+                tiering=True,
+            )
+
+        assert len(results) == 1
+        assert results[0]["job"] == "LakeTS Tiering — iot-lakets-demo/production"
+
+    def test_tiering_omitted_when_false(self) -> None:
+        w = _ops_workspace_client()
+        with patch.object(lakets_deploy_service, "deploy_retention_job"):
+            results = lakets_deploy_service.deploy_lakets_ops_jobs(
+                w,
+                "iot-lakets-demo",
+                "production",
+                partition_manager=False,
+                rollup=False,
+                retention=False,
+                tiering=False,
+            )
+
+        assert results == []
+
+    def test_respects_flags(self) -> None:
+        w = _ops_workspace_client()
+        with patch.object(
+            lakets_deploy_service, "deploy_retention_job"
+        ) as mock_ret:
+            results = lakets_deploy_service.deploy_lakets_ops_jobs(
+                w,
+                "iot-lakets-demo",
+                "production",
+                partition_manager=True,
+                rollup=False,
+                retention=False,
+                tiering=False,
+            )
+
+        assert len(results) == 1
+        assert results[0]["job"] == (
+            "LakeTS Partition Manager — iot-lakets-demo/production"
+        )
+        mock_ret.assert_not_called()
+
+    def test_only_rollup(self) -> None:
+        w = _ops_workspace_client()
+        with patch.object(lakets_deploy_service, "deploy_retention_job"):
+            results = lakets_deploy_service.deploy_lakets_ops_jobs(
+                w,
+                "iot-lakets-demo",
+                "production",
+                partition_manager=False,
+                rollup=True,
+                retention=False,
+                tiering=False,
+            )
+
+        assert len(results) == 1
+        assert results[0]["job"] == "LakeTS Rollup Refresh — iot-lakets-demo/production"

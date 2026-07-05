@@ -87,18 +87,17 @@ async def main() -> int:
         print("\n❌ Project/branch provisioning failed. Aborting.")
         return 1
 
-    # ── Step 2: Role + password ───────────────────────────────────────────
-    role_password = secrets_mod.token_urlsafe(24)
-    _print_header("2. provision_lakebase_role (databricks_superuser)")
+    # ── Step 2: Register the current SP as an OAuth PG role ───────────────
+    role_password = secrets_mod.token_urlsafe(24)  # back-compat placeholder
+    _print_header("2. provision_lakebase_role (OAuth-native)")
     role_results = await provision_lakebase_role(
-        PROJECT_ID, BRANCH_ID, role_password, DATABASE
+        project_id=PROJECT_ID, branch_id=BRANCH_ID, database=DATABASE,
     )
     _print_results(role_results)
 
-    password_set = any(
-        r.get("resource", "").endswith("password") and r.get("status") == "created"
-        for r in role_results
-    )
+    # Password-based direct mode is no longer part of the new flow; the
+    # autoscale OAuth path below exercises the same code paths regardless.
+    password_set = False
 
     # ── Step 3: Option A — autoscale OAuth ────────────────────────────────
     _print_header("3A. provision_lakebase_table + install_lakets + ChronoTable (autoscale)")

@@ -4,36 +4,42 @@ command:
   - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
 
 env:
-  # ── App backend Lakebase (stores pipelines + user_settings) ──
+  # ── Lakebase (fe-vm-shared-interop / us-east-1).  iot-lakets-demo serves
+  #    as both the app backend and the demo streaming target. ──
   - name: PGHOST
-    value: "ep-young-pine-d3cm83xf.database.eu-west-1.cloud.databricks.com"
+    value: "ep-fancy-king-d2l9rua6.database.us-east-1.cloud.databricks.com"
   - name: PGDATABASE
     value: "databricks_postgres"
   - name: PGPORT
     value: "5432"
   - name: LAKEBASE_ENDPOINT
-    value: "projects/iot-digital-twin/branches/production/endpoints/primary"
+    value: "projects/iot-lakets-demo/branches/production/endpoints/primary"
 
-  # ── Zerobus (not configured on e2-demo-emea; Zerobus sink will no-op) ──
+  # ── Zerobus: enables UI panel + SP catalog grants.
+  #    TABLE_NAME left empty so the legacy in-app sink stays OFF;
+  #    the real ingest path is the per-pipeline producer notebook. ──
   - name: ZEROBUS_SERVER_ENDPOINT
-    value: ""
+    value: "332040261549026.zerobus.us-east-1.cloud.databricks.com"
   - name: ZEROBUS_TABLE_NAME
     value: ""
   - name: ZEROBUS_CLIENT_ID
-    value: ""
+    value: "01329a59-2dff-480c-ab9f-29a4e87f3bbd"
   - name: ZEROBUS_SECRET_SCOPE
-    value: ""
+    value: "iot-secrets"
   - name: ZEROBUS_SECRET_KEY
-    value: ""
+    value: "zerobus-client-secret"
 
-  # ── Unity Catalog managed storage (metastore storage_root, eu-west-1) ──
+  # ── Unity Catalog: let create_catalog default to metastore-managed
+  #    storage — setting UC_STORAGE_ROOT to the metastore's own root
+  #    collides with its default managed-storage region
+  #    ("overlaps with managed storage within CreateCatalog").  The SP
+  #    already has CREATE_MANAGED_STORAGE on the default location. ──
   - name: UC_STORAGE_ROOT
-    value: "s3://databricks-uc-e2-demo-emea-ireland/155e600b-57c2-43e2-a38c-fb7a40bfb81e"
+    value: ""
 
   - name: INDUSTRIES
     value: "pharmaceutical"
 
-  # ── LakeTS source for per-pipeline tiering ──
-  # Vendored inside the repo; the Apps runtime has no network egress for git.
+  # ── LakeTS source — vendored; Apps runtime has no git egress ──
   - name: LAKETS_SQL_PATH
     value: "/app/python/source_code/databricks/vendor/lakets.sql"

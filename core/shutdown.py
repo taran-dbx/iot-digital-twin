@@ -43,3 +43,13 @@ async def shutdown(state: AppState) -> None:
             await asyncio.wait_for(state.db.close(), timeout=2)
         except asyncio.TimeoutError:
             logger.warning("Lakebase pool close timed out")
+
+    # Close per-pipeline Lakebase pools
+    pipeline_dbs = getattr(state, "pipeline_dbs", {}) or {}
+    for pid, handle in list(pipeline_dbs.items()):
+        try:
+            await asyncio.wait_for(handle.close(), timeout=2)
+        except asyncio.TimeoutError:
+            logger.warning("Pipeline %s Lakebase close timed out", pid)
+        except Exception as exc:
+            logger.warning("Pipeline %s Lakebase close error: %s", pid, exc)

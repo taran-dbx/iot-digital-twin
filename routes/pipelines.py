@@ -11,11 +11,50 @@ from typing import Any
 from fastapi import APIRouter, Query, Request, Depends
 from fastapi.responses import JSONResponse
 
+from databricks.sdk import WorkspaceClient
+
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
+from services.pipeline_db import get_pipeline_lakebase
 from services.pipeline_service import pipeline_row_to_dict
 from services.producer_service import stop_data_producer
 from services.source_registry import check_source_available, claim_source, release_source
+
+# Import the OAuth-native Lakebase provisioning helpers. These are being
+# introduced by a sibling refactor; tolerate their absence so this module still
+# imports cleanly during the interim. Tests should always patch these symbols
+# via ``routes.pipelines.<name>`` so the patch target exists either way.
+try:
+    from services.provisioning_service import provision_lakebase_role  # type: ignore
+except ImportError:  # pragma: no cover — transitional fallback
+    async def provision_lakebase_role(*_args: Any, **_kwargs: Any) -> list[dict]:  # type: ignore[no-redef]
+        raise RuntimeError(
+            "provision_lakebase_role is not yet available in services.provisioning_service"
+        )
+
+try:
+    from services.lakets_service import install_lakets_if_missing  # type: ignore
+except ImportError:  # pragma: no cover — transitional fallback
+    async def install_lakets_if_missing(*_args: Any, **_kwargs: Any) -> dict:  # type: ignore[no-redef]
+        raise RuntimeError(
+            "install_lakets_if_missing is not yet available in services.lakets_service"
+        )
+
+# App-permission grant (CAN_USE) for the streaming SP — fixes the SP's 401
+# when it authenticates back to the deployed app.
+from services.app_permissions import grant_app_can_use, _app_name  # noqa: E402
+
+# LakeTS operational jobs (partition manager, rollup, retention). Owned by a
+# sibling refactor in services.lakets_deploy_service; tolerate its absence so
+# this module still imports during the interim. Tests patch this symbol via
+# ``routes.pipelines.deploy_lakets_ops_jobs`` so the patch target exists either way.
+try:
+    from services.lakets_deploy_service import deploy_lakets_ops_jobs  # type: ignore
+except ImportError:  # pragma: no cover — transitional fallback
+    def deploy_lakets_ops_jobs(*_args: Any, **_kwargs: Any) -> list[dict]:  # type: ignore[no-redef]
+        raise RuntimeError(
+            "deploy_lakets_ops_jobs is not yet available in services.lakets_deploy_service"
+        )
 
 logger = logging.getLogger("iot_digital_twin.routes.pipelines")
 router = APIRouter()
@@ -78,15 +117,20 @@ async def create_pipeline(
                 },
             )
 
+    # Persist source_type / source_config on the row at create time so a
+    # pipeline can never sit in the source_type=null window (which made
+    # zerobus pipelines render as SSE until the source-settings autosave ran).
     row = await state.db.fetchrow(
         """
-        INSERT INTO pipelines (user_email, name, industry)
-        VALUES ($1, $2, $3)
+        INSERT INTO pipelines (user_email, name, industry, source_type, source_config)
+        VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
         RETURNING *
         """,
         user_email,
         name,
         body.get("industry"),
+        source_type,
+        json.dumps(source_config) if source_config else None,
     )
 
     if source_type and source_config and row:
@@ -238,12 +282,41 @@ async def delete_pipeline(
         pipeline_id,
     )
 
-    cleanup_log: list[str] = []
+    cleanup_log: list[Any] = []
 
-    def _sdk_cleanup() -> list[str]:
-        log: list[str] = []
+    def _uc_tables_to_drop() -> list[str]:
+        """Resolve the fully-qualified UC tables owned by THIS pipeline.
+
+        Always includes the Zerobus/CDF Delta target
+        ``<uc_catalog>.raw.iot_sensor_data``. If the pipeline tracks a specific
+        cold-tier / CDF destination table (``resources['cold_tier_table']``),
+        that is included too — but only when it lives inside this pipeline's own
+        catalog, so a shared catalog is never touched.
+        """
+        catalog = resources.get("uc_catalog")
+        if not catalog or not isinstance(catalog, str):
+            return []
+        targets: list[str] = [f"{catalog}.raw.iot_sensor_data"]
+        cold = resources.get("cold_tier_table")
+        if isinstance(cold, str) and cold.strip():
+            cold = cold.strip()
+            # Only drop the cold-tier table when it belongs to THIS pipeline's
+            # catalog (never a shared/foreign catalog).
+            if cold.split(".", 1)[0] == catalog and cold not in targets:
+                targets.append(cold)
+            elif cold.split(".", 1)[0] != catalog:
+                logger.warning(
+                    "Skipping cold-tier table drop for pipeline %s — %r is outside "
+                    "its catalog %r",
+                    pipeline_id, cold, catalog,
+                )
+        return targets
+
+    def _sdk_cleanup() -> list[Any]:
+        log: list[Any] = []
         try:
-            from databricks.sdk import WorkspaceClient
+            from databricks.sdk.errors import NotFound
+
             w = WorkspaceClient()
 
             if resources.get("job_id"):
@@ -259,6 +332,27 @@ async def delete_pipeline(
                     log.append(f"Deleted cluster {resources['cluster_id']}")
                 except Exception as exc:
                     log.append(f"Cluster delete failed: {exc}")
+
+            # Drop the pipeline's CDF-enabled / cold-tier Unity Catalog table(s)
+            # via the SDK. Each drop is best-effort, idempotent (not-found is
+            # success), and scoped to this pipeline's own catalog.
+            for full_name in _uc_tables_to_drop():
+                entry: dict[str, Any] = {
+                    "resource": f"UC table {full_name}",
+                }
+                try:
+                    w.tables.delete(full_name=full_name)
+                    entry["status"] = "dropped"
+                except NotFound:
+                    entry["status"] = "not_found"
+                except Exception as exc:
+                    entry["status"] = "failed"
+                    entry["error"] = str(exc)
+                    logger.warning(
+                        "UC table drop failed for %s (pipeline %s): %s",
+                        full_name, pipeline_id, exc,
+                    )
+                log.append(entry)
 
             if resources.get("uc_schema") and resources.get("uc_catalog"):
                 full_schema = f"{resources['uc_catalog']}.{resources['uc_schema']}"
@@ -372,6 +466,200 @@ async def reset_pipeline(
     }
 
 
+@router.post("/api/pipelines/{pipeline_id}/heal-lakebase")
+async def heal_lakebase(
+    pipeline_id: str,
+    state: AppState = Depends(get_app_state),
+    user_email: str = Depends(get_current_user),
+):
+    """Re-apply the OAuth-native Lakebase provisioning to an existing pipeline.
+
+    Idempotent. Safe to call multiple times. Triggers a job restart so the
+    updated consumer notebook takes effect. Each step (provision, install lakets,
+    restart job) is wrapped in its own try/except so a single failure does not
+    break the whole endpoint — every step result is reported in the response.
+    """
+    if not state.db_available or not state.db:
+        return JSONResponse(status_code=503, content={"error": "Database not configured"})
+
+    row = await state.db.fetchrow(
+        "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2 AND status != 'deleted'",
+        pipeline_id, user_email,
+    )
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
+
+    pipeline = pipeline_row_to_dict(row)
+    source_config = pipeline.get("source_config") or {}
+    if isinstance(source_config, str):
+        try:
+            source_config = json.loads(source_config)
+        except (json.JSONDecodeError, TypeError):
+            source_config = {}
+
+    lb_project_id = source_config.get("lb_project_id")
+    lb_branch_id = source_config.get("lb_branch_id")
+    lb_database = source_config.get("lb_database")
+
+    missing = [
+        name for name, val in (
+            ("lb_project_id", lb_project_id),
+            ("lb_branch_id", lb_branch_id),
+            ("lb_database", lb_database),
+        )
+        if not val
+    ]
+    if missing:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    "Pipeline source_config is missing required Lakebase fields: "
+                    f"{', '.join(missing)}"
+                ),
+            },
+        )
+
+    endpoint_name = (
+        f"projects/{lb_project_id}/branches/{lb_branch_id}/endpoints/primary"
+    )
+
+    # Resolve SP client ID via WorkspaceClient().current_user.me().user_name.
+    # When running as a deployed Databricks App, this is the SP's UUID.
+    try:
+        w = WorkspaceClient()
+        sp_client_id = w.current_user.me().user_name
+    except Exception as exc:
+        logger.warning("heal_lakebase: failed to resolve SP client id: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to resolve service principal: {exc}"},
+        )
+
+    steps: list[dict[str, Any]] = []
+
+    # Step 5: provision Lakebase role
+    try:
+        provision_results = await provision_lakebase_role(
+            sp_client_id=sp_client_id,
+            project_id=lb_project_id,
+            branch_id=lb_branch_id,
+            database=lb_database,
+            endpoint_name=endpoint_name,
+            sink_tables=("sensor_readings",),
+        )
+        steps.append({"step": "provision_role", "results": provision_results})
+    except Exception as exc:
+        logger.exception("heal_lakebase: provision_lakebase_role failed for %s", pipeline_id)
+        steps.append({
+            "step": "provision_role",
+            "error": str(exc),
+            "results": [],
+        })
+
+    # Step 6: install LakeTS (idempotent)
+    try:
+        lakets_result = await install_lakets_if_missing(
+            endpoint_name=endpoint_name,
+            database=lb_database,
+        )
+        steps.append({"step": "install_lakets", "result": lakets_result})
+    except Exception as exc:
+        logger.exception("heal_lakebase: install_lakets_if_missing failed for %s", pipeline_id)
+        steps.append({
+            "step": "install_lakets",
+            "error": str(exc),
+            "result": None,
+        })
+
+    # Step 6b: grant the streaming SP CAN_USE on the app so its OAuth token is
+    # accepted when it calls back into the app (otherwise: 401). Non-fatal.
+    grant_step: dict[str, Any] = {"step": "grant_app_access"}
+    try:
+        app_name = _app_name()
+        grant_app_can_use(w, app_name, sp_client_id)
+        grant_step["app_name"] = app_name
+        grant_step["sp"] = sp_client_id
+        grant_step["status"] = "granted"
+    except Exception as exc:  # pragma: no cover — grant is itself non-raising
+        logger.warning("heal_lakebase: grant_app_can_use failed for %s: %s", pipeline_id, exc)
+        grant_step["error"] = str(exc)
+    steps.append(grant_step)
+
+    # Step 6c: deploy LakeTS operational jobs (partition manager, rollup,
+    # retention) for the pipeline's Lakebase project/branch/database. Non-fatal.
+    deploy_step: dict[str, Any] = {"step": "deploy_lakets_jobs"}
+    try:
+        ops_results = deploy_lakets_ops_jobs(
+            w,
+            lb_project_id,
+            lb_branch_id,
+            database=lb_database,
+        )
+        deploy_step["results"] = ops_results
+    except Exception as exc:
+        logger.exception("heal_lakebase: deploy_lakets_ops_jobs failed for %s", pipeline_id)
+        deploy_step["error"] = str(exc)
+        deploy_step["results"] = []
+    steps.append(deploy_step)
+
+    # Step 7: TODO: regenerate consumer notebook via generate_sss_consumer_notebook()
+    # once frontend template is updated — skipped for now; user can manually re-run
+    # deploy from wizard.
+
+    # Step 8: cancel active runs and trigger a fresh run.
+    resources = pipeline.get("resources") or {}
+    if isinstance(resources, str):
+        try:
+            resources = json.loads(resources)
+        except (json.JSONDecodeError, TypeError):
+            resources = {}
+    job_id_raw = resources.get("job_id") if isinstance(resources, dict) else None
+
+    cancelled_runs: list[int] = []
+    new_run_id: int | None = None
+    restart_error: str | None = None
+    try:
+        if not job_id_raw:
+            raise ValueError("Pipeline has no job_id to restart")
+        job_id = int(job_id_raw)
+        active_runs = list(w.jobs.list_runs(job_id=job_id, active_only=True) or [])
+        for run in active_runs:
+            run_id = getattr(run, "run_id", None)
+            if run_id is None:
+                continue
+            try:
+                w.jobs.cancel_run(run_id=run_id)
+                cancelled_runs.append(int(run_id))
+            except Exception as cancel_exc:
+                logger.warning(
+                    "heal_lakebase: failed to cancel run %s for job %s: %s",
+                    run_id, job_id, cancel_exc,
+                )
+        triggered = w.jobs.run_now(job_id=job_id)
+        maybe_run_id = getattr(triggered, "run_id", None)
+        if maybe_run_id is not None:
+            new_run_id = int(maybe_run_id)
+    except Exception as exc:
+        logger.exception("heal_lakebase: restart failed for pipeline %s", pipeline_id)
+        restart_error = str(exc)
+
+    restart_step: dict[str, Any] = {
+        "step": "restart_job",
+        "new_run_id": new_run_id,
+        "cancelled": cancelled_runs,
+    }
+    if restart_error is not None:
+        restart_step["error"] = restart_error
+    steps.append(restart_step)
+
+    return {
+        "pipeline_id": pipeline_id,
+        "endpoint": endpoint_name,
+        "steps": steps,
+    }
+
+
 @router.post("/api/pipelines/{pipeline_id}/clone")
 async def clone_pipeline(
     pipeline_id: str,
@@ -444,7 +732,6 @@ async def get_lakebase_health(
     On DB error the same shape is returned with zeroes plus an ``error`` key so
     the client never has to special-case a transport failure.
     """
-    # TODO: scope by pipeline_id once source_bindings tracks it
     default_payload: dict[str, Any] = {
         "rows_5m": 0,
         "latest_at": None,
@@ -452,11 +739,12 @@ async def get_lakebase_health(
         "inserts_per_sec_recent": 0.0,
     }
 
-    if not state.db_available or not state.db:
-        return {**default_payload, "error": "Database not configured"}
+    lb = await get_pipeline_lakebase(state, pipeline_id)
+    if lb is None:
+        return {**default_payload, "error": "Pipeline Lakebase not resolvable"}
 
     try:
-        row = await state.db.fetchrow(
+        row = await lb.fetchrow(
             """
             SELECT
                 COUNT(*) AS rows_5m,
@@ -531,7 +819,7 @@ async def pipeline_history(
     import re
     if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", catalog):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
-    table = f"{catalog}.raw.sensor_data"
+    table = f"{catalog}.raw.iot_sensor_data"
 
     try:
         import httpx

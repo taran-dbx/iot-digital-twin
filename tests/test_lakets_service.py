@@ -35,14 +35,14 @@ class TestGetInstalledVersion:
     @pytest.mark.asyncio
     async def test_returns_version_string(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(return_value="0.1.2")
+        pool.fetchval = AsyncMock(return_value="0.1.0")
         result = await lakets_service.get_installed_version(pool)
-        assert result == "0.1.2"
+        assert result == "0.1.0"
 
     @pytest.mark.asyncio
     async def test_queries_latest_row_by_installed_at(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(return_value="0.1.2")
+        pool.fetchval = AsyncMock(return_value="0.1.0")
         await lakets_service.get_installed_version(pool)
         sql_arg = pool.fetchval.await_args.args[0]
         assert "lakets._version" in sql_arg
@@ -58,7 +58,7 @@ class TestResolveLakeTsSource:
 
     def test_uses_explicit_path_arg(self, tmp_path: Path) -> None:
         sql_file = tmp_path / "lakets.sql"
-        sql_file.write_text("-- LakeTS v0.1.2\n")
+        sql_file.write_text("-- LakeTS v0.1.0\n")
         resolved = lakets_service.resolve_lakets_source(explicit_path=str(sql_file))
         assert resolved == sql_file
 
@@ -69,7 +69,7 @@ class TestResolveLakeTsSource:
 
     def test_uses_env_sql_path_when_no_arg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         sql_file = tmp_path / "lakets.sql"
-        sql_file.write_text("-- LakeTS v0.1.2\n")
+        sql_file.write_text("-- LakeTS v0.1.0\n")
         monkeypatch.setenv("LAKETS_SQL_PATH", str(sql_file))
         monkeypatch.delenv("LAKETS_GIT_URL", raising=False)
         resolved = lakets_service.resolve_lakets_source()
@@ -110,11 +110,11 @@ class TestInstallLakeTs:
         sql_file.write_text("-- dummy LakeTS SQL\nCREATE SCHEMA IF NOT EXISTS lakets;\n")
         pool = MagicMock()
         pool.execute = AsyncMock(return_value=None)
-        pool.fetchval = AsyncMock(return_value="0.1.2")
+        pool.fetchval = AsyncMock(return_value="0.1.0")
 
         version = await lakets_service.install_lakets(pool, sql_file)
 
-        assert version == "0.1.2"
+        assert version == "0.1.0"
         pool.execute.assert_awaited_once()
         executed_sql = pool.execute.await_args.args[0]
         assert "lakets" in executed_sql
@@ -125,10 +125,10 @@ class TestInstallLakeTs:
         sql_file.write_text("-- body\n")
         pool = MagicMock()
         pool.execute = AsyncMock(return_value=None)
-        pool.fetchval = AsyncMock(return_value="0.1.2")
+        pool.fetchval = AsyncMock(return_value="0.1.0")
 
         version = await lakets_service.install_lakets(pool, sql_file)
-        assert version == "0.1.2"
+        assert version == "0.1.0"
 
     @pytest.mark.asyncio
     async def test_idempotent_second_call_skips_exec_when_already_installed(
@@ -138,11 +138,11 @@ class TestInstallLakeTs:
         sql_file.write_text("-- body\n")
         pool = MagicMock()
         pool.execute = AsyncMock(return_value=None)
-        pool.fetchval = AsyncMock(return_value="0.1.2")
+        pool.fetchval = AsyncMock(return_value="0.1.0")
 
         version = await lakets_service.install_lakets(pool, sql_file, skip_if_installed=True)
 
-        assert version == "0.1.2"
+        assert version == "0.1.0"
         pool.execute.assert_not_awaited()
 
     @pytest.mark.asyncio

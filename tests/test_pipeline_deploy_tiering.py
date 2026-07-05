@@ -205,7 +205,7 @@ class TestProvisionRouteForwardsTiering:
 
         svc_mock = AsyncMock(return_value={
             "status": "created",
-            "lakets_version": "0.1.2",
+            "lakets_version": "0.1.0",
             "tiering_applied": {
                 "hot": "1 hour", "drop": "7 days", "chunk": "15 minutes",
             },
@@ -232,7 +232,7 @@ class TestProvisionRouteForwardsTiering:
             "hot": "1 hour", "drop": "7 days", "chunk": "15 minutes",
         }
         assert response["sse_metrics"] == ["temperature", "pressure"]
-        assert response["lakets_version"] == "0.1.2"
+        assert response["lakets_version"] == "0.1.0"
 
     @pytest.mark.asyncio
     async def test_missing_sink_config_skips_tiering(self) -> None:
@@ -383,7 +383,7 @@ class TestProvisionRouteForwardsTiering:
             "pipeline_id": "pipe-123",
         })
 
-        svc_mock = AsyncMock(return_value={"status": "created", "lakets_version": "0.1.2"})
+        svc_mock = AsyncMock(return_value={"status": "created", "lakets_version": "0.1.0"})
 
         with patch.object(prov_route.provisioning_service,
                           "provision_lakebase_table", new=svc_mock):

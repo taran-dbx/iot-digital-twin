@@ -15,7 +15,13 @@ router = APIRouter()
 @router.get("/api/sources")
 async def get_sources(state: AppState = Depends(get_app_state)):
     """Return status and latency metrics for every data source."""
-    return {name: s.to_dict() for name, s in state.sources.items()}
+    out = {}
+    for name, s in state.sources.items():
+        d = s.to_dict()
+        if hasattr(s, "_lb_counters"):
+            d["_debug_lb_counters"] = s._lb_counters
+        out[name] = d
+    return out
 
 
 @router.put("/api/sources/{name}/config")

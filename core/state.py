@@ -16,6 +16,7 @@ from fastapi import Request, WebSocket
 if TYPE_CHECKING:
     from backend import LakebaseConnectionManager
     from models.source_metrics import SourceMetrics
+    from services.pipeline_db import PipelineLakebaseHandle
 
 
 def _default_sources() -> dict[str, SourceMetrics]:
@@ -51,6 +52,9 @@ class AppState:
 
     # Per-pipeline producer state
     producer_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # Per-pipeline Lakebase connection pools (resolved from source_config)
+    pipeline_dbs: dict[str, PipelineLakebaseHandle] = field(default_factory=dict)
 
     # Runtime-mutable config (set via /api/simulator/restart)
     industries: str = ""

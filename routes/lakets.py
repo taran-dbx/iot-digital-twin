@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from core.state import AppState, get_app_state
 from services import lakets_service
 from services.lakets_deploy_service import deploy_retention_job
+from services.pipeline_db import get_pipeline_lakebase
 
 logger = logging.getLogger("iot_digital_twin.routes.lakets")
 
@@ -93,6 +95,74 @@ async def check_sync(request: Request):
         return await lakets_service.check_lakehouse_sync_readiness(conn)
     finally:
         await conn.close()
+
+
+@router.get("/api/pipelines/{pipeline_id}/cdf-status")
+async def get_cdf_status(
+    pipeline_id: str,
+    state: AppState = Depends(get_app_state),
+):
+    """Report whether Lakebase CDF (Lakehouse Sync) is streaming for a pipeline.
+
+    Queries the pipeline's Lakebase ``wal2delta.tables`` (the Lakehouse Sync
+    bookkeeping schema). A row status of ``STREAMING`` means CDF is actively
+    replicating; ``SNAPSHOTTING`` means the initial backfill is in progress.
+    If the schema/table is missing or the query errors, we fail closed to
+    ``status="NONE"`` with a human-readable ``reason``.
+
+    ``hot_rows`` is a COUNT of ``sensor_readings`` (the hot Lakebase tier).
+    ``cold_rows`` stays ``None`` — the cold tier lives in Unity Catalog and is
+    not queried here.
+    """
+    none_result = {
+        "enabled": False,
+        "streaming": False,
+        "status": "NONE",
+        "reason": "Lakebase Sync not enabled",
+        "hot_rows": None,
+        "cold_rows": None,
+    }
+
+    try:
+        lb = await get_pipeline_lakebase(state, pipeline_id)
+    except Exception as exc:
+        return {**none_result, "reason": f"Pipeline Lakebase not resolvable: {exc}"[:200]}
+
+    if lb is None:
+        return {**none_result, "reason": "Pipeline Lakebase not resolvable"}
+
+    try:
+        rows = await lb.fetch("SELECT status FROM wal2delta.tables LIMIT 50")
+    except Exception as exc:
+        logger.warning("cdf-status wal2delta probe failed for %s: %s", pipeline_id, exc)
+        return {**none_result, "reason": f"Lakebase Sync not enabled: {exc}"[:200]}
+
+    statuses = {str(r["status"]).upper() for r in rows if r["status"] is not None}
+
+    if "STREAMING" in statuses:
+        status = "STREAMING"
+    elif "SNAPSHOTTING" in statuses:
+        status = "SNAPSHOTTING"
+    elif statuses:
+        status = "UNKNOWN"
+    else:
+        return {**none_result, "reason": "Lakebase Sync not enabled (no wal2delta tables)"}
+
+    hot_rows: int | None = None
+    try:
+        hot_rows = await lb.fetchval("SELECT COUNT(*) FROM sensor_readings")
+        hot_rows = int(hot_rows) if hot_rows is not None else None
+    except Exception as exc:
+        logger.warning("cdf-status hot_rows count failed for %s: %s", pipeline_id, exc)
+
+    return {
+        "enabled": True,
+        "streaming": status == "STREAMING",
+        "status": status,
+        "reason": f"wal2delta tables report status={status}",
+        "hot_rows": hot_rows,
+        "cold_rows": None,
+    }
 
 
 @router.post("/api/lakets/retention/deploy")
