@@ -188,6 +188,21 @@ transform`) generates **five** artifacts so nothing can drift:
 
 ### 1.10 Per-mode validation (validate all three — F1)
 
+> **E2E write path VERIFIED 2026-07-05 (spike, DBR 18.2 RTM):** RTM → psycopg
+> `ForeachWriter` → Lakebase **LakeTS ChronoTable** landed **375 rows**,
+> partition-routed, no "no partition" errors; the buffered **delta-rs metrics**
+> listener landed batches (DBSQL `parse_json` reads OK). **Build constraints
+> found:** (1) **RTM cannot read the `iot_simulator` PySpark data source**
+> (`STREAMING_REAL_TIME_MODE.INPUT_STREAM_NOT_SUPPORTED`) — RTM accepts only
+> **Kafka/MSK or rate**, so the real-time consumer **reads the Kafka topic** (the
+> producer writes sensor data to the topic; the old `format("iot_simulator")`
+> reference notebook is dead for RTM). (2) The `sensor_readings` PK must use an
+> **independent sequence, not `BIGSERIAL`** (BIGSERIAL blocks `create_chronotable`).
+> (3) Install **`databricks-sdk==0.120.0`** as a cluster library on 18.2 (bundled
+> SDK lacks `w.postgres`). (4) RTM `ForeachWriter.process()` receives a
+> **positional tuple**, not a named Row. (5) MSK is reached via `iotdemo` **public
+> `:9198`** from `fe-vm-shared-interop` — not a separate sandbox workspace.
+
 A **schema-conformance gate** runs first: produce sample records for the selected
 industry → write into the freshly-created table → assert columns line up and the
 write succeeds. Then, per mode:
