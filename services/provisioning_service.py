@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -21,8 +22,24 @@ from models.sql_ddl import (
     LAKEBASE_ROLE_ID,
 )
 from services import lakets_service
+from services.app_permissions import grant_app_can_use, _app_name
 
 logger = logging.getLogger("iot_digital_twin.services.provisioning")
+
+
+def _is_missing_metastore_storage(exc: Exception) -> bool:
+    """Detect the 'metastore has no default storage root' UC error.
+
+    Mirrors the matcher in ``routes/provisioning.py`` so both code paths
+    surface the same actionable hint when ``CREATE CATALOG`` is issued
+    on a workspace whose metastore has no default managed-storage URL.
+    """
+    msg = str(exc).lower()
+    return (
+        "metastore storage root" in msg
+        or "default storage" in msg
+        or "managed location" in msg
+    )
 
 
 async def provision_secrets_scope(scope_name: str) -> dict:
@@ -39,6 +56,327 @@ async def provision_secrets_scope(scope_name: str) -> dict:
             raise
     except Exception as exc:
         return {"resource": f"Secret scope '{scope_name}'", "status": "failed", "error": str(exc)[:200]}
+
+
+def _is_sp_credential_skippable(exc: Exception) -> bool:
+    """Return True when SP-credential minting failed for a non-fatal reason.
+
+    Permission and SDK-deserialization errors mean the runtime identity can't
+    mint account-level SP credentials (common on FEVM / shared demo
+    workspaces).  This is only required for Zerobus ingest, so callers should
+    surface it as ``skipped`` rather than ``failed``.
+    """
+    err = str(exc).lower()
+    return (
+        "unable to parse response" in err
+        or "not authorized" in err
+        or "permission denied" in err
+        or "forbidden" in err
+        or "unauthorized" in err
+    )
+
+
+def _find_sp_by_display_name(w: Any, display_name: str) -> Any | None:
+    """Look up a service principal by exact display name.
+
+    Returns the first matching SP object that has an ``application_id``, or
+    ``None`` if none match. Shared by ``ensure_streaming_sp`` (grant
+    re-apply on the already-exists path) and ``ensure_shared_streaming_sp``
+    (idempotent lookup).
+    """
+    matches = list(w.service_principals.list(filter=f'displayName eq "{display_name}"'))
+    return next((s for s in matches if getattr(s, "application_id", None)), None)
+
+
+def _create_sp_and_oauth_secret(
+    w: Any, sp_name: str, scope_name: str, id_key: str, secret_key: str,
+) -> tuple[str, str]:
+    """Create a service principal, mint an OAuth secret, and store both in
+    the given secret scope.
+
+    Returns ``(sp_id, client_id)``. Raises on failure — callers wrap this in
+    their own error handling. Shared by ``ensure_streaming_sp`` and
+    ``ensure_shared_streaming_sp`` so the create-SP-and-secret sequence lives
+    in exactly one place.
+    """
+    sp = w.service_principals.create(display_name=sp_name, active=True)
+    sp_id = sp.id
+    client_id = sp.application_id
+
+    secret_data = w.api_client.do(
+        "POST",
+        f"/api/2.0/accounts/servicePrincipals/{sp_id}/credentials/secrets",
+        body={},
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+    )
+    client_secret = secret_data.get("secret", "")
+    if not client_secret:
+        raise RuntimeError(
+            f"No secret returned for SP {sp_id}: keys={list(secret_data.keys())}"
+        )
+
+    w.secrets.put_secret(scope=scope_name, key=id_key, string_value=client_id)
+    w.secrets.put_secret(scope=scope_name, key=secret_key, string_value=client_secret)
+
+    return sp_id, client_id
+
+
+async def ensure_streaming_sp(
+    w: Any,
+    scope_name: str,
+    *,
+    provision_scope: Any = None,
+    grant_fn: Any = None,
+    app_name_fn: Any = None,
+) -> dict:
+    """Ensure the streaming service principal + OAuth secret exist (idempotent).
+
+    Creates the secret scope, mints a service principal named
+    ``iot-sss-<scope_name>`` with an OAuth secret, stores its client id /
+    secret in the scope, and grants the SP ``CAN_USE`` on the app.  Both the
+    fresh-create and already-exists paths (re-)apply the app grant.
+
+    Reused by ``routes/settings.py`` (``/api/settings/provision/secrets``) and
+    by the one-click pipeline-setup orchestrator.  Non-fatal throughout — any
+    failure is surfaced in ``results`` and never raised.
+
+    The ``provision_scope`` / ``grant_fn`` / ``app_name_fn`` hooks let callers
+    inject their own (patchable) helper references; they default to this
+    module's implementations.
+
+    Returns:
+        ``{"client_id": str | None, "status": str, "results": [...]}``.
+    """
+    provision_scope = provision_scope or provision_secrets_scope
+    grant_fn = grant_fn or grant_app_can_use
+    app_name_fn = app_name_fn or _app_name
+
+    results: list[dict] = []
+    scope_name = (scope_name or "").strip()
+    if not scope_name:
+        return {
+            "client_id": None,
+            "status": "failed",
+            "results": [{
+                "resource": "Secret scope",
+                "status": "failed",
+                "error": "Scope name is empty",
+            }],
+        }
+
+    scope_result = await provision_scope(scope_name)
+    results.append(scope_result)
+    if scope_result.get("status") not in ("created", "already_exists"):
+        return {"client_id": None, "status": "failed", "results": results}
+
+    zb_id_key = "zerobus-client-id"
+    zb_secret_key = "zerobus-client-secret"
+    sp_name = f"iot-sss-{scope_name}"
+    client_id: str | None = None
+
+    def _grant_app_access(application_id: str | None) -> None:
+        """Grant the streaming SP CAN_USE on the app (idempotent, non-fatal)."""
+        if not application_id:
+            return
+        try:
+            grant_fn(w, app_name_fn(), application_id)
+            results.append({
+                "resource": "App access (CAN_USE) for SP",
+                "status": "granted",
+            })
+        except Exception as grant_exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Failed to grant app access to SP '%s' (non-fatal): %s",
+                application_id, grant_exc,
+            )
+
+    try:
+        existing_keys = {s.key for s in w.secrets.list_secrets(scope=scope_name)}
+        if zb_id_key in existing_keys and zb_secret_key in existing_keys:
+            results.append({
+                "resource": "Service principal credentials",
+                "status": "already_exists",
+            })
+            # Re-apply the grant idempotently — resolve SP by display name
+            # since the secret value is write-only over the API.
+            try:
+                existing_sp = _find_sp_by_display_name(w, sp_name)
+                if existing_sp is not None:
+                    client_id = existing_sp.application_id
+                    _grant_app_access(client_id)
+                else:
+                    logger.warning(
+                        "Streaming SP '%s' not found by display name — "
+                        "cannot re-apply app grant", sp_name,
+                    )
+            except Exception as lookup_exc:
+                logger.warning(
+                    "Failed to resolve streaming SP '%s' for app grant "
+                    "(non-fatal): %s", sp_name, lookup_exc,
+                )
+        else:
+            sp_id, client_id = _create_sp_and_oauth_secret(
+                w, sp_name, scope_name, zb_id_key, zb_secret_key,
+            )
+            results.append({
+                "resource": f"Service principal '{sp_name}' (id={sp_id})",
+                "status": "created",
+            })
+            results.append({"resource": "OAuth secret", "status": "created"})
+            results.append({
+                "resource": f"Secret '{zb_id_key}' in '{scope_name}'",
+                "status": "created",
+            })
+            results.append({
+                "resource": f"Secret '{zb_secret_key}' in '{scope_name}'",
+                "status": "created",
+            })
+
+            logger.info(
+                "Created SP '%s' (app_id=%s) and stored credentials in scope '%s'",
+                sp_name, client_id, scope_name,
+            )
+            _grant_app_access(client_id)
+
+    except Exception as exc:
+        logger.warning("Failed to create service principal / store credentials: %s", exc)
+        if _is_sp_credential_skippable(exc):
+            results.append({
+                "resource": "Service principal credentials",
+                "status": "skipped",
+                "error": "Service-principal credential minting isn't available on "
+                         "this workspace (needs account-admin).  This is only "
+                         "required for Zerobus ingest — skip unless you plan to use Zerobus.",
+            })
+        else:
+            results.append({
+                "resource": "Service principal credentials",
+                "status": "failed",
+                "error": str(exc)[:200],
+            })
+
+    status = "ok" if not any(r.get("status") == "failed" for r in results) else "failed"
+    return {"client_id": client_id, "status": status, "results": results}
+
+
+# ---------------------------------------------------------------------------
+# Shared streaming service principal (one SP for all industry pipelines)
+# ---------------------------------------------------------------------------
+
+SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
+SHARED_STREAMING_SP_SECRET_SCOPE = "iot-secrets"
+SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
+SHARED_STREAMING_SP_SECRET_KEY = "sss-industries-client-secret"
+
+
+def _parse_lakebase_endpoint_project() -> tuple[str | None, str | None]:
+    """Parse ``LAKEBASE_ENDPOINT`` (set in app.yaml) into (project_id, branch_id).
+
+    Expected shape: ``projects/<project>/branches/<branch>/endpoints/<name>``.
+    Mirrors the parsing already used in ``routes/provisioning.py``. Returns
+    ``(None, None)`` when the env var is unset or doesn't match the shape.
+    """
+    lb_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
+    parts = lb_endpoint.split("/")
+    if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "branches":
+        return parts[1], parts[3]
+    return None, None
+
+
+async def ensure_shared_streaming_sp(state: Any) -> dict:
+    """Ensure the SHARED streaming service principal exists (idempotent).
+
+    Every industry pipeline reuses ONE service principal — fixed display
+    name ``iot-sss-industries`` — instead of ``ensure_streaming_sp``'s one
+    SP per pipeline (whose name is derived from the caller's secret scope).
+    The only new behaviour versus the existing per-pipeline path is the
+    fixed name and "return the existing SP if already present"; the actual
+    creation steps reuse the same building blocks:
+
+    - ``_find_sp_by_display_name`` / ``_create_sp_and_oauth_secret`` — the
+      same private helpers ``ensure_streaming_sp`` uses for lookup/creation.
+    - ``provision_secrets_scope`` — idempotent secret-scope creation.
+    - ``grant_app_can_use`` / ``_app_name`` — CAN_USE app grant.
+    - ``provision_lakebase_role`` — registers the SP as a Lakebase Postgres
+      role, once, against the project/branch parsed from the app.yaml
+      ``LAKEBASE_ENDPOINT`` env var.
+
+    Resolves the Databricks SDK client from ``state.workspace_client`` when
+    present (the seam tests use), falling back to a fresh
+    ``WorkspaceClient()`` otherwise — the same pattern every other function
+    in this module uses, since ``AppState`` does not otherwise carry a
+    workspace client.
+
+    Returns ``{"client_id": str | None, "display_name": "iot-sss-industries",
+    "created": bool}``. The app grant and Lakebase-role registration are
+    best-effort side effects (logged and swallowed on failure); only SP +
+    secret creation itself can raise.
+    """
+    w = getattr(state, "workspace_client", None)
+    if w is None:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+
+    sp_name = SHARED_STREAMING_SP_DISPLAY_NAME
+    scope_name = SHARED_STREAMING_SP_SECRET_SCOPE
+
+    existing_sp = None
+    try:
+        existing_sp = _find_sp_by_display_name(w, sp_name)
+    except Exception as exc:
+        logger.warning(
+            "Lookup for shared streaming SP '%s' failed (non-fatal): %s",
+            sp_name, exc,
+        )
+
+    if existing_sp is not None:
+        client_id = existing_sp.application_id
+        try:
+            grant_app_can_use(w, _app_name(), client_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Failed to re-apply app grant to shared SP '%s' (non-fatal): %s",
+                sp_name, exc,
+            )
+        return {"client_id": client_id, "display_name": sp_name, "created": False}
+
+    # Not found — create fresh.
+    await provision_secrets_scope(scope_name)
+    sp_id, client_id = _create_sp_and_oauth_secret(
+        w, sp_name, scope_name,
+        SHARED_STREAMING_SP_ID_KEY, SHARED_STREAMING_SP_SECRET_KEY,
+    )
+    logger.info(
+        "Created shared streaming SP '%s' (id=%s, app_id=%s)",
+        sp_name, sp_id, client_id,
+    )
+
+    try:
+        grant_app_can_use(w, _app_name(), client_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(
+            "Failed to grant app access to shared SP '%s' (non-fatal): %s",
+            sp_name, exc,
+        )
+
+    project_id, branch_id = _parse_lakebase_endpoint_project()
+    if project_id and branch_id:
+        try:
+            await provision_lakebase_role(
+                sp_client_id=client_id, project_id=project_id, branch_id=branch_id,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Failed to register shared SP '%s' as a Lakebase Postgres "
+                "role (non-fatal): %s", sp_name, exc,
+            )
+    else:
+        logger.warning(
+            "LAKEBASE_ENDPOINT not set/parseable — skipping Postgres role "
+            "registration for shared SP '%s'", sp_name,
+        )
+
+    return {"client_id": client_id, "display_name": sp_name, "created": True}
 
 
 async def provision_uc_catalog(uc: dict) -> list[dict]:
@@ -72,6 +410,18 @@ async def provision_uc_catalog(uc: dict) -> list[dict]:
         except Exception as e:
             if _is_already_exists(e):
                 results.append({"resource": f"UC catalog '{catalog_name}'", "status": "already_exists"})
+            elif _is_missing_metastore_storage(e):
+                results.append({
+                    "resource": f"UC catalog '{catalog_name}'",
+                    "status": "failed",
+                    "error": (
+                        "Workspace metastore has no default storage root. "
+                        "Set 'Storage Root' on this Settings tab to an "
+                        "external-location URL the app SP can write to "
+                        "(CREATE_MANAGED_STORAGE), then retry."
+                    ),
+                })
+                return results
             else:
                 raise
 
@@ -229,6 +579,30 @@ async def provision_lakebase_table(lb: dict) -> dict:
                     logger.warning("Tier policy application failed: %s", tier_exc)
                     result["tiering_error"] = str(tier_exc)[:200]
 
+                # enable_sync prepares the lakets_cdf shadow + mirror trigger —
+                # REQUIRED before Lakebase CDF / cold-tiering can stream.  This
+                # completes the cohesive LakeTS setup block:
+                #   install → create_chronotable → tier policy → enable_sync.
+                # Runs even if the tier-policy step above warned, since the
+                # shadow is a prerequisite the user explicitly wants prepared
+                # at table-creation time.  Non-fatal: a failure is recorded but
+                # never aborts the overall provisioning.
+                schema = tiering.get("schema", "public")
+                sync_table = tiering.get("time_table", table_name)
+                try:
+                    sync_result = await lakets_service.enable_sync(
+                        conn, sync_table, schema=schema,
+                    )
+                except Exception as sync_exc:  # defensive — enable_sync never raises
+                    logger.warning("enable_sync raised unexpectedly: %s", sync_exc)
+                    sync_result = {"status": "failed", "error": str(sync_exc)[:200]}
+
+                result.setdefault("sync_enabled", {})[sync_table] = sync_result.get(
+                    "status", "failed"
+                )
+                if sync_result.get("status") == "failed":
+                    result["sync_error"] = sync_result.get("error", "enable_sync failed")[:200]
+
             return result
         except Exception as inner_exc:
             err = str(inner_exc)
@@ -373,170 +747,361 @@ def _is_permission_error(exc: Exception) -> bool:
     )
 
 
-async def provision_lakebase_role(
-    project_id: str, branch_id: str, password: str, database: str = "databricks_postgres"
-) -> list[dict]:
-    """Create a password-authenticated Postgres role in Lakebase, set its password,
-    and grant full privileges on the target database and public schema.
+def _resolve_endpoint_host_and_token(w: Any, endpoint_name: str) -> tuple[str, str]:
+    """Resolve (host, oauth_token) for a Lakebase endpoint.
 
-    When the calling identity lacks Lakebase project-admin (typical for a
-    deployed Databricks App running as its own SP), the role creation is
-    skipped gracefully — autoscale OAuth already provides the runtime
-    credential via ``LAKEBASE_ENDPOINT`` so this named role is redundant."""
+    Prefers the SDK ``w.postgres`` shape; falls back to raw REST on older
+    SDK versions that don't expose ``generate_database_credential``.
+    """
+    # Host resolution — same pattern used by provision_lakebase_table.
+    if hasattr(w, "postgres") and hasattr(w.postgres, "get_endpoint"):
+        endpoint = w.postgres.get_endpoint(name=endpoint_name)
+        host = endpoint.status.hosts.host
+    else:
+        # Fallback via REST; very rare path.
+        resp = w.api_client.do("GET", f"/api/2.0/{endpoint_name}")
+        host = resp["status"]["hosts"]["host"]
+
+    # Credential resolution with SDK-or-REST fallback.
+    try:
+        cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
+        token = cred.token
+    except AttributeError:
+        resp = w.api_client.do(
+            "POST",
+            "/api/2.0/postgres/credentials",
+            body={"endpoint": endpoint_name},
+        )
+        token = resp["token"]
+
+    return host, token
+
+
+async def provision_lakebase_role(
+    sp_client_id: str | None = None,
+    project_id: str | None = None,
+    branch_id: str | None = None,
+    database: str = "databricks_postgres",
+    endpoint_name: str | None = None,
+    sink_tables: Any = ("sensor_readings",),
+    **kwargs: Any,
+) -> list[dict]:
+    """Register a service principal as an OAuth-auth Postgres role and grant
+    DML on each sink table.
+
+    This is the OAuth-native replacement for the older password-based flow —
+    the caller's SP becomes a PG role via ``RoleAuthMethod.LAKEBASE_OAUTH_V1``
+    and no static credentials are persisted anywhere.
+
+    The function accepts legacy positional/keyword forms too: when invoked
+    with ``role_name=`` / ``password=`` (the old contract), it logs a
+    deprecation warning and delegates to the new flow, resolving the
+    endpoint from ``project_id`` / ``branch_id`` when ``endpoint_name`` is
+    not provided.
+    """
+    # ------------------------------------------------------------------ #
+    # Back-compat: absorb legacy ``role_name=`` / ``password=`` kwargs so
+    # older callers (or third-party imports) don't crash. Nothing about the
+    # OAuth-native flow needs either one — they are accepted and ignored
+    # with a deprecation warning.
+    # ------------------------------------------------------------------ #
+    if "password" in kwargs:
+        logger.warning(
+            "provision_lakebase_role called with legacy `password` kwarg — "
+            "ignoring; OAuth-native flow does not use static passwords."
+        )
+        kwargs.pop("password", None)
+    if "role_name" in kwargs:
+        logger.warning(
+            "provision_lakebase_role called with legacy `role_name` kwarg — "
+            "ignoring; the SP client id is now the PG role name."
+        )
+        kwargs.pop("role_name", None)
+
+    if kwargs:
+        logger.warning(
+            "provision_lakebase_role received unknown kwargs: %s", list(kwargs.keys())
+        )
+
+    # Normalise sink_tables (tests pass tuples, production uses list).
+    sink_tables_list: list[str] = [t for t in sink_tables] if sink_tables else ["sensor_readings"]
+
     results: list[dict] = []
-    role_name = LAKEBASE_ROLE_NAME
 
     from databricks.sdk import WorkspaceClient
-    from databricks.sdk.service.postgres import Role, RoleRoleSpec, RoleAuthMethod, RoleMembershipRole
     w = WorkspaceClient()
+
+    # Resolve the SP client id when not supplied — when the app runs as its
+    # own SP, ``current_user.me().user_name`` is the SP's client id.
+    if not sp_client_id:
+        try:
+            sp_client_id = w.current_user.me().user_name
+        except Exception as exc:
+            results.append({
+                "resource": "Lakebase OAuth role",
+                "status": "failed",
+                "error": f"Unable to resolve SP client id: {exc}"[:200],
+            })
+            return results
+
+    if not project_id or not branch_id:
+        results.append({
+            "resource": "Lakebase OAuth role",
+            "status": "failed",
+            "error": "project_id and branch_id are required",
+        })
+        return results
 
     parent = f"projects/{project_id}/branches/{branch_id}"
 
-    # Step 1: Check if role already exists
-    role_exists = False
-    try:
-        w.postgres.get_role(name=f"{parent}/roles/{LAKEBASE_ROLE_ID}")
-        role_exists = True
-        results.append({"resource": f"Postgres role '{role_name}'", "status": "already_exists"})
-    except Exception as e:
-        err_str = str(e).lower()
-        if "not_found" in err_str or "not found" in err_str or "does not exist" in err_str:
-            role_exists = False
-        elif _is_permission_error(e):
+    # Resolve endpoint_name if not provided.
+    if not endpoint_name:
+        try:
+            endpoints = list(w.postgres.list_endpoints(parent=parent))
+        except Exception as exc:
             results.append({
-                "resource": f"Postgres role '{role_name}'",
-                "status": "skipped",
-                "error": "Runtime identity lacks Lakebase project-admin. "
-                         "Autoscale OAuth is used instead — this named role is not required.",
+                "resource": "Lakebase endpoint lookup",
+                "status": "failed",
+                "error": str(exc)[:200],
             })
             return results
-        else:
-            results.append({"resource": f"Postgres role '{role_name}'", "status": "failed", "error": str(e)[:200]})
+        if not endpoints:
+            results.append({
+                "resource": "Lakebase endpoint lookup",
+                "status": "failed",
+                "error": f"No endpoints available on {parent}",
+            })
             return results
+        endpoint_name = endpoints[0].name
 
-    # Step 2: Create role if needed
-    if not role_exists:
+    # ------------------------------------------------------------------ #
+    # 1. Register the SP as a PG role with LAKEBASE_OAUTH_V1 auth.
+    # ------------------------------------------------------------------ #
+    role_resource = f"Postgres role '{sp_client_id}' (OAuth)"
+    try:
+        from databricks.sdk.service.postgres import (
+            Role,
+            RoleRoleSpec,
+            RoleAuthMethod,
+            RoleMembershipRole,
+        )
+
+        create_kwargs: dict[str, Any] = {
+            "postgres_role": sp_client_id,
+            "auth_method": RoleAuthMethod.LAKEBASE_OAUTH_V1,
+            "membership_roles": [RoleMembershipRole.DATABRICKS_SUPERUSER],
+        }
+
+        # ``RoleIdentityType`` only exists on newer SDK versions. Fall back to a
+        # string literal when the enum is missing.
         try:
-            w.postgres.create_role(
-                parent=parent,
-                role=Role(spec=RoleRoleSpec(
-                    postgres_role=role_name,
-                    auth_method=RoleAuthMethod.PG_PASSWORD_SCRAM_SHA_256,
-                    membership_roles=[RoleMembershipRole.DATABRICKS_SUPERUSER],
-                )),
-                role_id=LAKEBASE_ROLE_ID,
+            from databricks.sdk.service.postgres import RoleIdentityType
+            create_kwargs["identity_type"] = RoleIdentityType.SERVICE_PRINCIPAL
+        except ImportError:
+            create_kwargs["identity_type"] = "SERVICE_PRINCIPAL"
+
+        w.postgres.create_role(
+            parent=parent,
+            role=Role(spec=RoleRoleSpec(**create_kwargs)),
+            role_id=LAKEBASE_ROLE_ID,
+        )
+        results.append({"resource": role_resource, "status": "created"})
+    except AttributeError as exc:
+        # SDK too old — fall back to raw REST.
+        try:
+            w.api_client.do(
+                "POST",
+                f"/api/2.0/{parent}/roles",
+                body={
+                    "spec": {
+                        "postgres_role": sp_client_id,
+                        "auth_method": "LAKEBASE_OAUTH_V1",
+                        "identity_type": "SERVICE_PRINCIPAL",
+                        "membership_roles": ["DATABRICKS_SUPERUSER"],
+                    },
+                    "role_id": LAKEBASE_ROLE_ID,
+                },
             )
-            results.append({"resource": f"Postgres role '{role_name}'", "status": "created"})
-        except Exception as exc:
-            if "already exists" in str(exc).lower():
-                results.append({"resource": f"Postgres role '{role_name}'", "status": "already_exists"})
-            elif _is_permission_error(exc):
+            results.append({"resource": role_resource, "status": "created"})
+        except Exception as rest_exc:
+            rest_err = str(rest_exc).lower()
+            if "already exists" in rest_err:
+                results.append({"resource": role_resource, "status": "already_exists"})
+            elif _is_permission_error(rest_exc):
                 results.append({
-                    "resource": f"Postgres role '{role_name}'",
+                    "resource": role_resource,
                     "status": "skipped",
-                    "error": "Runtime identity lacks Lakebase project-admin. "
-                             "Autoscale OAuth is used instead — this named role is not required.",
+                    "error": "Runtime identity lacks Lakebase project-admin.",
+                })
+            else:
+                results.append({
+                    "resource": role_resource,
+                    "status": "failed",
+                    "error": str(rest_exc)[:200],
                 })
                 return results
-            else:
-                results.append({"resource": f"Postgres role '{role_name}'", "status": "failed", "error": str(exc)[:200]})
-                return results
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "already exists" in err_str or "already_exists" in err_str:
+            results.append({"resource": role_resource, "status": "already_exists"})
+        elif _is_permission_error(exc):
+            results.append({
+                "resource": role_resource,
+                "status": "skipped",
+                "error": "Runtime identity lacks Lakebase project-admin.",
+            })
+        else:
+            results.append({
+                "resource": role_resource,
+                "status": "failed",
+                "error": str(exc)[:200],
+            })
+            return results
 
-    # Step 3: Set password and grant full privileges via SQL
+    # ------------------------------------------------------------------ #
+    # 2. Connect via asyncpg and grant schema/table privileges to the SP.
+    # ------------------------------------------------------------------ #
     try:
         import asyncpg
 
-        endpoints = list(w.postgres.list_endpoints(parent=parent))
-        if not endpoints:
-            results.append({"resource": "Set role password", "status": "failed", "error": "No endpoints available yet"})
-            return results
-
-        endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
-        pg_host = endpoint.status.hosts.host
+        pg_host, pg_token = _resolve_endpoint_host_and_token(w, endpoint_name)
         pg_user = w.current_user.me().user_name
-        cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
 
-        # Connect to the target database to set grants there
         conn = await asyncpg.connect(
             host=pg_host, database=database,
-            user=pg_user, password=cred.token, port=5432, ssl="require",
+            user=pg_user, password=pg_token, port=5432, ssl="require",
         )
-        try:
-            # Quote identifiers to prevent SQL injection (defense-in-depth)
-            qrole = f'"{role_name}"'
-            qdb = f'"{database}"'
-
-            # Step 3a: Set password (separate try — SP may lack ALTER ROLE permission)
-            # Lakebase OAuth roles (e.g. app service principals) often cannot ALTER
-            # another role's password. This is non-fatal: the role was already created
-            # via SDK with PG_PASSWORD_SCRAM_SHA_256 auth, and notebooks in autoscale
-            # mode can use OAuth via generate_database_credential() instead.
-            try:
-                escaped_pw = password.replace("'", "''")
-                await conn.execute(f"ALTER ROLE {qrole} WITH PASSWORD '{escaped_pw}'")
-                results.append({"resource": f"Role '{role_name}' password", "status": "created"})
-            except Exception as pw_exc:
-                pw_err = str(pw_exc)
-                if "permission denied" in pw_err.lower():
-                    results.append({
-                        "resource": f"Role '{role_name}' password",
-                        "status": "skipped",
-                        "error": "Connected identity lacks ALTER ROLE permission. "
-                                 "For autoscale mode, notebooks use OAuth authentication "
-                                 "instead of password-based credentials.",
-                    })
-                else:
-                    results.append({"resource": f"Role '{role_name}' password", "status": "failed", "error": pw_err[:200]})
-
-            # Step 3b: Grant privileges (should work even if password-set failed)
-            await conn.execute(f"GRANT CONNECT ON DATABASE {qdb} TO {qrole}")
-            await conn.execute(f"GRANT USAGE ON SCHEMA public TO {qrole}")
-            await conn.execute(f"GRANT ALL ON ALL TABLES IN SCHEMA public TO {qrole}")
-            await conn.execute(f"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {qrole}")
-            await conn.execute(
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO {qrole}"
-            )
-            await conn.execute(
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO {qrole}"
-            )
-            await conn.execute(f"GRANT CREATE ON SCHEMA public TO {qrole}")
-            results.append({"resource": f"Role '{role_name}' grants on '{database}'", "status": "created"})
-        finally:
-            await conn.close()
     except Exception as exc:
-        results.append({"resource": "Set role password & grants", "status": "failed", "error": str(exc)[:200]})
-
-    return results
-
-
-async def save_direct_creds_to_secrets(secrets: dict, lb_user: str, lb_password: str) -> list[dict]:
-    """Save Lakebase credentials to a workspace secret scope (created if needed)."""
-    results: list[dict] = []
-    scope = (secrets.get("scope") or "").strip()
-    user_key = secrets.get("lb_user_key", "lb-user")
-    pass_key = secrets.get("lb_password_key", "lb-password")
-
-    if not scope:
-        results.append({"resource": "Save credentials to secrets", "status": "failed", "error": "Scope name is empty"})
+        results.append({
+            "resource": "Connect to Lakebase for grants",
+            "status": "failed",
+            "error": str(exc)[:200],
+        })
         return results
 
-    # Ensure scope exists before putting secrets
-    scope_result = await provision_secrets_scope(scope)
-    results.append(scope_result)
-
     try:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
+        # SP identifiers in Lakebase are UUIDs — always quote.
+        qsp = f'"{sp_client_id}"'
 
-        w.secrets.put_secret(scope=scope, key=user_key, string_value=lb_user)
-        results.append({"resource": f"Secret '{scope}/{user_key}'", "status": "created"})
+        # Schema USAGE on public (once).
+        try:
+            await conn.execute(f"GRANT USAGE ON SCHEMA public TO {qsp}")
+            results.append({
+                "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
+                "status": "created",
+            })
+        except Exception as exc:
+            err = str(exc)
+            if "already" in err.lower():
+                results.append({
+                    "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
+                    "status": "already_exists",
+                })
+            else:
+                results.append({
+                    "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
+                    "status": "failed",
+                    "error": err[:200],
+                })
 
-        w.secrets.put_secret(scope=scope, key=pass_key, string_value=lb_password)
-        results.append({"resource": f"Secret '{scope}/{pass_key}'", "status": "created"})
-    except Exception as exc:
-        results.append({"resource": "Save credentials to secrets", "status": "failed", "error": str(exc)[:200]})
+        # Sequence USAGE (once — covers BIGSERIAL PKs).
+        try:
+            await conn.execute(
+                f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {qsp}"
+            )
+            results.append({
+                "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
+                "status": "created",
+            })
+        except Exception as exc:
+            err = str(exc)
+            if "already" in err.lower():
+                results.append({
+                    "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
+                    "status": "already_exists",
+                })
+            else:
+                results.append({
+                    "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
+                    "status": "failed",
+                    "error": err[:200],
+                })
+
+        # Optional: USAGE on the lakets schema (installed lazily by LakeTS).
+        lakets_resource = f"GRANT USAGE ON SCHEMA lakets TO {sp_client_id}"
+        try:
+            await conn.execute(f"GRANT USAGE ON SCHEMA lakets TO {qsp}")
+            results.append({"resource": lakets_resource, "status": "created"})
+        except Exception as exc:
+            err = str(exc)
+            if "does not exist" in err.lower():
+                results.append({
+                    "resource": lakets_resource,
+                    "status": "skipped",
+                    "error": "lakets schema not installed yet — will be granted after install.",
+                })
+            elif "already" in err.lower():
+                results.append({"resource": lakets_resource, "status": "already_exists"})
+            else:
+                results.append({
+                    "resource": lakets_resource,
+                    "status": "failed",
+                    "error": err[:200],
+                })
+
+        # DML on each sink table.
+        for table in sink_tables_list:
+            qtable = f'"{table}"'
+            stmt = (
+                f"GRANT INSERT, SELECT, UPDATE, DELETE ON {qtable} TO {qsp}"
+            )
+            resource = f"GRANT DML ON {table} TO {sp_client_id}"
+            try:
+                await conn.execute(stmt)
+                results.append({"resource": resource, "status": "created"})
+            except Exception as exc:
+                err = str(exc)
+                if "already" in err.lower():
+                    results.append({"resource": resource, "status": "already_exists"})
+                elif "does not exist" in err.lower():
+                    results.append({
+                        "resource": resource,
+                        "status": "skipped",
+                        "error": f"Table {table} does not exist yet.",
+                    })
+                else:
+                    results.append({
+                        "resource": resource,
+                        "status": "failed",
+                        "error": err[:200],
+                    })
+    finally:
+        try:
+            await conn.close()
+        except Exception:
+            pass
 
     return results
+
+
+async def save_direct_creds_to_secrets(
+    secrets: dict, lb_user: str, lb_password: str,
+) -> list[dict]:
+    """[DEPRECATED] Persist Lakebase creds into workspace secrets.
+
+    The OAuth-native provisioning flow does not use static credentials, so
+    this function is a no-op kept for back-compat with any caller that still
+    imports it.  It emits a warning and returns a single skipped result.
+    """
+    logger.warning(
+        "save_direct_creds_to_secrets is deprecated — OAuth-native provisioning "
+        "does not use static Lakebase credentials; call is a no-op."
+    )
+    return [{
+        "resource": "Save credentials to secrets (deprecated)",
+        "status": "skipped",
+        "error": "OAuth-native provisioning does not require static credentials.",
+    }]
 
 
 # ---------------------------------------------------------------------------
@@ -615,11 +1180,29 @@ async def save_creds_as_uc_secrets(
     zb_client_id: str | None = None,
     zb_client_secret: str | None = None,
 ) -> list[dict]:
-    """Save Lakebase and Zerobus credentials as UC secrets (catalog-scoped)."""
+    """[DEPRECATED for Lakebase creds] Save Zerobus creds as UC secrets.
+
+    The OAuth-native flow removes the need for ``lb-user`` / ``lb-password``
+    UC secrets — those keys are no longer written.  Zerobus secrets are still
+    persisted when supplied, so callers storing only Zerobus creds keep
+    working.
+    """
     results: list[dict] = []
 
-    results.append(await provision_uc_secret(catalog, schema, "lb-user", lb_user))
-    results.append(await provision_uc_secret(catalog, schema, "lb-password", lb_password))
+    logger.warning(
+        "save_creds_as_uc_secrets: skipping `lb-user` / `lb-password` — "
+        "OAuth-native provisioning does not use static Lakebase credentials."
+    )
+    results.append({
+        "resource": f"UC secret '{catalog}.{schema}.lb-user' (deprecated)",
+        "status": "skipped",
+        "error": "OAuth-native provisioning does not require static credentials.",
+    })
+    results.append({
+        "resource": f"UC secret '{catalog}.{schema}.lb-password' (deprecated)",
+        "status": "skipped",
+        "error": "OAuth-native provisioning does not require static credentials.",
+    })
 
     if zb_client_id:
         results.append(await provision_uc_secret(catalog, schema, "zerobus-client-id", zb_client_id))
