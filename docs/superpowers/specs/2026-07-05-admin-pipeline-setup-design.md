@@ -88,6 +88,12 @@ are validated up front, and test data is purged before finishing.
 - IAM role backing the service credential has MSK permissions
   (`kafka:ListClusters/DescribeCluster`, `kafka-cluster:*` incl. topic create).
 - Running identity has **UC `ACCESS`** on the service credential.
+- **Service-credentials compute requirement (verified via docs 2026-07-05):**
+  `dbutils.credentials.getServiceCredentialsProvider(...)` needs **DBR ≥ 16.2
+  (GA)** on an **all-purpose/jobs classic cluster** in **single-user / dedicated**
+  access mode — NOT serverless, NOT SQL warehouses, and **not a 17.x beta
+  runtime** (the beta build returned "Service credentials are not enabled in this
+  workspace"). The validation cluster (§1.3) must use a GA/LTS runtime ≥16.2.
 - Per-mode write-identity grants exist (see §1.9).
 - Failures produce a clear message naming the missing grant/permission.
 
