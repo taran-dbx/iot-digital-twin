@@ -285,7 +285,7 @@ class TestUpdateIndustryModeConfig:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        stopped_row = {"id": "pid-1", "status": "step2_complete"}
+        stopped_row = {"id": "pid-1", "status": "stopped"}
         merged = {"rate_hz": 10, "capture_metrics": False}
         with patch(
             "routes.industries.industry_service.resolve_pipeline_for_mode",
@@ -336,7 +336,7 @@ class TestUpdateIndustryModeConfig:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        stopped_row = {"id": "pid-2", "status": "step2_complete"}
+        stopped_row = {"id": "pid-2", "status": "stopped"}
         with patch(
             "routes.industries.industry_service.resolve_pipeline_for_mode",
             AsyncMock(return_value=stopped_row),

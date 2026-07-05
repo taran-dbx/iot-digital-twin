@@ -150,6 +150,23 @@ def _mode_status(row: dict[str, Any] | None) -> str:
     return "idle"
 
 
+def is_mode_active(row: dict[str, Any] | None) -> bool:
+    """Is this pipeline row effectively live (should block a config change)?
+
+    Consistent with the catalog's displayed status: a row is "active" if
+    ``_mode_status`` reports running/starting OR its status is one of the
+    reconciled-deployed states (``step2_complete``/``running``) that the
+    gallery surfaces as "running" for legacy pre-convention pipelines (see
+    ``_RECONCILE_DEPLOYED_STATES``). The config endpoint uses this so it
+    can't silently mutate a pipeline the UI shows as running.
+    """
+    if row is None:
+        return False
+    if _mode_status(row) in ("running", "starting"):
+        return True
+    return str(row.get("status") or row.get("state") or "").lower() in _RECONCILE_DEPLOYED_STATES
+
+
 
 # Pipeline row statuses treated as "deployed/active" by the reconciliation
 # pass below — a legacy row need not be literally ``"running"`` to count,
@@ -334,7 +351,11 @@ _INDUSTRY_PIPELINE_OWNER = "industries@iot-digital-twin.system"
 # not currently running" — deliberately NOT in ``_RUNNING_STATES`` or
 # ``_STARTING_STATES`` above, so ``_mode_status`` reports it as "idle",
 # which is what the gallery/setup screens should show once a mode is stopped.
-_STOPPED_STATUS = "step2_complete"
+# Distinct from the legacy "step2_complete" (which means "deployed" and is
+# treated as active by the reconciliation pass): a pipeline stopped through
+# the new industry flow gets its own unambiguous status so its config stays
+# editable and it reads as idle in the catalog.
+_STOPPED_STATUS = "stopped"
 
 
 async def _call_maybe_async(fn: Any, *args: Any, **kwargs: Any) -> Any:

@@ -188,7 +188,7 @@ async def update_industry_mode_config(
             content={"detail": "no pipeline for this industry/mode — create one first"},
         )
 
-    if industry_service._mode_status(row) in ("running", "starting"):
+    if industry_service.is_mode_active(row):
         return JSONResponse(
             status_code=409,
             content={"detail": "stop the pipeline before changing its config"},
