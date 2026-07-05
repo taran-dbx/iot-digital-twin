@@ -58,16 +58,23 @@ are validated up front, and test data is purged before finishing.
   auto-termination** (default & floor; admin may raise, not lower —
   inactivity-based, survives the active tests and tolerates an idle `cdf_manual`
   wait; re-provisions on resume if it terminates).
-- **Runtime (RTM):** use the **latest DBR 18.x** (GA **not** required — beta/preview
-  18.x is fine), in **single-user** access mode. This applies to **both** the
-  interactive validation cluster **and** the deploy-time RTM **job cluster** (they
-  must match — §G2). **Must verify service credentials work on 18.x too** (the
-  earlier 17.3-beta failure was likely runtime/access-mode; being re-tested on
-  18.x + single-user). If service credentials fail on 18.x, that's a blocker to
-  resolve (RTM + service-cred Kafka access must share one job cluster). **Pin the
-  exact RTM Spark conf** on the cluster spec — at minimum
-  `spark.databricks.streaming.realTimeMode.enabled=true` plus any companion
-  configs 18.x requires — and use the real-time trigger (`.trigger(realTime=...)`).
+- **Runtime (RTM) — CONFIRMED 2026-07-05:** DBR **`18.2.x-scala2.13`** (Spark
+  4.1.0; latest 18.x GA — 19.x is beta), **DEDICATED / single-user** access mode,
+  **Photon OFF, autoscaling OFF, spot OFF**, node sized so task slots ≥ total
+  query tasks. Applies to **both** the interactive validation cluster **and** the
+  deploy-time RTM **job cluster** (must match — §G2). **Service credentials verified
+  working on 18.2 + single-user** (the earlier failure was the 17.3 *beta*), so RTM
+  streaming and service-credential MSK access share one classic job cluster.
+- **RTM Spark conf (verified):** `spark.databricks.streaming.realTimeMode.enabled=true`
+  — plus, **only if the query does stream-stream joins**:
+  `spark.databricks.streaming.realTimeMode.streamStreamJoin.enabled=true`,
+  `spark.sql.streaming.join.stateFormatVersion=4`,
+  `spark.sql.streaming.join.stateFormatV4.enabled=true`,
+  `spark.sql.streaming.stateStore.rocksdb.mergeOperatorVersion=2`,
+  `spark.databricks.streaming.realTimeMode.controlMessage.enabled=true`.
+- **RTM trigger (verified):** `.outputMode("update").trigger(realTime="<interval>")`
+  — output mode **must** be `update`; the interval is the commit/checkpoint
+  interval, not batch latency.
 - **Same IAM role / instance profile, subnet, and security group** as the
   deploy-time job cluster, so the test is representative.
 - **Worker count (M1):**
