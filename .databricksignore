@@ -8,7 +8,6 @@ screenshots/
 /notebooks/
 .gitignore
 capture_screenshots.py
-iot_data_simulator*.whl
 .git/
 .claude/
 .DS_Store
