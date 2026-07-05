@@ -479,6 +479,25 @@ Health is computed live against the provisioned resources; the
 `provisioned_resource` registry (§2.3) is the inventory the page walks. Prototype
 built as in-app React pages under `TwinShell`.
 
+### 2.9 Role-gated access & simplified end-user start view
+
+**Admin-only controls on the home page.** Each industry card shows, **for admins
+only** (gated on the existing admin role / `iot-admins` group), two affordances:
+- **⚙ Config** → the pipeline configuration/validation page (`/setup-validate` in
+  edit mode for that industry).
+- **Status/Health** → the pipeline health page (`/pipelines/:id/health`). The
+  config page also links to the health page.
+Non-admin users never see these.
+
+**Simplified end-user pipeline view.** When a non-admin opens a pipeline/mode, we
+**no longer surface provisioning / starting / validation status** — the admin has
+already run those checks (Section 1). Instead show a single verdict:
+- **Healthy — ready to start**, or
+- **Not healthy — please contact your admin** (no start affordance; directs them
+  to the admin).
+The verdict derives from the same live health as §2.8. This supersedes the
+current end-user provisioning/starting status display.
+
 ## Decisions log (Section 2)
 
 | ID | Decision |
