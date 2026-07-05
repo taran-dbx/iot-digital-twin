@@ -1,25 +1,24 @@
-"""SQL DDL constants for Lakebase provisioning."""
+"""SQL DDL constants for Lakebase provisioning.
+
+``SENSOR_READINGS_DDL`` is **generated from the SSOT field-map** in
+``models/sensor_schema.py`` so the sensor-readings table can never drift from
+the Kafka parse schema, Delta DDL, INSERT list and zerobus record.  It keeps
+the ``{table_name}`` placeholder so existing ``.format(table_name=...)`` call
+sites keep working (the generated DDL contains no other braces).
+"""
 
 from __future__ import annotations
+
+from models.sensor_schema import pg_chronotable_ddl
 
 # LakeTS — probe installed version.  Returns NULL/empty if the toolkit is absent.
 LAKETS_VERSION_CHECK_SQL = (
     "SELECT version FROM lakets._version ORDER BY installed_at DESC LIMIT 1"
 )
 
-SENSOR_READINGS_DDL = """
-CREATE TABLE IF NOT EXISTS {table_name} (
-    id BIGSERIAL PRIMARY KEY,
-    event_time TIMESTAMPTZ NOT NULL,
-    sensor_name TEXT NOT NULL,
-    industry TEXT NOT NULL,
-    value DOUBLE PRECISION NOT NULL,
-    unit TEXT,
-    sensor_type TEXT,
-    fault_active BOOLEAN DEFAULT FALSE,
-    source TEXT DEFAULT 'sss'
-)
-"""
+# Derived from the SSOT — now includes min_value/max_value/nominal_value/metadata
+# (previously dropped → silent data loss).
+SENSOR_READINGS_DDL = pg_chronotable_ddl("{table_name}")
 
 MATVIEW_1M_DDL = """
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_1m AS
