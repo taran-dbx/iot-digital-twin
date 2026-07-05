@@ -213,46 +213,43 @@ producer-only; **no cluster to proxy**. Write identity = **zerobus SP**.
 
 ### 1.11 Streaming metrics (real-time + micro-batch only)
 
-> **Approach (revised 2026-07-05): buffered async write to a UC MANAGED table via
-> the DBSQL Statement Execution API — NOT `saveAsTable`, NOT delta-rs, NOT UC
-> external-access REST.** `saveAsTable` from the listener launches a Spark job on
-> the streaming cluster and **contends with / hinders the streaming query**, so it
-> is disallowed. delta-rs can't write VARIANT; UC external-access REST needs
-> coordinated-commits + the Spark-4 UC client we don't have. Instead the listener
-> buffers rows and a background thread flushes them via DBSQL INSERT (separate
-> warehouse compute → zero interference), keeping the managed table + VARIANT +
-> DBSQL reads. (The managed-table VARIANT write itself is spike-confirmed GA — we
-> just drive it through the warehouse, not the streaming Spark context.)
+> **Approach (locked 2026-07-05, spike-confirmed): buffered async write via
+> delta-rs to a UC EXTERNAL Delta table — NOT `saveAsTable`.** `saveAsTable` from
+> the listener launches a Spark job that **contends with / hinders the streaming
+> query**, so it is disallowed. delta-rs is pure-Python (no Spark job → no
+> streaming interference); the listener buffers rows and a background thread
+> flushes batches. Trade-off (accepted): delta-rs can't write VARIANT, so
+> `progress` is `STRING` + `parse_json` at read; reads go through DBSQL (delta-rs
+> can't read `deletionVectors` tables). The delta-rs external-table write path is
+> already spike-confirmed end-to-end.
 
 - **Capture:** `StreamingQueryListener.onQueryProgress` **buffers** each progress
   row into an in-memory queue and returns immediately — **no Spark work in the
-  callback**. A **background daemon thread** flushes the buffer in small batches
-  to the managed metrics table via the **DBSQL Statement Execution API**
-  (`INSERT INTO … VALUES (…, parse_json(:progress))`) on the app's SQL warehouse —
-  separate compute, so it **never contends with the streaming query**. **Always
-  on** for both Spark modes — the home-page `metrics_enabled` toggle is **removed**.
+  callback**. A **background daemon thread** flushes batches via **delta-rs
+  `write_deltalake(..., mode="append")`** to the external metrics table (pure
+  Python, no Spark job → never contends with the streaming query). **Always on**
+  for both Spark modes — the home-page `metrics_enabled` toggle is **removed**.
   Zerobus has no metrics (`has_metrics=False`).
-- **Table:** UC **MANAGED** Delta table `iot_<industry>.metrics.streaming_metrics`
-  (UC-managed storage path — **no external location, no temp-table-credentials**).
+- **Table:** UC **EXTERNAL** Delta table `iot_<industry>.metrics.streaming_metrics`
+  at `s3://taran-shared-interop/iot-digital-twin/<catalog>/metrics/streaming_metrics/`.
   Per-industry catalog; rows tagged by `query_name`/`query_id` to distinguish
   modes (per-mode split revisited under G11/Section 2).
+- **Auth:** metrics-writer **SP OAuth → UC temporary-table-credentials
+  (READ_WRITE) → S3 creds** into delta-rs `storage_options`, plus
+  `AWS_REGION=us-east-1` + `AWS_S3_ALLOW_UNSAFE_RENAME=true`; regenerate temp
+  creds **per flush batch** (they expire).
 - **Schema (metrics SSOT):** extracted typed columns (`batch_id, timestamp,
   num_input_rows, input_rps, processed_rps, trigger_ms, e2e_p50/p99,
-  processing_p50/p99, queuing_p50/p99`) **+ `progress` as a `VARIANT` column**
-  (native VARIANT confirmed working via Spark; `parse_json(...)` to populate).
-  Fixes the `metrics_json` vs `progress` column-name inconsistency. Reads via
-  DBSQL (`progress:field`, `typeof(progress)=variant`). **Caveat:** do not call
-  `.schema.simpleString()`/`.schema.json()` on a VARIANT DataFrame in a Spark
-  **Connect** (serverless) context — client-side repr bug; the classic consumer
-  cluster is unaffected.
-- **Grants:** metrics-writer identity needs `MODIFY, SELECT` + `USE CATALOG`/
-  `USE SCHEMA` on the managed table **and `CAN_USE` on the SQL warehouse** (it
-  writes via DBSQL); DBSQL reader gets `SELECT`/`USE`; pre-flight check. (No
-  external location, temp-table-credentials, or `EXTERNAL USE SCHEMA`.)
+  processing_p50/p99, queuing_p50/p99`) **+ `progress` as a `STRING` column**
+  (delta-rs can't write VARIANT); read with `parse_json(progress):field` via
+  DBSQL. Fixes the `metrics_json` vs `progress` column-name inconsistency.
+- **Grants:** metrics-writer SP needs `MODIFY, SELECT` + `USE CATALOG`/`USE SCHEMA`
+  **+ `EXTERNAL USE SCHEMA`** (required for `GenerateTemporaryTableCredentials`);
+  DBSQL reader gets `SELECT`/`USE`; pre-flight check.
 - **Validation (S6):** after each bounded real-time/micro-batch run, assert
   metrics rows landed, **verify the Databricks-runtime latency percentiles
   appear** (`e2eLatencyMs`/`processingLatencyMs`/`sourceQueuingLatencyMs` are
-  Databricks-only — proves the Spark managed-table metrics-write path end-to-end),
+  Databricks-only — proves the delta-rs external-table metrics-write path end-to-end),
   **DBSQL-read** via `GET /api/pipeline/{id}/streaming-metrics`; cleanup empties
   rows (keep table).
 
@@ -340,10 +337,10 @@ only dotted variants are ever created.
 | G7 | Idempotent-retry on failure; stop cluster on finish; 90-min auto-terminate. |
 | G8 | Partition-increase-only on edit; `RF=min(3,brokers)`. |
 | G9 | **Struck** — trigger intervals were correct (`realTime="5 minutes"` vs `processingTime="10 seconds"`). |
-| H1 | Metrics table = UC **managed** Delta (no external location / temp-creds). |
-| H2 | Metrics schema = typed columns + `progress` **VARIANT** (native; written via DBSQL `parse_json`). |
-| H3 | Metrics grants: writer needs MODIFY/USE **+ warehouse `CAN_USE`**; reader SELECT; pre-flight. |
-| S1–S6 | Streaming metrics: listener **buffers → background thread → batched DBSQL INSERT** to the managed table (NOT `saveAsTable`/delta-rs — avoids hindering the streaming query); validated on the harness. |
+| H1 | Metrics table = UC **external** Delta on `taran-shared-interop`; creds via UC temp-table-credentials. |
+| H2 | Metrics schema = typed columns + `progress` **STRING** (delta-rs can't VARIANT; `parse_json` at read). |
+| H3 | Metrics grants: writer needs MODIFY/USE **+ `EXTERNAL USE SCHEMA`**; reader SELECT; pre-flight. |
+| S1–S6 | Streaming metrics: listener **buffers → background thread → delta-rs append to an external table** (NOT `saveAsTable` — avoids hindering the streaming query); validated on the harness. |
 
 ## Parked for later sections
 
