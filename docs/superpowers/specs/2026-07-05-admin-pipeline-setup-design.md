@@ -233,15 +233,20 @@ Write identity = **streaming SP** (via OAuth).
    *(Optional defensive net C — writer catches "no partition" → ensure → retry —
    deferred/optional.)*
 2. Simulator produces to `.realtime`; Spark real-time SS writes to Lakebase + LakeTS.
-3. **CDF admin option, then active verification (`cdf_verify`):** the app preps
-   the shadow table + trigger in the `lakets_cdf` schema; the admin **manually
-   enables** the managed Lakebase→Delta sync in the Databricks UI and clicks
-   "I've enabled it". We do **not** trust the click — a `cdf_verify` step
-   **actively tests** CDF is live: poll `wal2delta.tables` for `STREAMING` **and**
-   confirm `committed_lsn` advances (data actually flowing shadow → Delta), with a
-   timeout. If not live, `cdf_verify` **fails** with a clear message ("CDF not
-   detected on `lakets_cdf` — enable managed sync and retry") and is **retryable**
-   (§1.12).
+3. **CDF admin option, then active verification (`cdf_verify`):** CDF is enabled
+   on the **unpartitioned shadow table `lakets_cdf._shadow_<table>`** (a mirror
+   kept in sync by a trigger) — **NOT** on the partitioned ChronoTable that the
+   streaming inserts target (Lakebase CDF rejects partitioned tables). The app
+   preps the shadow table + trigger in the `lakets_cdf` schema; the admin
+   **manually enables** the managed Lakebase→Delta sync in the Databricks UI **on
+   the `lakets_cdf` schema / shadow table** and clicks "I've enabled it". We do
+   **not** trust the click — `cdf_verify` **actively tests** CDF is live: poll
+   `wal2delta.tables` for the **shadow-table entry** `STREAMING` **and** confirm
+   its `committed_lsn` advances (data flowing shadow → Delta), with a timeout. If
+   not live, `cdf_verify` **fails** ("CDF not detected on `lakets_cdf._shadow_*` —
+   enable managed sync on the `lakets_cdf` schema and retry") and is **retryable**
+   (§1.12). ⚠️ Implementation: `cdf_verify` must key on the **shadow table**, not
+   the ChronoTable.
 4. **Read-back validation:** read from **Lakebase directly** for the immediate
    round-trip (CDF sync is async); validate the Delta path by **polling
    `committed_lsn` / `STREAMING`** with a timeout, then **DBSQL-read** the synced
