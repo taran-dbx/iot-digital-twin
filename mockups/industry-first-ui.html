@@ -1,0 +1,874 @@
+<title>IoT Digital Twin — Industry-First UI (mockup)</title>
+<style>
+  :root{
+    /* theme-independent */
+    --accent:#FF3621; --accent-soft:rgba(255,54,33,.14);
+    --good:#3fb950; --warn:#f59e0b; --crit:#f87171;
+    --sse:#3fb950; --lakebase:#3b82f6; --dbsql:#a855f7; --cdf:#f59e0b;
+    /* per-industry accent, overridden per card / by JS */
+    --ind:#f59e0b; --ind-soft:rgba(245,158,11,.14); --ind-line:rgba(245,158,11,.5);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    /* ---- light surfaces (default) ---- */
+    --bg:#f4f6f9; --panel:#ffffff; --panel2:#f1f4f8; --panel3:#e8edf3;
+    --border:#e3e8ef; --border2:#d3dae4;
+    --text:#18202e; --muted:#586474; --faint:#8a95a6;
+    --grid:#eaeef4; --shadow:rgba(22,32,52,.12);
+    --twin-lo:#dbe4f2; --twin-mid:#e9eff8; --twin-hi:#f6f9fc;
+    --warn-tx:#b45309; --good-tx:#15803d; --purple-tx:#7c3aed; --coral-tx:#d93a26;
+  }
+  /* dark surfaces */
+  @media (prefers-color-scheme:dark){ :root{
+    --bg:#0b0e14; --panel:#11151f; --panel2:#0e1219; --panel3:#151b27;
+    --border:#1f2630; --border2:#2a3340;
+    --text:#e6e9ef; --muted:#8a93a3; --faint:#5b6473;
+    --grid:#19202b; --shadow:rgba(0,0,0,.45);
+    --twin-lo:#0c1119; --twin-mid:#0a0e15; --twin-hi:#070a0f;
+    --warn-tx:#fbbf24; --good-tx:#7ee787; --purple-tx:#cdb4f5; --coral-tx:#ff7a66;
+  }}
+  :root[data-theme="light"]{
+    --bg:#f4f6f9; --panel:#ffffff; --panel2:#f1f4f8; --panel3:#e8edf3;
+    --border:#e3e8ef; --border2:#d3dae4;
+    --text:#18202e; --muted:#586474; --faint:#8a95a6;
+    --grid:#eaeef4; --shadow:rgba(22,32,52,.12);
+    --twin-lo:#dbe4f2; --twin-mid:#e9eff8; --twin-hi:#f6f9fc;
+    --warn-tx:#b45309; --good-tx:#15803d; --purple-tx:#7c3aed; --coral-tx:#d93a26;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0e14; --panel:#11151f; --panel2:#0e1219; --panel3:#151b27;
+    --border:#1f2630; --border2:#2a3340;
+    --text:#e6e9ef; --muted:#8a93a3; --faint:#5b6473;
+    --grid:#19202b; --shadow:rgba(0,0,0,.45);
+    --twin-lo:#0c1119; --twin-mid:#0a0e15; --twin-hi:#070a0f;
+    --warn-tx:#fbbf24; --good-tx:#7ee787; --purple-tx:#cdb4f5; --coral-tx:#ff7a66;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+  ::selection{background:var(--accent-soft)}
+  button{font-family:inherit;color:inherit}
+  a{color:inherit}
+  .tnum{font-variant-numeric:tabular-nums}
+  .mono{font-family:var(--mono)}
+
+  /* ---------- shell ---------- */
+  .app{display:grid;grid-template-columns:64px 1fr;min-height:100vh}
+  .rail{background:var(--panel2);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 0;position:sticky;top:0;height:100vh}
+  .rail .logo{width:34px;height:34px;border-radius:9px;background:var(--accent);display:grid;place-items:center;font-weight:800;color:#fff;font-size:15px;margin-bottom:10px}
+  .rail button{width:42px;height:42px;border-radius:10px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center;transition:.15s}
+  .rail button:hover{background:var(--panel3);color:var(--text)}
+  .rail button.on{background:var(--accent-soft);color:var(--coral-tx);border-color:rgba(255,54,33,.3)}
+  .rail .sp{flex:1}
+  .rail svg{width:20px;height:20px}
+  .main{min-width:0}
+  .wrap{max-width:1360px;margin:0 auto;padding:26px 30px 70px}
+
+  .crumbs{display:flex;align-items:center;gap:9px;color:var(--faint);font-size:12.5px;margin-bottom:18px}
+  .crumbs a{color:var(--muted);text-decoration:none;cursor:pointer}
+  .crumbs a:hover{color:var(--text)}
+  .crumbs .sep{opacity:.5}
+
+  .eyebrow{font-size:11px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--faint)}
+  h1{font-size:26px;font-weight:750;letter-spacing:-.02em;margin:6px 0 4px;text-wrap:balance}
+  .lede{color:var(--muted);font-size:14px;max-width:64ch}
+
+  .badge{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--border2);color:var(--muted);font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .dot.run{background:var(--good);box-shadow:0 0 0 0 rgba(63,185,80,.5);animation:pulse 1.8s infinite}
+  .dot.stop{background:var(--faint)}
+  .dot.prov{background:var(--warn);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 var(--pc,rgba(63,185,80,.5))}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+
+  /* ---------- gallery ---------- */
+  .gal-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px;flex-wrap:wrap}
+  .cards{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:900px){.cards{grid-template-columns:1fr}.app{grid-template-columns:52px 1fr}}
+  .card{position:relative;border:1px solid var(--border);border-radius:14px;background:linear-gradient(160deg,var(--panel) 0%,var(--panel2) 100%);padding:0;overflow:hidden;cursor:pointer;transition:.18s;text-align:left}
+  .card:hover{border-color:var(--ind-line);transform:translateY(-2px)}
+  .card .top{height:96px;position:relative;overflow:hidden;border-bottom:1px solid var(--border)}
+  .card .top .glow{position:absolute;inset:0;background:radial-gradient(120% 130% at 18% -20%,var(--ind-soft) 0%,transparent 60%)}
+  .card .body{padding:16px 18px 18px}
+  .card .icn{position:absolute;left:18px;top:18px;width:44px;height:44px;border-radius:11px;background:var(--panel3);border:1px solid var(--border2);display:grid;place-items:center;color:var(--ind)}
+  .card .icn svg{width:24px;height:24px}
+  .card .st{position:absolute;right:16px;top:20px;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--muted)}
+  .card h3{margin:0 0 3px;font-size:18px;font-weight:700}
+  .card .sub{color:var(--faint);font-size:12.5px;margin-bottom:14px}
+  .card .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .card .kv .v{font-size:17px;font-weight:750}
+  .card .kv .k{font-size:10.5px;color:var(--muted);margin-top:1px;text-transform:uppercase;letter-spacing:.05em}
+  .card .kv .v small{font-size:11px;color:var(--faint);font-weight:600}
+  .card.custom{border-style:dashed;background:transparent;display:grid;place-items:center;min-height:150px}
+  .card.custom:hover{border-color:var(--border2);transform:none}
+  .card.custom .cc{text-align:center;color:var(--muted)}
+  .card.custom .cc .plus{font-size:26px;font-weight:300;color:var(--faint)}
+
+  /* ---------- generic panel ---------- */
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .panel.tint{border-color:var(--ind-line);background:linear-gradient(160deg,var(--panel) 0%,var(--panel2) 100%)}
+  .ptitle{font-size:12px;color:var(--muted);font-weight:650;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .ptitle .unit{color:var(--faint);font-weight:500}
+
+  /* ---------- setup ---------- */
+  .setup-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}
+  @media(max-width:900px){.setup-grid{grid-template-columns:1fr}}
+  .prov-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+  .prov-list li{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px dashed var(--border)}
+  .prov-list li:last-child{border-bottom:0}
+  .prov-list .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:12px}
+  .prov-list .ic.done{background:rgba(63,185,80,.15);color:var(--good)}
+  .prov-list .ic.busy{background:rgba(245,158,11,.15);color:var(--warn)}
+  .prov-list .ic.wait{background:var(--panel3);color:var(--faint);border:1px solid var(--border2)}
+  .prov-list .lab{font-weight:600;font-size:13px}
+  .prov-list .det{color:var(--faint);font-size:11.5px;font-family:var(--mono);margin-top:1px}
+  .prov-list .rt{margin-left:auto;font-size:11px;color:var(--faint);font-family:var(--mono)}
+  .spin{width:13px;height:13px;border:2px solid rgba(245,158,11,.3);border-top-color:var(--warn);border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  .ctl{display:flex;flex-direction:column;gap:16px}
+  .field{display:flex;flex-direction:column;gap:7px}
+  .field>label{font-size:12px;font-weight:650;color:var(--text)}
+  .field .hint{font-size:11.5px;color:var(--faint)}
+  input[type=range]{width:100%;accent-color:var(--ind)}
+  .rangebar{display:flex;align-items:center;gap:12px}
+  .rangebar .val{font-family:var(--mono);font-weight:700;font-size:15px;min-width:74px;text-align:right}
+  .toggle{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 15px;border:1px solid var(--border2);border-radius:10px;background:var(--panel2)}
+  .toggle .t-txt b{font-size:13px}.toggle .t-txt div{color:var(--faint);font-size:11.5px;margin-top:2px}
+  .sw{width:42px;height:24px;border-radius:999px;background:var(--panel3);border:1px solid var(--border2);position:relative;cursor:pointer;flex:none;transition:.16s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--faint);transition:.16s}
+  .sw.on{background:var(--ind-soft);border-color:var(--ind-line)}
+  .sw.on::after{left:20px;background:var(--ind)}
+  .drop{border:1.5px dashed var(--border2);border-radius:10px;padding:16px;text-align:center;color:var(--faint);font-size:12.5px;background:var(--panel2)}
+  .drop b{color:var(--muted)}
+  .btnrow{display:flex;gap:10px;margin-top:4px}
+  .btn{border:1px solid var(--border2);background:var(--panel3);color:var(--text);font-weight:650;font-size:13px;padding:10px 18px;border-radius:9px;cursor:pointer;transition:.14s;display:inline-flex;align-items:center;gap:8px}
+  .btn:hover{border-color:var(--faint)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.ghost{background:transparent}
+  .adv{margin-top:18px;border:1px solid var(--border);border-radius:12px;background:var(--panel2);overflow:hidden}
+  .adv summary{cursor:pointer;padding:14px 18px;font-weight:650;font-size:13px;color:var(--muted);list-style:none;display:flex;align-items:center;gap:10px}
+  .adv summary::-webkit-details-marker{display:none}
+  .adv summary .chev{transition:.2s;color:var(--faint)}
+  .adv[open] summary .chev{transform:rotate(90deg)}
+  .adv .adv-body{padding:0 18px 18px;color:var(--faint);font-size:12.5px;line-height:1.7;border-top:1px solid var(--border)}
+  .adv .adv-body code{background:var(--panel3);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--purple-tx);font-size:11.5px}
+
+  /* ---------- dashboard ---------- */
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 16px;background:var(--panel);border:1px solid var(--ind-line);border-radius:12px;margin-bottom:16px}
+  .topbar .tt{font-size:16px;font-weight:700}
+  .topbar .ts{color:var(--faint);font-size:12px;margin-top:2px}
+  .topbar .spacer{flex:1}
+  .pills{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .pill{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);color:var(--muted)}
+  .pill.off{opacity:.45}
+  .pill .d{width:7px;height:7px;border-radius:50%}
+  .seg{display:inline-flex;padding:3px;gap:2px;background:var(--panel2);border:1px solid var(--border2);border-radius:9px}
+  .seg button{background:transparent;border:0;color:var(--muted);font-weight:600;font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer}
+  .seg button.on{background:var(--ind);color:#08111a}
+
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+  @media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}.kpis{gap:10px}}
+  .kpi{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:13px 15px;position:relative;overflow:hidden}
+  .kpi .rail-c{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ind);opacity:.8}
+  .kpi.warn .rail-c{background:var(--warn)}.kpi.crit .rail-c{background:var(--crit)}
+  .kpi .v{font-size:23px;font-weight:750;letter-spacing:-.02em}
+  .kpi .v small{font-size:12px;color:var(--faint);font-weight:600}
+  .kpi.warn .v{color:var(--warn-tx)}.kpi.crit .v{color:var(--crit)}
+  .kpi .k{color:var(--muted);font-size:11px;margin-top:3px}
+  .kpi .spark{margin-top:8px;height:26px}
+
+  .sec{margin-top:22px}
+  .shead{display:flex;align-items:center;gap:10px;margin:0 2px 12px}
+  .shead h2{font-size:13.5px;margin:0;font-weight:700}
+  .src-tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;letter-spacing:.03em}
+  .src-tag.sse{background:rgba(63,185,80,.14);color:var(--sse)} .src-tag.lb{background:rgba(59,130,246,.14);color:var(--lakebase)} .src-tag.db{background:rgba(168,85,247,.14);color:var(--dbsql)}
+  .shead .note{color:var(--faint);font-size:12px;margin-left:auto}
+
+  .twin-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px}
+  @media(max-width:900px){.twin-grid{grid-template-columns:1fr}}
+  .twin{position:relative;height:360px;border:1px solid var(--ind-line);border-radius:12px;overflow:hidden;background:radial-gradient(130% 100% at 50% -8%,color-mix(in srgb,var(--ind) 14%, var(--twin-lo)) 0%,var(--twin-mid) 60%,var(--twin-hi) 100%)}
+  .twin .lbl{position:absolute;left:14px;top:12px;font-size:11px;font-weight:700;color:var(--ind);background:var(--ind-soft);border:1px solid var(--ind-line);padding:3px 10px;border-radius:999px}
+  .twin .hint{position:absolute;right:12px;bottom:10px;font-size:10.5px;color:var(--faint)}
+  .twin svg{position:absolute;inset:0;width:100%;height:100%}
+  .stream{display:flex;flex-direction:column;gap:8px}
+  .stream .row{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}
+  .stream .row .nm{font-weight:600;flex:1}
+  .stream .row .vv{font-family:var(--mono);font-weight:700}
+  .stream .row .u{color:var(--faint);font-size:11px}
+  .stream .row.alert{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.06)}
+
+  .grid2{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+  .chart{position:relative;height:150px}
+  .mini .v{font-size:22px;font-weight:750}.mini .k{font-size:11px;color:var(--muted)}.mini .v small{font-size:12px;color:var(--faint);font-weight:600}
+
+  .cdf{display:flex;gap:16px;align-items:flex-start;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.06);border-radius:12px;padding:15px 18px;margin-top:22px}
+  .cdf .ic{font-size:20px;line-height:1}
+  .cdf h3{margin:0 0 4px;font-size:13.5px;color:var(--warn-tx)}.cdf p{margin:0;color:var(--muted);font-size:12.5px;max-width:70ch}
+  .cdf .chip{margin-left:auto;font-weight:700;font-size:11.5px;padding:4px 12px;border-radius:999px;background:rgba(63,185,80,.16);color:var(--good-tx);border:1px solid rgba(63,185,80,.35);white-space:nowrap}
+
+  footer{margin-top:40px;color:var(--faint);font-size:11.5px;text-align:center;line-height:1.7}
+  .hidden{display:none !important}
+  .mocknote{position:fixed;right:14px;bottom:14px;z-index:50;background:var(--panel3);border:1px solid var(--border2);color:var(--muted);font-size:11px;padding:7px 12px;border-radius:999px;box-shadow:0 6px 20px var(--shadow)}
+  .role-seg button.on{background:var(--accent);color:#fff}
+  /* fixed source + delivery mode */
+  /* architecture diagram */
+  .arch{display:flex;align-items:stretch;flex-wrap:nowrap;overflow-x:auto;padding:8px 2px 4px}
+  .anode{min-width:118px;border:1px solid var(--border2);border-radius:10px;background:var(--panel2);padding:10px 12px;display:flex;flex-direction:column;gap:2px;flex:none}
+  .anode .an-t{font-weight:700;font-size:12px;display:flex;align-items:center;gap:6px}
+  .anode .an-s{color:var(--faint);font-size:10.5px}
+  .anode .tierdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .anode.sink{border-color:var(--ind-line);background:var(--ind-soft)}
+  .aarrow{align-self:center;color:var(--faint);padding:0 9px;font-size:15px;flex:none}
+  .arch-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--faint);font-size:11px}
+  .arch-legend span{display:flex;align-items:center;gap:6px}
+  /* pipeline flavors */
+  .src-note{color:var(--faint);font-size:12px;margin:-4px 0 12px}
+  .src-note b{color:var(--muted);font-weight:650}
+  .flavors{display:flex;flex-direction:column;gap:10px}
+  .fcard{border:1px solid var(--border2);border-radius:11px;background:var(--panel2);padding:13px 15px;transition:.14s}
+  .fcard.on{border-color:var(--ind-line);background:var(--ind-soft)}
+  .fcard .fc-head{display:flex;align-items:center;gap:11px}
+  .fcard .fc-name{font-weight:700;font-size:14px}
+  .fcard .fc-to{font-size:11px;color:var(--muted);font-weight:600}
+  .fcard .fc-desc{color:var(--faint);font-size:11.5px;margin:7px 0 11px;line-height:1.5}
+  .fcard .fc-foot{display:flex;align-items:center;gap:10px}
+  .fcard .fc-stat{font-size:11.5px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .fcard .fc-open{margin-left:auto}
+  .btn.sm{padding:6px 13px;font-size:12px}
+  .btn.sm:disabled{opacity:.4;cursor:not-allowed}
+  /* multi-flavor architecture rows */
+  .arch-flow{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .arch-flow:last-child{margin-bottom:0}
+  .arch-flabel{min-width:90px;font-weight:700;font-size:12px;color:var(--ind);flex:none}
+  .arch-empty{color:var(--faint);font-size:12.5px;padding:8px 2px}
+  /* gallery flavor chips */
+  .fchips{display:flex;gap:6px;margin-top:12px}
+  .fchip{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;border:1px solid var(--border2);color:var(--faint);background:var(--panel2)}
+  .fchip.on{color:var(--ind);border-color:var(--ind-line);background:var(--ind-soft)}
+  /* pipeline subheading, start progress, live health */
+  .fc-sub{font-size:11px;font-weight:600;color:var(--ind);margin:3px 0 1px;display:flex;align-items:center;gap:5px}
+  .btn.sm.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.sm.primary:hover{filter:brightness(1.08)}
+  .btn.sm.ghost{background:transparent}
+  .fc-prog{margin-top:11px}
+  .pg-bar{height:6px;border-radius:4px;background:var(--panel3);overflow:hidden}
+  .pg-fill{height:100%;background:var(--ind);border-radius:4px;transition:width .5s ease}
+  .pg-list{list-style:none;margin:11px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .pg-list li{display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--faint)}
+  .pg-list li.pg-done{color:var(--muted)}
+  .pg-list li.pg-busy{color:var(--text);font-weight:600}
+  .pg-ic{width:15px;height:15px;display:grid;place-items:center;font-size:10px;color:var(--good);flex:none}
+  .pg-list li.pg-wait .pg-ic{color:var(--faint)}
+  .pg-ic .spin{width:11px;height:11px}
+  .fc-health{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:11px 0 9px;font-size:10.5px;color:var(--muted)}
+  .fc-health .hd{display:flex;align-items:center;gap:5px}
+  .fc-health .hd-sep{color:var(--faint)}
+  .fc-health .dot{width:7px;height:7px}
+</style>
+
+<div class="app">
+  <nav class="rail">
+    <div class="logo">IoT</div>
+    <button id="nav-home" class="on" title="Industries" onclick="go('gallery')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    </button>
+    <button title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7"/></svg>
+    </button>
+    <div class="sp"></div>
+    <button id="themeBtn" title="Toggle light / dark" onclick="toggleTheme()"></button>
+    <button title="Docs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+    </button>
+  </nav>
+
+  <div class="main">
+    <div class="wrap">
+
+      <!-- ============ GALLERY ============ -->
+      <section id="view-gallery">
+        <div class="gal-head">
+          <div>
+            <div class="eyebrow">Digital Twin Platform</div>
+            <h1 id="galTitle">Your industry dashboards</h1>
+            <p class="lede" id="galLede">Open any industry to see its live twin and KPIs. You can change the source, bring your own data, and set the frequency — the pipeline stays provisioned for you.</p>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:9px;align-items:flex-end">
+            <div class="seg role-seg" title="Preview both roles">
+              <button id="roleUser" class="on" onclick="setRole('user')">End user</button>
+              <button id="roleAdmin" onclick="setRole('admin')">Admin</button>
+            </div>
+            <div class="badge" id="galBadge">4 industries · view &amp; operate</div>
+          </div>
+        </div>
+        <div class="cards" id="cardGrid"></div>
+      </section>
+
+      <!-- ============ SETUP ============ -->
+      <section id="view-setup" class="hidden">
+        <div class="crumbs"><a onclick="go('gallery')">Industries</a><span class="sep">/</span><span id="su-crumb">—</span></div>
+        <div class="gal-head" style="margin-bottom:18px">
+          <div>
+            <div class="eyebrow" id="su-eyebrow">—</div>
+            <h1 id="su-title">—</h1>
+            <p class="lede" id="su-lede">—</p>
+          </div>
+          <span class="badge" id="su-status">—</span>
+        </div>
+
+        <div class="setup-grid">
+          <div>
+            <div class="panel tint">
+              <div class="ptitle">Pipelines <span class="unit">start one or more</span></div>
+              <div class="src-note">Streaming pipelines read <b>Apache Kafka</b> — one topic per pipeline (<b>iot.<span id="su-topic">—</span>.&lt;mode&gt;</b>); Zerobus writes direct. Each running pipeline gets its own dashboard.</div>
+              <div class="flavors" id="flavorList"></div>
+            </div>
+
+            <div class="panel" style="margin-top:16px">
+              <div class="ptitle">How your data flows <span class="unit" id="archMode">enabled architectures</span></div>
+              <div id="archDiag"></div>
+              <div class="arch-legend">
+                <span><span class="tierdot" style="background:var(--sse)"></span>Kafka / live</span>
+                <span><span class="tierdot" style="background:var(--lakebase)"></span>Lakebase (hot)</span>
+                <span><span class="tierdot" style="background:var(--dbsql)"></span>Delta / DBSQL (cold)</span>
+                <span><span class="tierdot" style="background:var(--ind)"></span>primary sink</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ctl">
+            <div class="panel tint">
+              <div class="ptitle" id="provTitle">Provisioning <span class="unit">automatic</span></div>
+              <ul class="prov-list" id="provList"></ul>
+            </div>
+
+            <div class="panel">
+              <div class="field">
+                <label>Data frequency</label>
+                <div class="rangebar">
+                  <input type="range" min="1" max="200" value="40" id="hz" oninput="hzVal.textContent=this.value+' Hz'">
+                  <span class="val" id="hzVal">40 Hz</span>
+                </div>
+                <div class="hint">Ticks/sec the simulator emits — shared across this industry's pipelines.</div>
+              </div>
+            </div>
+
+            <div class="toggle">
+              <div class="t-txt"><b>Capture streaming metrics</b><div>Real-time & micro-batch only — throughput, batch duration & latency.</div></div>
+              <div class="sw on" id="swMetrics" onclick="this.classList.toggle('on')"></div>
+            </div>
+
+            <div class="panel">
+              <div class="field">
+                <label>Bring custom data <span class="badge" style="font-weight:600">optional</span></label>
+                <div class="drop">Drop a <b>CSV / JSON</b> file or connect a table<br><span style="font-size:11px">Mapped to the industry schema for you</span></div>
+              </div>
+            </div>
+
+            <div class="btnrow">
+              <button class="btn ghost" onclick="go('gallery')">← Industries</button>
+            </div>
+          </div>
+        </div>
+
+        <details class="adv" id="advBox">
+          <summary><span class="chev">▸</span> Advanced settings <span class="badge" style="margin-left:6px">admin only</span></summary>
+          <div class="adv-body">
+            The full manual controls still live here for debugging and edge cases — normally you never touch them:
+            <br>• Source credentials & connection details (<code>bootstrap_servers</code>, secrets scope)
+            <br>• Processing mode (<code>realtime</code> / <code>microbatch</code>), sink selection, checkpoint location
+            <br>• Cluster sizing (workers, node type, DBR), notebook template, connectivity validation
+            <br>• LakeTS tiering (hot / drop / chunk intervals), rollups, retention & CDF sync
+            <br><br>These are auto-configured per industry. Overrides here are yours to keep.
+          </div>
+        </details>
+      </section>
+
+      <!-- ============ DASHBOARD ============ -->
+      <section id="view-dashboard" class="hidden">
+        <div class="crumbs"><a onclick="go('gallery')">Industries</a><span class="sep">/</span><a id="db-crumb" onclick="go('setup')">—</a><span class="sep">/</span><span>Dashboard</span></div>
+
+        <div class="topbar">
+          <div>
+            <div class="tt" id="db-title">—</div>
+            <div class="ts" id="db-sub">—</div>
+          </div>
+          <div class="spacer"></div>
+          <div class="pills" id="db-pills"></div>
+          <div class="seg"><button class="on">Live</button><button>5m</button><button>1h</button><button>24h</button></div>
+          <button class="btn ghost" id="db-power" style="padding:8px 14px" onclick="togglePower()"></button>
+        </div>
+
+        <div class="kpis" id="kpiRow"></div>
+
+        <div class="sec">
+          <div class="shead"><h2>Live twin & sensor stream</h2><span class="src-tag sse" id="twinTag">SSE · real-time</span><span class="note" id="twinNote">refresh 1s · Server-Sent Events</span></div>
+          <div class="twin-grid">
+            <div class="twin" id="twinBox"><span class="lbl" id="twinLbl">—</span><span class="hint">drag to orbit · mock</span></div>
+            <div class="panel">
+              <div class="ptitle">Sensor stream <span class="unit" id="streamCount">—</span></div>
+              <div class="stream" id="streamList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec" id="lbSec">
+          <div class="shead"><h2 id="lbTitle">Warm tier · recent history</h2><span class="src-tag lb" id="lbTag">Lakebase · hot</span><span class="note" id="lbBranch">branch —</span></div>
+          <div class="grid2">
+            <div class="panel"><div class="ptitle" id="lbChartTitle">— <span class="unit">last 15 min</span></div><div class="chart" id="lbChart"></div></div>
+            <div class="panel">
+              <div class="ptitle" id="lbHealthTitle">Insertion health</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+                <div class="mini"><div class="v tnum">1,842<small>/s</small></div><div class="k">Rows inserted</div></div>
+                <div class="mini"><div class="v tnum">11<small>ms</small></div><div class="k">Insert p50</div></div>
+                <div class="mini"><div class="v tnum">4.2<small>d</small></div><div class="k">Hot retention</div></div>
+                <div class="mini"><div class="v tnum">99.9<small>%</small></div><div class="k">Write success</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec" id="metricsSec">
+          <div class="shead"><h2>Streaming metrics</h2><span class="src-tag sse">pipeline</span><span class="note">Spark Structured Streaming</span></div>
+          <div class="grid3">
+            <div class="panel"><div class="ptitle">Throughput <span class="unit">rows/s</span></div><div class="chart" id="mChart1"></div></div>
+            <div class="panel"><div class="ptitle">Batch duration <span class="unit">ms</span></div><div class="chart" id="mChart2"></div></div>
+            <div class="panel"><div class="ptitle">End-to-end latency <span class="unit">p50 · ms</span></div><div class="chart" id="mChart3"></div></div>
+          </div>
+        </div>
+
+        <div class="cdf" id="cdfSec">
+          <div class="ic">❄️</div>
+          <div><h3>Cold tier · Lakehouse sync active</h3><p>Aged rows sync from the Lakebase branch to Unity Catalog via CDF. Query 30-day+ history in the <b>Historical (DBSQL)</b> view — same schema, served from Delta.</p></div>
+          <span class="chip">● streaming</span>
+        </div>
+
+        <footer>Mockup · industry-first UI concept — not wired to live data.<br>Palette & tiers mirror the current app (SSE / Lakebase / DBSQL).</footer>
+      </section>
+
+    </div>
+  </div>
+</div>
+<div class="mocknote">◆ Interactive mockup — click a card, then “Open dashboard”</div>
+
+<script>
+/* ---------------- industry model ---------------- */
+const ICON = {
+  factory:'<path d="M2 20h20M4 20V9l5 3V9l5 3V9l5 3v8" stroke-linejoin="round"/><path d="M8 20v-3M12 20v-3M16 20v-3"/>',
+  pharma:'<path d="M9 3h6M10 3v6l-4 8a2 2 0 0 0 2 3h8a2 2 0 0 0 2-3l-4-8V3"/><path d="M7.5 15h9"/>',
+  energy:'<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" stroke-linejoin="round"/>',
+  auto:'<path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11m-14 0h14m-14 0a2 2 0 0 0-2 2v3h2m14-5a2 2 0 0 1 2 2v3h-2m-12 0h8m-9 0a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0m15 0a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0"/>'
+};
+const MODES=[
+  {id:'realtime',  name:'Real-time',  to:'Lakebase + LakeTS', desc:'Spark Structured Streaming → Lakebase, served as time-series (hot) with CDF sync to Delta for cold history.'},
+  {id:'microbatch',name:'Micro-batch',to:'Delta table',       desc:'Spark Structured Streaming in micro-batches → a Delta table in Unity Catalog.'},
+  {id:'zerobus',   name:'Zerobus',    to:'Delta (direct)',    desc:'Zerobus SDK writes straight to a Delta table — no Spark streaming job.'}
+];
+const MODEMETA={
+  realtime:  {pills:[['SSE','var(--sse)'],['Lakebase','var(--lakebase)'],['DBSQL','var(--dbsql)']], twinTag:['sse','SSE · real-time'], twinNote:'refresh 1s · Server-Sent Events', midTitle:'Warm tier · recent history', midTag:['lb','Lakebase · hot'], midChartTitle:'{X}', midHealth:'Insertion health', cdf:true},
+  microbatch:{pills:[['SSE','var(--sse)'],['Delta','var(--dbsql)'],['DBSQL','var(--dbsql)']],     twinTag:['sse','live preview'],   twinNote:'simulator preview · micro-batch to Delta', midTitle:'Delta table · micro-batch', midTag:['db','Delta · UC'], midChartTitle:'{X}', midHealth:'Batch commit health', cdf:false},
+  zerobus:   {pills:[['Delta','var(--dbsql)'],['DBSQL','var(--dbsql)']],                          twinTag:['db','live preview'],    twinNote:'simulator preview · Zerobus to Delta', midTitle:'Delta table · Zerobus ingest', midTag:['db','Delta · UC'], midChartTitle:'{X}', midHealth:'Ingest health', cdf:false}
+};
+
+const IND = {
+  manufacturing:{
+    name:'Manufacturing', icon:'factory', accent:'#f59e0b', src:'kafka', mode:'realtime', hz:40, status:'run',
+    tag:'Assembly line · CNC · robotics',
+    lede:'Real-time visibility into your production line — station throughput, spindle load, OEE and fault detection across the floor.',
+    stats:[['throughput','12.4k','/s'],['oee','87','%'],['faults','2','active']],
+    kpis:[
+      {k:'Line throughput',v:'1,204',u:'units/hr'},
+      {k:'OEE',v:'87.3',u:'%'},
+      {k:'Spindle load',v:'72',u:'%'},
+      {k:'Station temp',v:'64',u:'°C',s:'warn'},
+      {k:'Active faults',v:'2',u:'',s:'crit'}
+    ],
+    stream:[['Station 3 · spindle',72,'%',0],['Conveyor speed',1.8,'m/s',0],['Motor vibration',4.7,'mm/s',1],['Coolant temp',64,'°C',0],['Torque',118,'Nm',0],['Air pressure',6.2,'bar',0]],
+    twinType:'line', lbTitle:'Units produced'
+  },
+  pharmaceutical:{
+    name:'Pharmaceutical', icon:'pharma', accent:'#22d3ee', src:'kafka', mode:'realtime', hz:25, status:'run',
+    tag:'Bioreactor · WFI · batch yield',
+    lede:'Process integrity for regulated production — reactor temperature, pressure, WFI flow and batch yield with tamper-evident history.',
+    stats:[['throughput','8.1k','/s'],['yield','96','%'],['batches','3','active']],
+    kpis:[
+      {k:'Reactor temp',v:'37.2',u:'°C'},
+      {k:'Vessel pressure',v:'1.8',u:'bar'},
+      {k:'WFI flow',v:'42',u:'L/min'},
+      {k:'Batch yield',v:'96.1',u:'%'},
+      {k:'Deviations',v:'0',u:''}
+    ],
+    stream:[['Reactor A · temp',37.2,'°C',0],['Vessel pressure',1.8,'bar',0],['WFI flow',42,'L/min',0],['pH',7.1,'',0],['Dissolved O₂',88,'%',0],['Agitator RPM',210,'rpm',0]],
+    twinType:'vessel', lbTitle:'Batch yield'
+  },
+  energy:{
+    name:'Energy', icon:'energy', accent:'#3fb950', src:'kafka', mode:'microbatch', hz:60, status:'stop',
+    tag:'Turbines · grid load · substations',
+    lede:'Grid and generation health — turbine output, frequency stability, transformer load and demand across substations.',
+    stats:[['throughput','—','/s'],['output','—','MW'],['sites','6','wired']],
+    kpis:[
+      {k:'Grid output',v:'842',u:'MW'},
+      {k:'Frequency',v:'50.01',u:'Hz'},
+      {k:'Turbine RPM',v:'3,000',u:''},
+      {k:'Xfmr load',v:'78',u:'%',s:'warn'},
+      {k:'Faults',v:'0',u:''}
+    ],
+    stream:[['Turbine 1 · output',210,'MW',0],['Grid frequency',50.01,'Hz',0],['Xfmr T4 load',78,'%',1],['Voltage L1',233,'V',0],['Reactive power',44,'MVAr',0],['Bearing temp',58,'°C',0]],
+    twinType:'grid', lbTitle:'Grid output'
+  },
+  automotive:{
+    name:'Automotive', icon:'auto', accent:'#3b82f6', src:'kafka', mode:'zerobus', hz:50, status:'run',
+    tag:'Body shop · paint · powertrain test',
+    lede:'Connected assembly and test — weld quality, paint-booth climate, torque verification and end-of-line diagnostics per vehicle.',
+    stats:[['throughput','9.6k','/s'],['fpy','94','%'],['vins','58','/hr']],
+    kpis:[
+      {k:'Vehicles/hr',v:'58',u:''},
+      {k:'First-pass yield',v:'94.2',u:'%'},
+      {k:'Weld current',v:'11.4',u:'kA'},
+      {k:'Booth humidity',v:'61',u:'%',s:'warn'},
+      {k:'Rework flags',v:'1',u:''}
+    ],
+    stream:[['Weld cell · current',11.4,'kA',0],['Torque station 7',42,'Nm',0],['Paint booth RH',61,'%',1],['Booth temp',23,'°C',0],['Conveyor index',58,'/hr',0],['Battery test V',402,'V',0]],
+    twinType:'auto', lbTitle:'Vehicles completed'
+  }
+};
+
+/* default enabled flavors per industry (demoing multi-select) */
+IND.manufacturing.flavors={realtime:true, microbatch:true,  zerobus:false};
+IND.pharmaceutical.flavors={realtime:true, microbatch:false, zerobus:false};
+IND.energy.flavors       ={realtime:false,microbatch:true,  zerobus:false};
+IND.automotive.flavors   ={realtime:false,microbatch:false, zerobus:true};
+const FLABEL={realtime:'Real-time', microbatch:'Micro-batch', zerobus:'Zerobus'};
+const FNAME ={realtime:'Real-time mode', microbatch:'Micro-batch mode', zerobus:'Zerobus (Delta Ingest)'};
+const FTO   ={realtime:'Kafka → SSS → Lakebase + LakeTS', microbatch:'Kafka → SSS → Delta table', zerobus:'Zerobus SDK → Delta table'};
+const STAGES={
+  stream:['Checking controls','Producer generating data','Kafka topic receiving','Spark SSS consuming','Writing to sink','Dashboard live'],
+  zerobus:['Checking controls','Producer generating data','Zerobus ingest','Writing to Delta table','Dashboard live']
+};
+const HEALTH={
+  realtime:[['Producer','var(--good)'],['Kafka','var(--sse)'],['Spark SSS','var(--good)'],['Lakebase','var(--lakebase)'],['Dashboard','var(--good)']],
+  microbatch:[['Producer','var(--good)'],['Kafka','var(--sse)'],['Spark SSS','var(--good)'],['Delta','var(--dbsql)'],['Dashboard','var(--good)']],
+  zerobus:[['Producer','var(--good)'],['Zerobus','var(--dbsql)'],['Delta','var(--dbsql)'],['Dashboard','var(--good)']]
+};
+let cardStep={};
+
+/* ---------------- state + nav ---------------- */
+let cur=null, powered=true, role='user', selectedMode='realtime';
+
+function toggleTheme(){
+  const set=document.documentElement.getAttribute('data-theme');
+  const isDark = set ? set==='dark' : matchMedia('(prefers-color-scheme:dark)').matches;
+  document.documentElement.setAttribute('data-theme', isDark?'light':'dark');
+  updThemeIcon();
+}
+function updThemeIcon(){
+  const set=document.documentElement.getAttribute('data-theme');
+  const isDark = set ? set==='dark' : matchMedia('(prefers-color-scheme:dark)').matches;
+  document.getElementById('themeBtn').innerHTML = isDark
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+}
+
+function setRole(r){
+  role=r;
+  document.getElementById('roleUser').classList.toggle('on',r==='user');
+  document.getElementById('roleAdmin').classList.toggle('on',r==='admin');
+  document.getElementById('galTitle').textContent = r==='admin' ? 'Manage industries' : 'Your industry dashboards';
+  document.getElementById('galLede').textContent = r==='admin'
+    ? 'Add and configure industry pipelines. Each new industry gets its own catalog and Lakebase branch (kept forever), sharing one service principal. End users only see and operate what you publish here.'
+    : 'Open any industry to see its live twin and KPIs. You can change the source, bring your own data, and set the frequency — the pipeline stays provisioned for you.';
+  document.getElementById('galBadge').textContent = r==='admin' ? 'admin · can add pipelines' : '4 industries · view & operate';
+  renderGallery();
+}
+function setAccent(h){
+  const r=document.documentElement.style;
+  r.setProperty('--ind',h);
+  r.setProperty('--ind-soft',hexA(h,.14));
+  r.setProperty('--ind-line',hexA(h,.5));
+}
+function hexA(h,a){const n=h.replace('#','');const b=parseInt(n,16);return `rgba(${(b>>16)&255},${(b>>8)&255},${b&255},${a})`}
+
+function go(view){
+  ['gallery','setup','dashboard'].forEach(v=>document.getElementById('view-'+v).classList.toggle('hidden',v!==view));
+  document.getElementById('nav-home').classList.toggle('on',view==='gallery');
+  window.scrollTo(0,0);
+  if(view==='gallery') renderGallery();
+  if(view==='setup') renderSetup();
+  if(view==='dashboard') renderDash();
+}
+function openInd(id){cur=id; selectedMode=IND[id].mode; setAccent(IND[id].accent); go('setup');}
+
+/* ---------------- gallery ---------------- */
+function renderGallery(){
+  const g=document.getElementById('cardGrid');
+  g.innerHTML = Object.entries(IND).map(([id,d])=>{
+    const nrun = Object.values(d.flavors).filter(Boolean).length;
+    const st = `<span class="dot ${nrun?'run':'stop'}"></span> ${nrun}/3 running`;
+    const chips = ['realtime','microbatch','zerobus'].map(f=>`<span class="fchip ${d.flavors[f]?'on':''}">${FLABEL[f]}</span>`).join('');
+    const kv = d.stats.map(s=>`<div><div class="v tnum">${s[0]==='throughput'&&!nrun?'—':s[1]}<small>${s[2]}</small></div><div class="k">${s[0]}</div></div>`).join('');
+    return `<button class="card" data-ind style="--ind:${d.accent};--ind-soft:${hexA(d.accent,.14)};--ind-line:${hexA(d.accent,.5)}" onclick="openInd('${id}')">
+      <div class="top"><div class="glow"></div>
+        <div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">${ICON[d.icon]}</svg></div>
+        <div class="st">${st}</div>
+      </div>
+      <div class="body">
+        <h3>${d.name}</h3>
+        <div class="sub">${d.tag}</div>
+        <div class="fchips">${chips}</div>
+        <div class="kv" style="margin-top:12px">${kv}</div>
+      </div>
+    </button>`;
+  }).join('') + (role==='admin'
+    ? `<button class="card custom" onclick="alert('Admin: add a new industry pipeline — creates its catalog + Lakebase branch, reuses the shared service principal, opens the Advanced wizard for source/cluster/tiering.')"><div class="cc"><div class="plus">+</div>Add industry pipeline<br><span style="font-size:11px;color:var(--faint)">Admin only</span></div></button>`
+    : '');
+}
+
+/* ---------------- industry page (flavor picker) ---------------- */
+function renderSetup(){
+  const d=IND[cur];
+  document.getElementById('su-crumb').textContent=d.name;
+  document.getElementById('su-eyebrow').textContent=d.name+' · industry';
+  document.getElementById('su-title').textContent=d.name;
+  document.getElementById('su-lede').textContent=d.lede;
+  document.getElementById('su-topic').textContent=cur;
+  updSuStatus();
+
+  renderFlavors();
+  renderProv();
+  renderArch();
+  document.getElementById('hz').value=d.hz;
+  document.getElementById('hzVal').textContent=d.hz+' Hz';
+  document.getElementById('advBox').style.display = role==='admin' ? '' : 'none';
+}
+function renderFlavors(){
+  const f=IND[cur].flavors;
+  document.getElementById('flavorList').innerHTML = MODES.map(m=>{
+    const state=f[m.id];  // false | 'starting' | true
+    const sub = m.id==='realtime' ? '<div class="fc-sub">◷ Time-series powered by LakeTS</div>' : '';
+    let body;
+    if(state==='starting'){
+      body = progressBlock(m.id);
+    } else if(state===true){
+      body = `<div class="fc-health">${healthDots(m.id)}</div>
+        <div class="fc-foot">
+          <span class="fc-stat"><span class="dot run"></span> running</span>
+          <button class="btn sm ghost" onclick="stopPipeline('${m.id}')">Stop</button>
+          <button class="btn sm fc-open" onclick="openDash('${m.id}')">Open dashboard →</button>
+        </div>`;
+    } else {
+      body = `<div class="fc-foot">
+          <span class="fc-stat"><span class="dot stop"></span> not started</span>
+          <button class="btn sm primary fc-open" onclick="startPipeline('${m.id}')">▶ Start pipeline</button>
+        </div>`;
+    }
+    return `<div class="fcard ${state===true?'on':''}">
+      <div class="fc-head"><div><div class="fc-name">${FNAME[m.id]}</div>${sub}<div class="fc-to">${FTO[m.id]}</div></div></div>
+      <div class="fc-desc">${m.desc}</div>
+      ${body}
+    </div>`;
+  }).join('');
+}
+function progressBlock(id){
+  const stages=STAGES[id==='zerobus'?'zerobus':'stream'];
+  const done=cardStep[id]||0;
+  const pct=Math.round(done/stages.length*100);
+  const items=stages.map((s,i)=>{
+    const cls=i<done?'pg-done':(i===done?'pg-busy':'pg-wait');
+    const ic=i<done?'✓':(i===done?'<div class="spin"></div>':'•');
+    return `<li class="${cls}"><span class="pg-ic">${ic}</span>${s}</li>`;
+  }).join('');
+  return `<div class="fc-prog"><div class="pg-bar"><div class="pg-fill" style="width:${pct}%"></div></div><ul class="pg-list">${items}</ul></div>`;
+}
+function healthDots(id){
+  return HEALTH[id].map(c=>`<span class="hd"><span class="dot run" style="background:${c[1]}"></span>${c[0]}</span>`).join('<span class="hd-sep">›</span>');
+}
+function startPipeline(id){
+  const stages=STAGES[id==='zerobus'?'zerobus':'stream'];
+  IND[cur].flavors[id]='starting'; cardStep[id]=0;
+  renderFlavors(); renderProv(); renderArch(); updSuStatus();
+  const tick=()=>{
+    cardStep[id]++;
+    if(cardStep[id]>=stages.length){ IND[cur].flavors[id]=true; renderFlavors(); renderProv(); renderArch(); updSuStatus(); return; }
+    renderFlavors();
+    setTimeout(tick,750);
+  };
+  setTimeout(tick,750);
+}
+function stopPipeline(id){ IND[cur].flavors[id]=false; renderFlavors(); renderProv(); renderArch(); updSuStatus(); }
+function openDash(id){ selectedMode=id; go('dashboard'); }
+function updSuStatus(){
+  const n=Object.values(IND[cur].flavors).filter(v=>v===true).length;
+  document.getElementById('su-status').innerHTML = (n?'<span class="dot run"></span> ':'<span class="dot stop"></span> ')+n+'/3 running';
+}
+
+function renderProv(){
+  const f=IND[cur].flavors;
+  const pt=document.getElementById('provTitle');
+  if(role!=='admin'){
+    // end users never see infra internals (SP, catalog, branch) — just readiness
+    pt.innerHTML = 'Status <span class="unit">controls</span>';
+    document.getElementById('provList').innerHTML =
+      `<li><div class="ic done">✓</div><div><div class="lab">Controls in place</div><div class="det">this industry is ready to run</div></div><div class="rt">ready</div></li>
+       <li><div class="ic done">✓</div><div><div class="lab">Data source connected</div><div class="det">start a pipeline above to go live</div></div><div class="rt">ok</div></li>
+       <li style="border-bottom:0;padding-top:12px"><div class="ic wait" style="background:transparent;border:0;color:var(--faint)">ℹ</div><div class="det" style="font-size:11.5px">Something not working? <b style="color:var(--muted)">Contact your admin.</b></div></li>`;
+    return;
+  }
+  pt.innerHTML = 'Provisioning <span class="unit">automatic</span>';
+  const steps=[
+    ['Unity Catalog', 'iot_'+cur+' · schema per pipeline', true],
+    ['Service principal', 'iot-sss-industries · shared', true],
+  ];
+  if(f.realtime) steps.push(['Lakebase branch + LakeTS', 'iot-industries / '+cur+' · kept forever', true]);
+  ['realtime','microbatch','zerobus'].forEach(id=>{ if(f[id]) steps.push([FLABEL[id]+' pipeline', FTO[id], true]); });
+  if(!f.realtime && !f.microbatch && !f.zerobus) steps.push(['No pipeline running', 'start one above to provision', false]);
+  document.getElementById('provList').innerHTML = steps.map(s=>{
+    const [lab,det,done]=s;
+    const ic = done?'<div class="ic done">✓</div>':'<div class="ic wait">•</div>';
+    return `<li>${ic}<div><div class="lab">${lab}</div><div class="det">${det}</div></div><div class="rt">${done?'ready':'—'}</div></li>`;
+  }).join('');
+}
+
+function archFlow(m){
+  const N=[{t:'IoT Simulator',s:IND[cur].name+' sensors'}];
+  if(m==='zerobus'){
+    N.push({t:'Zerobus SDK',s:'direct ingest'});
+    N.push({t:'Delta table',s:'Unity Catalog',dot:'var(--dbsql)',sink:true});
+    N.push({t:'Dashboard',s:'DBSQL'});
+  }else{
+    N.push({t:'Apache Kafka',s:'iot.'+cur+'.'+m,dot:'var(--sse)'});
+    if(m==='realtime'){
+      N.push({t:'Spark SSS',s:'real-time'});
+      N.push({t:'Lakebase · LakeTS',s:'hot · time-series',dot:'var(--lakebase)',sink:true});
+      N.push({t:'CDF → Delta',s:'cold · UC',dot:'var(--dbsql)'});
+      N.push({t:'Dashboard',s:'SSE · Lakebase · DBSQL'});
+    }else{
+      N.push({t:'Spark SSS',s:'micro-batch'});
+      N.push({t:'Delta table',s:'Unity Catalog',dot:'var(--dbsql)',sink:true});
+      N.push({t:'Dashboard',s:'DBSQL'});
+    }
+  }
+  return N.map((n,i)=>`${i?'<div class="aarrow">→</div>':''}<div class="anode ${n.sink?'sink':''}"><div class="an-t">${n.dot?`<span class="tierdot" style="background:${n.dot}"></span>`:''}${n.t}</div><div class="an-s">${n.s}</div></div>`).join('');
+}
+function renderArch(){
+  const f=IND[cur].flavors;
+  const rows = MODES.filter(m=>f[m.id]).map(m=>
+    `<div class="arch-flow"><span class="arch-flabel">${m.name}</span><div class="arch">${archFlow(m.id)}</div></div>`).join('');
+  document.getElementById('archDiag').innerHTML = rows || '<div class="arch-empty">Enable a flavor above to see its data flow.</div>';
+}
+
+/* ---------------- dashboard ---------------- */
+function togglePower(){powered=!powered; renderDash();}
+function renderDash(){
+  const d=IND[cur];
+  powered = powered && true;
+  const mm=MODEMETA[selectedMode];
+  const metricsApplies = selectedMode!=='zerobus';
+  document.getElementById('db-crumb').textContent=d.name;
+  document.getElementById('db-title').innerHTML=d.name+' twin <span class="badge" style="margin-left:6px">'+FNAME[selectedMode]+'</span>';
+  const metricsOn = document.getElementById('swMetrics').classList.contains('on') && metricsApplies;
+  const ingest = selectedMode==='zerobus' ? 'Zerobus → <b style="color:var(--muted)">Delta table</b>' : `Kafka → <b style="color:var(--muted)">${FLABEL[selectedMode]}</b> → ${selectedMode==='realtime'?'Lakebase':'Delta table'}`;
+  document.getElementById('db-sub').innerHTML=`${ingest} <b style="color:var(--muted)">${cur}</b>${metricsApplies?' · metrics '+(metricsOn?'on':'off'):''}`;
+
+  document.getElementById('db-pills').innerHTML =
+    mm.pills.map(p=>`<span class="pill ${powered?'':'off'}"><span class="d" style="background:${p[1]}"></span>${p[0]}</span>`).join('')+
+    (metricsApplies?`<span class="pill ${metricsOn?'':'off'}"><span class="d" style="background:var(--cdf)"></span>Metrics</span>`:'');
+  document.getElementById('db-power').innerHTML = powered?'■ Stop pipeline':'▶ Start pipeline';
+
+  // KPIs
+  document.getElementById('kpiRow').innerHTML = d.kpis.map(k=>
+    `<div class="kpi ${k.s||''}"><div class="rail-c"></div><div class="v tnum">${powered?k.v:'—'}<small> ${k.u}</small></div><div class="k">${k.k}</div><div class="spark">${spark(k.s)}</div></div>`).join('');
+
+  // twin tag / note per mode
+  const tt=document.getElementById('twinTag'); tt.className='src-tag '+mm.twinTag[0]; tt.textContent=mm.twinTag[1];
+  document.getElementById('twinNote').textContent=mm.twinNote;
+  // twin
+  document.getElementById('twinLbl').textContent = d.name+' · live';
+  document.getElementById('twinBox').querySelector('svg')?.remove();
+  document.getElementById('twinBox').insertAdjacentHTML('beforeend', TWIN[d.twinType]());
+
+  // stream
+  document.getElementById('streamCount').textContent = d.stream.length+' sensors';
+  document.getElementById('streamList').innerHTML = d.stream.map(s=>
+    `<div class="row ${s[3]?'alert':''}"><span class="nm">${s[0]}</span><span class="vv">${powered?s[1]:'—'}</span><span class="u">${s[2]}</span></div>`).join('');
+
+  // warm/Delta section per mode
+  document.getElementById('lbTitle').textContent = mm.midTitle;
+  const lt=document.getElementById('lbTag'); lt.className='src-tag '+mm.midTag[0]; lt.textContent=mm.midTag[1];
+  document.getElementById('lbHealthTitle').textContent = mm.midHealth;
+  document.getElementById('lbBranch').textContent = selectedMode==='realtime' ? 'branch '+cur : 'iot_'+cur+'.'+selectedMode+'.sensor_readings';
+  const rng = selectedMode==='realtime' ? 'last 15 min' : (selectedMode==='microbatch'?'per 30s batch':'last 15 min');
+  document.getElementById('lbChartTitle').innerHTML = d.lbTitle+' <span class="unit">'+rng+'</span>';
+  area('lbChart', d.accent, 34);
+  // CDF only exists for the real-time (Lakebase) path
+  document.getElementById('cdfSec').classList.toggle('hidden', !mm.cdf);
+  document.getElementById('metricsSec').classList.toggle('hidden', !metricsOn);
+  if(metricsOn){ area('mChart1','#3fb950',30); area('mChart2','#f59e0b',30); area('mChart3','#3b82f6',30); }
+}
+
+/* ---------------- tiny svg chart helpers ---------------- */
+function rnd(seed){let x=Math.sin(seed*99.7)*1e4;return x-Math.floor(x)}
+function spark(sev){
+  const w=120,h=26,n=24; let p='',pts=[];
+  for(let i=0;i<n;i++){const y=h-4-(rnd(i+1)*.6+.2)*(h-8);pts.push([i/(n-1)*w,y])}
+  const col= sev==='crit'?'#f87171':sev==='warn'?'#f59e0b':'var(--ind)';
+  p=pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:100%"><path d="${p}" fill="none" stroke="${col}" stroke-width="1.6" opacity=".9"/></svg>`;
+}
+function area(id,col,n){
+  const el=document.getElementById(id); if(!el)return;
+  const w=560,h=150,pad=6; let pts=[];
+  for(let i=0;i<n;i++){const base=.35+.28*Math.sin(i/3.3)+.12*Math.sin(i/1.4);const y=h-pad-(base+rnd(i+7)*.14)*(h-pad*2);pts.push([i/(n-1)*w,Math.max(pad,y)])}
+  const line=pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
+  const fill=`M0 ${h} `+pts.map(q=>'L'+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ')+` L${w} ${h} Z`;
+  let g='';for(let i=1;i<5;i++){const y=h/5*i;g+=`<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`}
+  const last=pts[pts.length-1];
+  el.innerHTML=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:100%">
+    <defs><linearGradient id="grad${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".28"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+    ${g}<path d="${fill}" fill="url(#grad${id})"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.4" fill="${col}"/></svg>`;
+}
+
+/* ---------------- SVG twins (stylized) ---------------- */
+const node=(x,y,c,r=9)=>`<circle cx="${x}" cy="${y}" r="${r}" fill="${c}" opacity=".9"><animate attributeName="opacity" values=".5;1;.5" dur="2.2s" repeatCount="indefinite"/></circle>`;
+const TWIN={
+  line:()=>`<svg viewBox="0 0 600 360"><g stroke="var(--ind)" stroke-width="2" opacity=".5" fill="none">
+    <rect x="60" y="220" width="480" height="20" rx="4"/><path d="M90 220v-70h80v70M250 220v-90h90v90M430 220v-60h70v60"/></g>
+    <g fill="none" stroke="var(--ind-line)" stroke-width="1.5">${[110,180,300,470].map(x=>`<line x1="${x}" y1="230" x2="${x}" y2="240"/>`).join('')}</g>
+    ${node(130,150,'#f59e0b')}${node(295,130,'#22d3ee')}${node(465,160,'#3fb950')}
+    <g opacity=".8">${[90,150,210,270,330,390,450,510].map((x,i)=>`<rect x="${x}" y="222" width="26" height="16" rx="3" fill="var(--ind)" opacity="${.3+.1*(i%3)}"><animate attributeName="x" values="${x};${x+30};${x}" dur="4s" repeatCount="indefinite"/></rect>`).join('')}</g>
+    <text x="130" y="120" fill="var(--muted)" font-size="11" text-anchor="middle">Station 1</text>
+    <text x="295" y="100" fill="var(--muted)" font-size="11" text-anchor="middle">Robot cell</text>
+    <text x="465" y="132" fill="var(--muted)" font-size="11" text-anchor="middle">QA gate</text></svg>`,
+  vessel:()=>`<svg viewBox="0 0 600 360"><g fill="none" stroke="var(--ind)" stroke-width="2" opacity=".55">
+    ${[160,300,440].map(x=>`<rect x="${x-45}" y="90" width="90" height="180" rx="24"/><ellipse cx="${x}" cy="90" rx="45" ry="12"/>`).join('')}
+    <path d="M160 270 v40 h280 v-40" /></g>
+    ${[160,300,440].map((x,i)=>`<rect x="${x-45}" y="${180-i*18}" width="90" height="${90+i*18}" rx="0" fill="var(--ind)" opacity=".16"/>`).join('')}
+    ${node(160,150,'#22d3ee',7)}${node(300,150,'#22d3ee',7)}${node(440,150,'#22d3ee',7)}
+    ${[160,300,440].map((x,i)=>`<text x="${x}" y="300" fill="var(--muted)" font-size="11" text-anchor="middle">Reactor ${String.fromCharCode(65+i)}</text>`).join('')}
+    <g opacity=".6">${[0,1,2,3].map(i=>`<circle cx="300" cy="${250-i*30}" r="3" fill="#22d3ee"><animate attributeName="cy" values="250;120" dur="${2+i*.3}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;.9;0" dur="${2+i*.3}s" repeatCount="indefinite"/></circle>`).join('')}</g></svg>`,
+  grid:()=>`<svg viewBox="0 0 600 360"><g stroke="var(--ind-line)" stroke-width="1.5" fill="none">
+    <path d="M120 200 L300 120 L480 200 M300 120 V60 M120 200 V300 M480 200 V300 M300 200 V300"/></g>
+    <g><path d="M300 130 l-9 26 h7 l-11 30" stroke="var(--warn)" stroke-width="2.5" fill="none"><animate attributeName="opacity" values=".3;1;.3" dur="1.4s" repeatCount="indefinite"/></path></g>
+    ${node(300,120,'#3fb950',11)}${node(120,200,'#3fb950')}${node(480,200,'#3fb950')}${node(300,200,'#3b82f6')}
+    <g fill="none" stroke="#3fb950" stroke-width="2" opacity=".7">${[120,480].map(x=>`<circle cx="${x}" cy="300" r="14"/>`).join('')}
+      <path d="M108 300 a12 8 0 0 1 24 0M468 300 a12 8 0 0 1 24 0"/></g>
+    <text x="300" y="48" fill="var(--muted)" font-size="11" text-anchor="middle">Substation</text>
+    <text x="120" y="332" fill="var(--muted)" font-size="11" text-anchor="middle">Turbine 1</text>
+    <text x="480" y="332" fill="var(--muted)" font-size="11" text-anchor="middle">Turbine 2</text></svg>`,
+  auto:()=>`<svg viewBox="0 0 600 360"><g fill="none" stroke="var(--ind)" stroke-width="2" opacity=".55">
+    <path d="M180 210 q20 -60 80 -62 h80 q60 2 80 62"/><rect x="150" y="210" width="300" height="14" rx="4"/>
+    <circle cx="230" cy="238" r="20"/><circle cx="380" cy="238" r="20"/></g>
+    ${[150,230,300,380,450].map(x=>`<line x1="${x}" y1="230" x2="${x}" y2="250" stroke="var(--ind-line)" stroke-width="1.5"/>`).join('')}
+    ${node(220,150,'#3b82f6')}${node(300,132,'#f59e0b')}${node(390,150,'#3fb950')}
+    <g opacity=".8">${[100,250,400,550].map(x=>`<rect x="${x}" y="285" width="30" height="12" rx="2" fill="var(--ind)" opacity=".4"><animate attributeName="x" values="${x};${x+40};${x}" dur="3.5s" repeatCount="indefinite"/></rect>`).join('')}</g>
+    <text x="220" y="120" fill="var(--muted)" font-size="11" text-anchor="middle">Weld cell</text>
+    <text x="300" y="102" fill="var(--muted)" font-size="11" text-anchor="middle">Paint booth</text>
+    <text x="390" y="120" fill="var(--muted)" font-size="11" text-anchor="middle">EOL test</text></svg>`
+};
+
+updThemeIcon();
+renderGallery();
+matchMedia('(prefers-color-scheme:dark)').addEventListener('change',updThemeIcon);
+</script>
