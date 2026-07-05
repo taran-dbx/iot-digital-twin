@@ -80,7 +80,8 @@ are validated up front, and test data is purged before finishing.
   **region** (from bootstrap hostname), MSK **cluster ARN** (via
   `msk.list_clusters()` matched on cluster name), **replication factor**
   (`RF = min(3, broker_count)`), and the **UC service credential** already mapped
-  to the AWS IAM role.
+  to the AWS IAM role (concrete value: `iot-rtm-sc`, MSK cluster `iotdemo`,
+  us-east-1).
 
 ### 1.5 Pre-flight checks
 
@@ -105,7 +106,8 @@ mirrors this layout with per-step status.
 DNS resolution → TCP port reachability → SSL/TLS handshake → auth. On failure,
 **surface the cluster egress IP** (per the Boto3 MSK notebook pattern) as the
 diagnostic. Security-group / VPC provisioning is **out of scope** (assumed
-pre-configured).
+pre-configured). **Test against BOTH** the public (`:9198`) and private
+  (`:9098`, IAM) MSK bootstrap endpoints (`iotdemo` cluster).
 
 ### 1.8 Topic provisioning (Boto3 MSK API)
 
