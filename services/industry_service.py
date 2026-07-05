@@ -126,6 +126,9 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
                 "icon": template.icon,
                 "twin_type": template.twin_type,
                 "tag": template.tag,
+                "lede": template.lede,
+                "kpis": template.kpis,
+                "sensors": template.sensors,
                 "modes": modes,
                 "running_count": running_count,
             }
