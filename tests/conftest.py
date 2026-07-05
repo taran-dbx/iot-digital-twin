@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import uuid
 from pathlib import Path
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -88,3 +90,56 @@ def mock_ws_client() -> MagicMock:
         return_value=MagicMock(token="mock-token")
     )
     return ws
+
+
+# ---------------------------------------------------------------------------
+# Integration fixture — live iot-app-backend Lakebase project
+# ---------------------------------------------------------------------------
+# The app-backend data layer (models/app_schema.py + services repos) is
+# validated against the real ``iot-app-backend`` Lakebase project.  Each test
+# runs inside a throwaway schema (``test_phase1_<hex>``) that is dropped on
+# teardown, so nothing pollutes ``production``.  The fixture ``pytest.skip``s
+# when the project is unreachable (no creds / offline CI) so the mocked unit
+# tests still run everywhere.
+APP_BACKEND_ENDPOINT = (
+    "projects/iot-app-backend/branches/production/endpoints/primary"
+)
+
+
+@pytest_asyncio.fixture()
+async def app_backend_conn():
+    """Yield an asyncpg connection to iot-app-backend in a throwaway schema."""
+    try:
+        import asyncpg
+        from databricks.sdk import WorkspaceClient
+    except Exception as exc:  # pragma: no cover - deps missing
+        pytest.skip(f"integration deps unavailable: {exc}")
+
+    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
+    try:
+        w = WorkspaceClient(profile=profile)
+        endpoint = w.postgres.get_endpoint(name=APP_BACKEND_ENDPOINT)
+        host = endpoint.status.hosts.host
+        user = w.current_user.me().user_name
+        cred = w.postgres.generate_database_credential(endpoint=APP_BACKEND_ENDPOINT)
+        conn = await asyncpg.connect(
+            host=host,
+            database="databricks_postgres",
+            user=user,
+            password=cred.token,
+            port=5432,
+            ssl="require",
+        )
+    except Exception as exc:  # pragma: no cover - offline / no creds
+        pytest.skip(f"iot-app-backend not reachable: {exc}")
+
+    schema = f"test_phase1_{uuid.uuid4().hex[:8]}"
+    await conn.execute(f'CREATE SCHEMA "{schema}"')
+    await conn.execute(f'SET search_path TO "{schema}"')
+    try:
+        yield conn
+    finally:
+        try:
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        finally:
+            await conn.close()

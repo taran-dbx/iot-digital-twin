@@ -74,64 +74,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_active_source
     WHERE status = 'active';
 """
 
-SLIDING_AGGREGATES_DDL = """
-CREATE TABLE IF NOT EXISTS sliding_aggregates (
-    pipeline_id UUID NOT NULL,
-    sensor_id TEXT NOT NULL,
-    sensor_type TEXT NOT NULL,
-    window_start TIMESTAMPTZ NOT NULL,
-    window_end TIMESTAMPTZ NOT NULL,
-    slide_start TIMESTAMPTZ NOT NULL,
-    avg_value DOUBLE PRECISION,
-    min_value DOUBLE PRECISION,
-    max_value DOUBLE PRECISION,
-    count INT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_sliding_agg_pipeline_time
-    ON sliding_aggregates (pipeline_id, window_start DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_sliding_agg
-    ON sliding_aggregates (pipeline_id, sensor_id, sensor_type, window_start, window_end, slide_start);
-"""
-
-SESSION_EVENTS_DDL = """
-CREATE TABLE IF NOT EXISTS session_events (
-    pipeline_id UUID NOT NULL,
-    sensor_id TEXT NOT NULL,
-    sensor_type TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    session_start TIMESTAMPTZ NOT NULL,
-    session_end TIMESTAMPTZ NOT NULL,
-    duration_sec DOUBLE PRECISION,
-    reading_count INT,
-    avg_value DOUBLE PRECISION,
-    min_value DOUBLE PRECISION,
-    max_value DOUBLE PRECISION,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_session_events_pipeline_time
-    ON session_events (pipeline_id, session_start DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_session_event
-    ON session_events (pipeline_id, sensor_id, session_id);
-"""
-
-STATE_SNAPSHOTS_DDL = """
-CREATE TABLE IF NOT EXISTS state_snapshots (
-    pipeline_id UUID NOT NULL,
-    sensor_id TEXT NOT NULL,
-    sensor_type TEXT NOT NULL,
-    running_avg DOUBLE PRECISION,
-    running_min DOUBLE PRECISION,
-    running_max DOUBLE PRECISION,
-    readings_since_reset INT DEFAULT 0,
-    last_value DOUBLE PRECISION,
-    prev_value DOUBLE PRECISION,
-    threshold_breached BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (pipeline_id, sensor_id)
-);
-"""
-
 # Lakebase role constants
 LAKEBASE_ROLE_NAME = "iot_app_user"
 LAKEBASE_ROLE_ID = "iot-app-user"
