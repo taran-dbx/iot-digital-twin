@@ -365,6 +365,18 @@ retired: app state → `iot-app-backend`, streaming data → `iot-pipelines`.
   the `lakets` registry, and `lakets_cdf` shadow tables.
 - Micro-batch/zerobus get **no branch**.
 
+**Verified (2026-07-05 Lakebase spike — no permission errors):** creating a
+branch **auto-provisions its own `primary` READ_WRITE endpoint** — do NOT create
+it; resize via `update_endpoint` + `FieldMask(["spec.autoscaling_limit_min_cu",
+"spec.autoscaling_limit_max_cu"])`. The read replica is a separate
+`w.postgres.create_endpoint(parent="projects/{pid}/branches/{b}", endpoint=
+Endpoint(spec=EndpointSpec(endpoint_type=ENDPOINT_TYPE_READ_ONLY, ...)),
+endpoint_id="replica")` (~2s to ACTIVE, ~6s replication lag, writes correctly
+rejected). OAuth token: `w.postgres.generate_database_credential(endpoint=
+"projects/.../endpoints/primary")` — pass the **resource name, not the host**.
+Limits: 10 unarchived branches/project, 500 branches/project, 20 concurrent
+active computes/workspace (→ watch the compute cap as pipelines scale).
+
 ### 2.3 App DB data model (Option B — parent/child + normalized ledger)
 
 Tables in `iot-app-backend`:
