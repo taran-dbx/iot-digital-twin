@@ -512,6 +512,15 @@ writable), a live rollup of §2.8 — NOT the admin's full provisioning validati
   "please contact your admin."
 Present as a short live checklist (pending/running/passed/failed) while it runs.
 
+**Draft (partially-configured) pipelines.** The admin can **Save configuration**
+at any point in the setup/validation wizard even if incomplete — it persists as a
+**draft** (`pipeline_setup.status = 'draft'`, with `validation_state`) and can be
+resumed later (§1.12). A draft / not-yet-finished pipeline is **visible to end
+users on the home page but marked "Coming soon"** (same treatment as the
+Serverless flavor / Kinesis source) — visible, **not startable**. Admins still see
+it with the ⚙ Config / Status controls. It becomes startable only once fully
+validated and deployed.
+
 ## Decisions log (Section 2)
 
 | ID | Decision |
