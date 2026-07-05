@@ -36,6 +36,17 @@ logger = logging.getLogger("iot_digital_twin.services.validation_steps")
 
 _CLUSTER_WAIT_S = 600
 _CLUSTER_POLL_S = 15
+_LIB_WAIT_S = 300
+_LIB_POLL_S = 10
+
+# PyPI libraries the validation snippets need on the interactive cluster.  The
+# ``topic_create`` / producer snippets import ``kafka`` + the MSK-IAM signer; the
+# Spark Kafka read is built into DBR so needs no pip package.  (Mirrors the
+# producer libraries the deploy job clusters install.)
+VALIDATION_CLUSTER_LIBRARIES: tuple[str, ...] = (
+    "kafka-python>=3",
+    "aws-msk-iam-sasl-signer-python",
+)
 
 
 def _new_ws() -> Any:
@@ -206,8 +217,50 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
     )
     cluster_id = await asyncio.to_thread(_create_validation_cluster, ws, spec)
     await _wait_cluster_running(ws, cluster_id)
+    # The validation snippets (topic create / producer) import kafka-python +
+    # the MSK-IAM signer, which are not on the base DBR image — install them and
+    # wait until they are ready before any snippet runs.
+    await _install_cluster_libraries(ws, cluster_id, VALIDATION_CLUSTER_LIBRARIES)
     return StepResult(sm.PASSED, data={"cluster_id": cluster_id,
                                        "worker_sizing": sizing})
+
+
+def _pip_install_code(packages: tuple[str, ...]) -> str:
+    """Return driver Python that pip-installs ``packages`` and verifies imports."""
+    pkgs = list(packages)
+    return f'''
+import subprocess, sys
+r = subprocess.run(
+    [sys.executable, "-m", "pip", "install", "-q", *{pkgs!r}],
+    capture_output=True, text=True,
+)
+if r.returncode != 0:
+    print("{snip.FAIL_SENTINEL} " + "pip install failed: " + r.stderr[-400:])
+else:
+    import kafka  # noqa: F401
+    from aws_msk_iam_sasl_signer import MSKAuthTokenProvider  # noqa: F401
+    print("{snip.OK_SENTINEL} " + "libraries installed")
+'''
+
+
+async def _install_cluster_libraries(
+    ws: Any, cluster_id: str, packages: tuple[str, ...]
+) -> None:
+    """Ensure PyPI ``packages`` are importable on ``cluster_id``.
+
+    The cluster-scoped ``libraries.install`` API is a no-op on some
+    ``fe-vm-shared-interop`` clusters (verified 2026-07-06 — install returns
+    with no registered library), so we pip-install into the running driver via
+    command execution and verify the imports the validation snippets need.
+    """
+    if not packages:
+        return
+    res = await asyncio.to_thread(
+        _run_python_sync, ws, cluster_id, _pip_install_code(packages), _LIB_WAIT_S
+    )
+    if res["status"] != "Finished" or snip.OK_SENTINEL not in res["output"]:
+        err = _extract_fail(res["output"]) or f"pip install {res['status']}"
+        raise RuntimeError(f"validation cluster library install: {err}")
 
 
 # ---------------------------------------------------------------------------

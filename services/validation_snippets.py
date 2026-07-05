@@ -82,19 +82,37 @@ def topic_create(
     """
     return _PREAMBLE + f'''
 try:
+    import os
     from kafka.admin import KafkaAdminClient, NewTopic
     from kafka.errors import TopicAlreadyExistsError
     from kafka.net.sasl.oauth import AbstractTokenProvider
     from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
+    # MSK-IAM via the UC service credential (dbutils session), matching the
+    # verified spike: try the credentials-provider path, else inject the frozen
+    # creds and use the default chain.
+    _sess = dbutils.credentials.getServiceCredentialsProvider({service_credential!r})
     class _TP(AbstractTokenProvider):
         def token(self):
-            t, _ = MSKAuthTokenProvider.generate_auth_token({region!r})
-            return t
+            try:
+                t, _ = MSKAuthTokenProvider.generate_auth_token_from_credentials_provider({region!r}, _sess)
+                return t
+            except Exception:
+                fz = _sess.get_credentials().get_frozen_credentials()
+                os.environ["AWS_ACCESS_KEY_ID"] = fz.access_key
+                os.environ["AWS_SECRET_ACCESS_KEY"] = fz.secret_key
+                if fz.token:
+                    os.environ["AWS_SESSION_TOKEN"] = fz.token
+                t, _ = MSKAuthTokenProvider.generate_auth_token({region!r})
+                return t
     admin = KafkaAdminClient(
         bootstrap_servers={bootstrap_public!r},
         security_protocol="SASL_SSL",
         sasl_mechanism="OAUTHBEARER",
         sasl_oauth_token_provider=_TP(),
+        # Pin the API version — without it kafka-python's auto-detection hangs on
+        # MSK before the SASL handshake completes (bootstrap timeout).
+        api_version=(2, 8, 1),
+        request_timeout_ms=30000,
     )
     created, existed = [], []
     for name, parts, rf in {topics!r}:
