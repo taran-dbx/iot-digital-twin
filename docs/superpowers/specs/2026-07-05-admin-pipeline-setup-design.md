@@ -158,9 +158,15 @@ Write identity = **streaming SP** (via OAuth).
    *(Optional defensive net C — writer catches "no partition" → ensure → retry —
    deferred/optional.)*
 2. Simulator produces to `.realtime`; Spark real-time SS writes to Lakebase + LakeTS.
-3. **CDF admin option shown before running:** the app preps the shadow table +
-   trigger in the `lakets_cdf` schema; the admin **manually enables** the managed
-   Lakebase→Delta sync in the Databricks UI; we then verify `STREAMING` status.
+3. **CDF admin option, then active verification (`cdf_verify`):** the app preps
+   the shadow table + trigger in the `lakets_cdf` schema; the admin **manually
+   enables** the managed Lakebase→Delta sync in the Databricks UI and clicks
+   "I've enabled it". We do **not** trust the click — a `cdf_verify` step
+   **actively tests** CDF is live: poll `wal2delta.tables` for `STREAMING` **and**
+   confirm `committed_lsn` advances (data actually flowing shadow → Delta), with a
+   timeout. If not live, `cdf_verify` **fails** with a clear message ("CDF not
+   detected on `lakets_cdf` — enable managed sync and retry") and is **retryable**
+   (§1.12).
 4. **Read-back validation:** read from **Lakebase directly** for the immediate
    round-trip (CDF sync is async); validate the Delta path by **polling
    `committed_lsn` / `STREAMING`** with a timeout, then **DBSQL-read** the synced
@@ -230,20 +236,32 @@ producer-only; **no cluster to proxy**. Write identity = **zerobus SP**.
 
 - **Show the final consumer notebook** — exactly what the job cluster will run
   (the same generated artifact deploy uses, not a separate preview).
-- **Gate:** proceed to the next step only when all enabled modes pass and test
-  data is purged.
-- **Resumable validation state (M3):** a per-pipeline state machine (survives
-  browser reload) with per-step status (`pending | running | passed | failed |
+- **Hard deployment gate:** the admin **cannot proceed to deploy** until **every**
+  step for **every enabled mode** is `passed` **and** test data is purged. The
+  Deploy action stays disabled with a summary of what's still outstanding.
+- **Resumable, retryable state machine (M3):** a per-pipeline state machine
+  **persisted in `pipeline_setup.validation_state`** (Section 2), so it survives
+  browser/tab close. Per-step status (`pending | running | passed | failed |
   waiting_admin`) + last error + `cluster_id` + `run_ids`:
   ```
   provision_cluster → source_connectivity → topics_created → schema_conformance
     ├─ realtime:  partitions_precreate → write_test → cdf_manual(waiting_admin)
-    │             → read_back → dbsql_read → metrics_check → cleanup
+    │             → cdf_verify → read_back → dbsql_read → metrics_check → cleanup
     ├─ microbatch: write_test → dbsql_read → metrics_check → cleanup
     └─ zerobus:   create_table → auth_probe → produce_test → dbsql_read → cleanup
   → show_final_notebook → done
   ```
-  The `cdf_manual` step parks in `waiting_admin` and survives reload.
+- **Per-step retry from the failure point:** any `failed` step exposes a **Retry**
+  action that re-runs **only that step and its downstream** (upstream `passed`
+  steps are not re-run). The admin fixes the backend cause first (missing grant,
+  MSK SG rule, CDF not enabled, IAM) and retries — no full restart. `cdf_manual`
+  parks in `waiting_admin`; `cdf_verify` is the common failure→fix→retry point.
+- **Config edits mid-flow:** the admin can return to earlier steps (flavor /
+  source / preview) and **edit config at any time**; saving persists to
+  `pipeline_setup` and **invalidates** (resets to `pending`) any validation steps
+  whose inputs changed, so they re-run before the gate can clear.
+- **Resume on reopen:** reopening the pipeline rehydrates `validation_state` and
+  resumes exactly where it left off (including a parked `waiting_admin`).
 
 ### 1.13 Cleanup rule (all modes)
 
@@ -268,6 +286,7 @@ only dotted variants are ever created.
 | M1 | Worker sizing `clamp(ceil(partitions/cores_per_worker),1,8)`; warn if over cap. |
 | M2 | Keep dot topic naming. |
 | M3 | Resumable per-pipeline validation state machine. |
+| M3+ | Active `cdf_verify` (test STREAMING + LSN advance, not just the click); per-step **Retry** from failure point (fix backend → retry that step + downstream); state persisted in `pipeline_setup.validation_state` (survives tab close); config editable mid-flow (invalidates affected steps); **hard gate** — no deploy until all enabled-mode steps pass + data purged. |
 | A  | Partition guarantee: proactive pre-create + guaranteed manager run + pre-flight gate; 24h/96-chunk horizon (configurable); optional writer-side retry (C). |
 | G1 | Per-pipeline objects in `databricks_postgres` (Lakehouse Sync constraint). |
 | G2 | Validation uses the same IAM/subnet/SG and **per-mode write identity** as deploy. |
