@@ -294,6 +294,141 @@ only dotted variants are ever created.
 
 ---
 
-## Section 2 — Pipeline Catalog Structure & Application Database (IN PROGRESS)
+## Section 2 — Pipeline Catalog Structure & Application Database (PARKED — locked)
 
-_To be written._
+### 2.1 Two separate Lakebase projects
+
+The application database and the pipeline streaming data live in **two distinct
+Lakebase projects** — never the same project.
+
+| Project | Purpose | Endpoints |
+|---|---|---|
+| **`iot-app-backend`** (brand new, dedicated) | Application metadata store only | Single endpoint; **no read replicas** (low-volume CRUD) |
+| **`iot-pipelines`** (shared) | Real-time streaming data for all real-time industry pipelines | Per-branch: **primary `READ_WRITE`** + **1 read replica** |
+
+Micro-batch and zerobus use **neither** — they write to UC Delta. Today's
+`iot-lakets-demo` double-duty (app state + demo sink in one instance) is
+retired: app state → `iot-app-backend`, streaming data → `iot-pipelines`.
+
+### 2.2 Branch & endpoint model (real-time only)
+
+- **One never-expiring branch per real-time industry pipeline** in
+  `iot-pipelines` (branch name = full industry name, e.g. `pharmaceutical`).
+- Endpoints per branch: **primary `READ_WRITE`** (the streaming job writes) +
+  **1 read replica** (default; the app/dashboard reads route here, never the
+  write path).
+- The branch's `databricks_postgres` DB holds the LakeTS ChronoTable, rollups,
+  the `lakets` registry, and `lakets_cdf` shadow tables.
+- Micro-batch/zerobus get **no branch**.
+
+### 2.3 App DB data model (Option B — parent/child + normalized ledger)
+
+Tables in `iot-app-backend`:
+
+```
+pipeline_setup            -- one row per industry (UNIQUE industry)
+  id, industry, flavor, source_type, bootstrap_servers,
+  derived{region, cluster_arn, replication_factor}, service_credential,
+  enabled_modes[], cluster_spec{}, warehouse_id,
+  validation_state{}   (M3 state machine), status, user_email,
+  created_at, updated_at
+
+pipeline_deployment       -- one row per (setup, mode); UNIQUE(setup_id, mode)
+  id, setup_id → pipeline_setup (FK, ON DELETE CASCADE),
+  mode (realtime | microbatch | zerobus), status,
+  partition_count, cdf_enabled, metrics_config{},
+  lakebase_branch, lakebase_endpoints{primary, replica}   (realtime only),
+  delta_table, checkpoint_path                            (microbatch/zerobus),
+  job_id, notebook_path, created_at, updated_at
+
+provisioned_resource      -- normalized teardown ledger
+  id, setup_id → pipeline_setup (FK, ON DELETE CASCADE),
+  deployment_id → pipeline_deployment (FK, nullable),
+  resource_type (uc_catalog | uc_schema | uc_table | uc_volume | kafka_topic |
+    lakebase_branch | lakebase_endpoint | lakebase_read_replica | job |
+    secret_scope | secret | service_principal | grant | cdf_sync |
+    metrics_table),
+  identifier, parent_ref, teardown_order, status, metadata{}, created_at
+```
+
+Retained: `user_settings` (per-user + app-global `__app__` config) and
+`source_bindings` (source-claim uniqueness). **Removed** (dead/unused):
+`sliding_aggregates`, `session_events`, `state_snapshots`.
+
+### 2.4 CRUD lifecycle
+
+- **Create** → insert `pipeline_setup` → insert a `pipeline_deployment` per
+  enabled mode → record each provisioned resource as a `provisioned_resource`
+  row (with `teardown_order` + `parent_ref`) as it is created.
+- **Edit** → update rows; append new resources, mark obsolete ones.
+- **Delete** → read the ledger → tear down resources in **descending
+  `teardown_order`** (reverse dependency) → FK `ON DELETE CASCADE`
+  (setup → deployment → resource) removes the metadata. Nothing orphaned.
+- The ledger is the SSOT used **both** to delete and to (re)create resources.
+
+### 2.5 Canonical UC catalog structure
+
+One catalog per industry — `iot_<industry>` — with a fixed schema set (drops the
+competing `iot_<safe_name>_<short_id>` / `iot_shared` / `iot_{name}` variants):
+
+```
+iot_<industry>/
+├── realtime/     sensor_readings   Delta   ← CDF-synced mirror of the Lakebase ChronoTable (historical)
+├── microbatch/   sensor_data       Delta   ← micro-batch bronze output
+├── zerobus/      iot_sensor_data   Delta   ← zerobus SDK ingest target (pre-created from SSOT)
+├── metrics/      streaming_metrics Delta   ← EXTERNAL, delta-rs writes (realtime + microbatch, mode-tagged)
+└── checkpoints/  stream_checkpoints Volume ← SS checkpoints; sub-paths /realtime, /microbatch
+```
+
+Real-time **live** data is in the Lakebase branch; `realtime.sensor_readings` is
+the CDF-synced **historical** copy for DBSQL.
+
+### 2.6 Job inventory (per fully-enabled industry = 7 jobs)
+
+| Mode | Job | Type | Tasks | Schedule |
+|---|---|---|---|---|
+| Real-time | `iot-<industry>-realtime` | Continuous, job cluster | producer + consumer (→ Lakebase/LakeTS + delta-rs metrics) | unpaused |
+| Real-time | `LakeTS Partition Manager — …` | Serverless | ensure partitions | every 10 min |
+| Real-time | `LakeTS Rollup Refresh — …` | Serverless | refresh rollups | every 15 min |
+| Real-time | `LakeTS Tiering — …` | Serverless | evict cold chunks → Delta | every 30 min |
+| Real-time | `LakeTS Retention — …` | Serverless | retention | daily 03:00 |
+| Micro-batch | `iot-<industry>-microbatch` | Continuous, job cluster | producer + consumer (→ Delta + delta-rs metrics) | unpaused |
+| Zerobus | `iot-<industry>-zerobus` | Serverless (producer-only) | simulator → Zerobus → Delta | run |
+
+**Producer + consumer are two tasks in one job** per Spark mode (7 jobs,
+2 job clusters). Counts per industry: **1** catalog · **5** schemas · **3** Delta
+tables + **1** volume · **1** Lakebase branch + **2** endpoints · **2** Kafka
+topics · **7** jobs · **1** shared SP.
+
+### 2.7 Shared identity & secrets
+
+```
+secret scope: iot-secrets
+  ├── sss-industries-client-id / -secret   (shared streaming SP)
+  └── zerobus-client-id / -secret
+service principal: iot-sss-industries      → Lakebase role, metrics writer, zerobus ingest
+```
+
+## Decisions log (Section 2)
+
+| ID | Decision |
+|----|----------|
+| S2-projects | Two Lakebase projects: new `iot-app-backend` (metadata) + shared `iot-pipelines` (streaming). |
+| S2-branch | One never-expiring branch per real-time pipeline; branch name = industry. |
+| S2-endpoints | Per branch: primary RW + 1 read replica (reads only from replica). Replicas only on `iot-pipelines`. |
+| G11 | Data model = Option B (parent `pipeline_setup` → per-mode `pipeline_deployment`). |
+| S2-ledger | Resources tracked in a normalized `provisioned_resource` table (ordered teardown). |
+| S2-catalog | Canonical `iot_<industry>` + schemas `realtime/microbatch/zerobus/metrics/checkpoints`. |
+| S2-jobs | 7 jobs per fully-enabled industry; producer+consumer bundled as tasks in one job per Spark mode. |
+| S2-cleanup | Remove dead tables `sliding_aggregates`, `session_events`, `state_snapshots`. |
+
+**Parked:** G12 (serverless code coexistence — hide the serverless option in the
+UI and leave the code dormant) — revisit during integration.
+
+---
+
+## Next phase (after prototype review)
+
+Per the agreed sequence: **prototype done & reviewed → stitch Sections 1 + 2 +
+prototype into the full app → deploy → validate all test cases end-to-end →
+only then move forward.** Not started until the prototype is signed off.
