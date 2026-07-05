@@ -22,6 +22,7 @@ from core.shutdown import install_sigterm_handler, shutdown
 from routes import create_api_router
 from routes.setup import router as setup_router
 from routes.industries_admin import router as industries_admin_router
+from routes.validation_admin import router as validation_admin_router
 from routes.static_files import router as static_files_router
 from services.simulator_service import run_simulator
 from services.retention_service import run_retention_loop
@@ -163,6 +164,7 @@ app.include_router(setup_router)
 # Admin pipeline management router (POST /api/admin/industries/...,
 # GET/DELETE /api/admin/pipelines/...) — app-backend data model + provisioning.
 app.include_router(industries_admin_router)
+app.include_router(validation_admin_router)
 
 # Static file routes (/, /legacy, /legacy-settings)
 app.include_router(static_files_router)
