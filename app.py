@@ -21,6 +21,7 @@ from core.state import AppState
 from core.shutdown import install_sigterm_handler, shutdown
 from routes import create_api_router
 from routes.setup import router as setup_router
+from routes.industries_admin import router as industries_admin_router
 from routes.static_files import router as static_files_router
 from services.simulator_service import run_simulator
 from services.retention_service import run_retention_loop
@@ -78,6 +79,32 @@ async def lifespan(application: FastAPI):
         state.db_available = False
         state.db_error = "PGHOST not set"
 
+    # --- App-backend metadata DB (additive; separate iot-app-backend project) ---
+    # Guarded like the DB block above: any failure is swallowed/logged so it can
+    # never break boot. Does NOT touch PGHOST / LAKEBASE_ENDPOINT / the existing
+    # iot-lakets-demo connection above.
+    try:
+        from services.app_backend_db import build_app_backend_manager
+        from models import app_schema
+
+        app_db = build_app_backend_manager()
+        await app_db.initialize()
+        state.app_backend_db = app_db
+        state.app_backend_available = True
+        state.app_backend_error = None
+        await app_schema.ensure_app_schema(app_db)
+        logger.info("app-backend metadata DB ready — schema ensured")
+    except Exception as exc:
+        err_msg = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "app-backend DB init failed (additive; app continues): %s\n%s",
+            exc,
+            traceback.format_exc(),
+        )
+        state.app_backend_db = None
+        state.app_backend_available = False
+        state.app_backend_error = err_msg
+
     # --- Simulator background task ---
     state.simulator_task = asyncio.create_task(run_simulator(state))
 
@@ -132,6 +159,10 @@ app.include_router(create_api_router())
 
 # One-click Lakebase + LakeTS pipeline-setup router (POST /api/setup/...)
 app.include_router(setup_router)
+
+# Admin pipeline management router (POST /api/admin/industries/...,
+# GET/DELETE /api/admin/pipelines/...) — app-backend data model + provisioning.
+app.include_router(industries_admin_router)
 
 # Static file routes (/, /legacy, /legacy-settings)
 app.include_router(static_files_router)

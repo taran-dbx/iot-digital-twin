@@ -44,6 +44,16 @@ async def shutdown(state: AppState) -> None:
         except asyncio.TimeoutError:
             logger.warning("Lakebase pool close timed out")
 
+    # Close the additive app-backend metadata pool (iot-app-backend project).
+    app_backend_db = getattr(state, "app_backend_db", None)
+    if app_backend_db:
+        try:
+            await asyncio.wait_for(app_backend_db.close(), timeout=2)
+        except asyncio.TimeoutError:
+            logger.warning("app-backend Lakebase pool close timed out")
+        except Exception as exc:
+            logger.warning("app-backend Lakebase close error: %s", exc)
+
     # Close per-pipeline Lakebase pools
     pipeline_dbs = getattr(state, "pipeline_dbs", {}) or {}
     for pid, handle in list(pipeline_dbs.items()):

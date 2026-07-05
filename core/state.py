@@ -33,6 +33,12 @@ class AppState:
     db_available: bool = False
     db_error: str | None = None
 
+    # App-backend metadata DB (additive; separate iot-app-backend project).
+    # Backs pipeline_setup / pipeline_deployment / provisioned_resource.
+    app_backend_db: LakebaseConnectionManager | None = None
+    app_backend_available: bool = False
+    app_backend_error: str | None = None
+
     # WebSocket clients
     connected_clients: list[WebSocket] = field(default_factory=list)
 
