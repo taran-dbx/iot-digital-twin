@@ -63,3 +63,19 @@ class TestGrantAppCanUse:
         w = MagicMock()
         type(w).apps = property(lambda self: (_ for _ in ()).throw(AttributeError("no apps")))
         grant_app_can_use(w, "iot-digital-twin", "sp-app-id-123")
+
+
+class TestIsAdmin:
+    def test_is_admin_true_for_group_member(self, monkeypatch) -> None:
+        from services import app_permissions as ap
+
+        monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
+        monkeypatch.setattr(ap, "_user_groups", lambda req: {"iot-admins", "users"})
+        assert ap.is_admin(object()) is True
+
+    def test_is_admin_false_for_non_member(self, monkeypatch) -> None:
+        from services import app_permissions as ap
+
+        monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
+        monkeypatch.setattr(ap, "_user_groups", lambda req: {"users"})
+        assert ap.is_admin(object()) is False

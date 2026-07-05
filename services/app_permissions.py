@@ -11,10 +11,21 @@ permissions API.
 ``set_permissions``) so existing grants — including the app owner — are left
 untouched. The call is best-effort: a failure here must never break the
 provisioning / heal flow, so we log and swallow.
+
+This module also gates admin-only actions (add industry, provisioning
+internals) via ``is_admin``. Identity is resolved the same way
+``core.auth.get_current_user`` does: Databricks Apps injects the caller's
+OAuth token in the ``x-forwarded-access-token`` header, and its ``sub`` claim
+is the user's email — decoded locally, no network call needed since the
+platform proxy already validated the token. Group membership is a network
+call (SDK, scoped to the caller's own forwarded token) and is therefore kept
+in a separate, patchable ``_user_groups`` function.
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 from typing import Any
@@ -22,12 +33,119 @@ from typing import Any
 logger = logging.getLogger("iot_digital_twin.services.app_permissions")
 
 DEFAULT_APP_NAME = "iot-digital-twin"
+DEFAULT_ADMIN_GROUP = "iot-admins"
 
 
 def _app_name() -> str:
     """Return the Databricks App name from env, falling back to the constant."""
     name = (os.getenv("DATABRICKS_APP_NAME") or "").strip()
     return name or DEFAULT_APP_NAME
+
+
+def _admin_group() -> str:
+    """Return the admin group display name from env, falling back to the default."""
+    name = (os.getenv("ADMIN_GROUP") or "").strip()
+    return name or DEFAULT_ADMIN_GROUP
+
+
+def _forwarded_token(request: Any) -> str | None:
+    """Read the Databricks Apps forwarded OAuth token off the request, if any."""
+    try:
+        return request.headers.get("x-forwarded-access-token")
+    except Exception:
+        return None
+
+
+def _caller_email(request: Any) -> str | None:
+    """Decode the caller's email from the forwarded token's ``sub`` claim.
+
+    Same decode as ``core.auth.get_current_user`` — the proxy already
+    validated the token, so no network call is needed. Returns ``None`` on
+    any failure (missing/malformed token) rather than raising.
+    """
+    token = _forwarded_token(request)
+    if not token:
+        return None
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return payload.get("sub") or None
+    except Exception as exc:
+        logger.warning("Failed to decode caller email from forwarded token: %s", exc)
+        return None
+
+
+def _user_groups(request: Any) -> set[str]:
+    """Resolve the caller's Databricks group display names via the SDK.
+
+    Builds a ``WorkspaceClient`` scoped to the caller's own forwarded OAuth
+    token (the same header ``core.auth.get_current_user`` reads) and asks
+    for ``current_user.me()``, whose ``groups`` field lists the identities
+    the caller belongs to.
+
+    Defensive: any failure (missing token, SDK error, network issue) returns
+    an empty set rather than raising, so callers default to "no groups"
+    instead of blowing up.
+    """
+    token = _forwarded_token(request)
+    if not token:
+        return set()
+    try:
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.config import Config
+
+        host = (os.getenv("DATABRICKS_HOST") or "").strip() or None
+        w = WorkspaceClient(config=Config(host=host, token=token))
+        me = w.current_user.me()
+        groups = getattr(me, "groups", None) or []
+        return {g.display for g in groups if getattr(g, "display", None)}
+    except Exception as exc:
+        logger.warning("Failed to resolve user groups (defaulting to none): %s", exc)
+        return set()
+
+
+def _is_app_owner(request: Any) -> bool:
+    """Best-effort check: is the caller the Databricks App's creator/owner?
+
+    Defensive: returns False on any error (missing token, no SDK access,
+    app lookup failure) so a failed owner lookup never grants admin by
+    accident.
+    """
+    caller_email = _caller_email(request)
+    if not caller_email:
+        return False
+    try:
+        from databricks.sdk import WorkspaceClient
+
+        w = WorkspaceClient()
+        app = w.apps.get(_app_name())
+        owner_email = getattr(app, "creator", None)
+        return bool(owner_email) and owner_email == caller_email
+    except Exception as exc:
+        logger.warning("Failed to resolve app-owner fallback (defaulting to non-owner): %s", exc)
+        return False
+
+
+def is_admin(request: Any) -> bool:
+    """True if the caller is in the admin group or is the app owner.
+
+    Admin group membership is resolved via ``_user_groups`` against
+    ``ADMIN_GROUP`` (default ``"iot-admins"`` when unset). Falls back to an
+    app-owner check. Defensive throughout: any failure denies rather than
+    raises.
+    """
+    try:
+        if _admin_group() in _user_groups(request):
+            return True
+    except Exception as exc:
+        logger.warning("is_admin: group check failed (denying): %s", exc)
+
+    try:
+        return _is_app_owner(request)
+    except Exception as exc:
+        logger.warning("is_admin: app-owner check failed (denying): %s", exc)
+        return False
 
 
 def grant_app_can_use(w: Any, app_name: str, sp_application_id: str) -> None:
