@@ -36,6 +36,7 @@ __all__ = [
     "ID_COLUMN",
     "field_by_record",
     "field_by_column",
+    "pg_id_sequence_name",
     "pg_chronotable_ddl",
     "delta_table_ddl",
     "kafka_parse_schema",
@@ -105,9 +106,21 @@ SENSOR_FIELD_MAP: tuple[FieldSpec, ...] = (
 )
 
 # App-added Postgres columns (not part of the canonical SensorRecord).
-ID_COLUMN = "id BIGSERIAL PRIMARY KEY"
+#
+# The primary key uses an *independently-created* sequence (via nextval) rather
+# than BIGSERIAL.  BIGSERIAL implicitly OWNs its sequence, and that ownership
+# dependency blocks ``lakets.create_chronotable``'s internal DROP of the
+# renamed original table ("cannot drop table ... other objects depend on it").
+# A standalone sequence has no such dependency, so LakeTS can rename/drop the
+# original cleanly.
+ID_COLUMN_NAME = "id"
 SOURCE_COLUMN_NAME = "source"
 SOURCE_COLUMN = f"{SOURCE_COLUMN_NAME} TEXT DEFAULT 'sss'"
+
+
+def pg_id_sequence_name(table: str) -> str:
+    """Return the standalone id-sequence name for a ChronoTable ``table``."""
+    return f"{table}_id_seq"
 
 
 # ---------------------------------------------------------------------------
@@ -144,15 +157,25 @@ def _pg_column_clause(spec: FieldSpec) -> str:
 def pg_chronotable_ddl(table: str) -> str:
     """Return the Postgres ChronoTable DDL for ``table``.
 
+    Emits a standalone ``CREATE SEQUENCE`` followed by the ``CREATE TABLE``
+    whose ``id`` PK defaults to ``nextval('<table>_id_seq')`` — deliberately
+    *not* ``BIGSERIAL``, so the sequence is not owned by the column and
+    ``lakets.create_chronotable`` can drop the renamed original cleanly.
+
     ``table`` may be a literal name (``"sensor_readings"``) or a ``str.format``
     placeholder (``"{table_name}"``); the generated DDL contains no other
     braces, so it round-trips through ``str.format`` safely.
     """
-    columns = [f"    {ID_COLUMN}"]
+    seq = pg_id_sequence_name(table)
+    id_column = f"{ID_COLUMN_NAME} BIGINT PRIMARY KEY DEFAULT nextval('{seq}')"
+    columns = [f"    {id_column}"]
     columns += [f"    {_pg_column_clause(spec)}" for spec in SENSOR_FIELD_MAP]
     columns.append(f"    {SOURCE_COLUMN}")
     body = ",\n".join(columns)
-    return f"CREATE TABLE IF NOT EXISTS {table} (\n{body}\n)"
+    return (
+        f"CREATE SEQUENCE IF NOT EXISTS {seq};\n"
+        f"CREATE TABLE IF NOT EXISTS {table} (\n{body}\n)"
+    )
 
 
 def delta_table_ddl(fqn: str) -> str:

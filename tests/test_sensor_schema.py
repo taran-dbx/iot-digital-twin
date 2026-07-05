@@ -83,8 +83,17 @@ class TestPgChronotableDdl:
 
     def test_ddl_has_app_added_columns(self) -> None:
         ddl = ss.pg_chronotable_ddl("t")
-        assert "id BIGSERIAL PRIMARY KEY" in ddl
+        # PK uses a standalone sequence, NOT BIGSERIAL, so LakeTS's
+        # create_chronotable can drop the renamed original cleanly.
+        assert "BIGSERIAL" not in ddl
+        assert "id BIGINT PRIMARY KEY DEFAULT nextval('t_id_seq')" in ddl
         assert "source TEXT DEFAULT 'sss'" in ddl
+
+    def test_ddl_creates_standalone_sequence(self) -> None:
+        ddl = ss.pg_chronotable_ddl("sensor_readings")
+        assert "CREATE SEQUENCE IF NOT EXISTS sensor_readings_id_seq;" in ddl
+        # Sequence is created before the table that references it.
+        assert ddl.index("CREATE SEQUENCE") < ddl.index("CREATE TABLE")
 
     def test_ddl_contains_all_eleven_fields(self) -> None:
         ddl = ss.pg_chronotable_ddl("t")
