@@ -112,22 +112,40 @@ mirrors this layout with per-step status.
 DNS resolution → TCP port reachability → SSL/TLS handshake → auth. On failure,
 **surface the cluster egress IP** (per the Boto3 MSK notebook pattern) as the
 diagnostic. Security-group / VPC provisioning is **out of scope** (assumed
-pre-configured). **Test against BOTH** the public (`:9198`) and private
-  (`:9098`, IAM) MSK bootstrap endpoints (`iotdemo` cluster).
+pre-configured). **Verified 2026-07-05:** on `iotdemo`, only the **public
+`:9198`** endpoint is reachable (DNS/TCP/TLS OK, egress IP already allowed on the
+MSK SG); the **private `:9098`** brokers **time out** (no VPC peering). So the
+pipeline uses the **public `:9198`** bootstrap. The connectivity test still probes
+both and reports which is reachable.
 
-### 1.8 Topic provisioning (Boto3 MSK API)
+### 1.8 Topic provisioning (Kafka AdminClient via MSK-IAM)
+
+> **Revised 2026-07-05 (spike-confirmed): use the Kafka `KafkaAdminClient`, NOT
+> the boto3 MSK `create_topic` API.** The boto3 MSK API needs the cluster ARN, and
+> `kafka:ListClusters`/`DescribeCluster` are **denied** on the `taran-msk` role, so
+> the ARN can't be auto-resolved. The AdminClient path needs only bootstrap +
+> OAUTHBEARER and was proven end-to-end (create + produce + consume). *(Alt: add
+> `kafka:ListClusters`+`DescribeCluster` to the role to keep the boto3 API.)*
 
 - Create **two Kafka topics** — `iot.<industry>.realtime` and
-  `iot.<industry>.microbatch` — via `boto3` MSK `kafka.create_topic(ClusterArn,
-  TopicName, PartitionCount, ReplicationFactor)`, authenticated from the UC
-  service credential (`boto3.Session(botocore_session=dbutils.credentials
-  .getServiceCredentialsProvider(<cred>), region_name=<region>).client("kafka")`).
-  Requires `%pip install --upgrade boto3 botocore` (MSK `create_topic` is newer
-  than DBR-bundled boto3).
+  `iot.<industry>.microbatch` — via **`kafka.admin.KafkaAdminClient`** (kafka-python)
+  with `security_protocol=SASL_SSL`, `sasl_mechanism=OAUTHBEARER`, and an
+  **MSK-IAM token provider** built from the UC service credential `iot-rtm-sc`.
+  kafka-python 3.0.7: the token provider **must subclass
+  `kafka.net.sasl.oauth.AbstractTokenProvider`**.
+- **Bootstrap = public `:9198`** (the private `:9098` brokers are unreachable from
+  this workspace — no VPC peering; see §1.7).
+- **boto3:** use the **stock runtime boto3** — do **NOT** `pip install --upgrade
+  boto3 botocore` on DBR 16.4 LTS (it breaks the kernel with a `botocore.httpchecksum`
+  import error). Install only `kafka-python` + `aws-msk-iam-sasl-signer-python`
+  with `--no-deps`.
 - Zerobus is non-Kafka → **no topic**.
-- **Partition count is an admin input** and drives worker sizing (M1).
-- On edit, allow partition **increase only** (Kafka cannot decrease); `RF =
-  min(3, broker_count)`.
+- **Partition count is an admin input** and drives worker sizing (M1). `RF =
+  min(3, broker_count)`. On edit, allow partition **increase only**.
+- **Teardown caveat:** deleting a topic needs `kafka-cluster:DeleteTopic` on the
+  `taran-msk` role — **currently denied**. Until it's added, the ledger records
+  the topic but topic-delete on teardown is **skipped/flagged** (manual cleanup)
+  rather than failing the teardown.
 - Validate both topics exist before proceeding.
 
 ### 1.9 Schema contract (SSOT field-map)
