@@ -72,8 +72,10 @@ are validated up front, and test data is purged before finishing.
 
 ### 1.4 Source config (minimal input)
 
-- Admin selects **Kafka or Kinesis** and provides **only `bootstrap_servers`**
-  (Kafka).
+- Source type: **Kafka only** is built now. **Kinesis is deferred — shown as
+  "coming soon"** (disabled), same as the Serverless flavor. Kinesis has a
+  different config field set; it will be designed when we build it.
+- For Kafka, the admin provides **only `bootstrap_servers`**.
 - Derived/pulled in code (previously hard-coded in the reference notebook):
   **region** (from bootstrap hostname), MSK **cluster ARN** (via
   `msk.list_clusters()` matched on cluster name), **replication factor**
