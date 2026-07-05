@@ -213,41 +213,46 @@ producer-only; **no cluster to proxy**. Write identity = **zerobus SP**.
 
 ### 1.11 Streaming metrics (real-time + micro-batch only)
 
-- **Capture:** `StreamingQueryListener.onQueryProgress` → **delta-rs
-  `write_deltalake` (append)**, decoupled from the Spark sink; identical for both
-  Spark modes. Replaces the Spark `saveAsTable` path and the zerobus-metrics
-  branch (standardize on delta-rs). **Always on** for both Spark modes — the
-  home-page `metrics_enabled` toggle is **removed** (no user choice). Zerobus has
-  no metrics (`has_metrics=False`).
-- **Auth (H1/H3):** metrics-writer **SP OAuth → UC temporary-table-credentials
-  (READ_WRITE) → S3 creds** into delta-rs `storage_options`.
-- **Table (H1):** UC **external** Delta table `iot_<industry>.metrics
-  .streaming_metrics` (per-industry catalog; rows tagged by `query_name`/
-  `query_id` to distinguish modes — per-mode split revisited under G11/Section 2).
-  External (not managed) so delta-rs commits are clean (managed tables may use
-  coordinated commits delta-rs can't do).
-- **Schema (H2 — metrics SSOT):** extracted typed columns (`batch_id, timestamp,
+> **Approach (revised 2026-07-05): buffered async write to a UC MANAGED table via
+> the DBSQL Statement Execution API — NOT `saveAsTable`, NOT delta-rs, NOT UC
+> external-access REST.** `saveAsTable` from the listener launches a Spark job on
+> the streaming cluster and **contends with / hinders the streaming query**, so it
+> is disallowed. delta-rs can't write VARIANT; UC external-access REST needs
+> coordinated-commits + the Spark-4 UC client we don't have. Instead the listener
+> buffers rows and a background thread flushes them via DBSQL INSERT (separate
+> warehouse compute → zero interference), keeping the managed table + VARIANT +
+> DBSQL reads. (The managed-table VARIANT write itself is spike-confirmed GA — we
+> just drive it through the warehouse, not the streaming Spark context.)
+
+- **Capture:** `StreamingQueryListener.onQueryProgress` **buffers** each progress
+  row into an in-memory queue and returns immediately — **no Spark work in the
+  callback**. A **background daemon thread** flushes the buffer in small batches
+  to the managed metrics table via the **DBSQL Statement Execution API**
+  (`INSERT INTO … VALUES (…, parse_json(:progress))`) on the app's SQL warehouse —
+  separate compute, so it **never contends with the streaming query**. **Always
+  on** for both Spark modes — the home-page `metrics_enabled` toggle is **removed**.
+  Zerobus has no metrics (`has_metrics=False`).
+- **Table:** UC **MANAGED** Delta table `iot_<industry>.metrics.streaming_metrics`
+  (UC-managed storage path — **no external location, no temp-table-credentials**).
+  Per-industry catalog; rows tagged by `query_name`/`query_id` to distinguish
+  modes (per-mode split revisited under G11/Section 2).
+- **Schema (metrics SSOT):** extracted typed columns (`batch_id, timestamp,
   num_input_rows, input_rps, processed_rps, trigger_ms, e2e_p50/p99,
-  processing_p50/p99, queuing_p50/p99`) **+ raw `progress` as a VARIANT column**.
-  Fixes the `metrics_json` vs `progress` column-name inconsistency between the
-  generated notebook and the DDL/read endpoint.
-  - ✅ **Resolved (2026-07-05 spike):** delta-rs 1.6.1 **cannot** write VARIANT
-    (UC creates VARIANT with the `VariantShredding` writer feature, unsupported by
-    delta-rs). **Decision: `progress` is a `STRING` column**; parse it with
-    `parse_json(progress)` at read time via DBSQL. Also: delta-rs cannot READ
-    UC tables (they enable `deletionVectors`) — **all metrics reads go through
-    DBSQL/Spark**, never delta-rs. Writer needs `storage_options` with the vended
-    AWS creds + `AWS_REGION=us-east-1` + `AWS_S3_ALLOW_UNSAFE_RENAME=true`;
-    regenerate UC temp-table-credentials **per write batch** (they expire).
-- **Grants (H3):** `MODIFY, SELECT` + `USE CATALOG/SCHEMA` **+ `EXTERNAL USE
-  SCHEMA`** to the metrics-writer SP (the last is required for
-  `GenerateTemporaryTableCredentials` to return creds for delta-rs), and
-  `SELECT`/`USE` to the DBSQL reader; pre-flight check (fixes today's zerobus-only
-  grant).
+  processing_p50/p99, queuing_p50/p99`) **+ `progress` as a `VARIANT` column**
+  (native VARIANT confirmed working via Spark; `parse_json(...)` to populate).
+  Fixes the `metrics_json` vs `progress` column-name inconsistency. Reads via
+  DBSQL (`progress:field`, `typeof(progress)=variant`). **Caveat:** do not call
+  `.schema.simpleString()`/`.schema.json()` on a VARIANT DataFrame in a Spark
+  **Connect** (serverless) context — client-side repr bug; the classic consumer
+  cluster is unaffected.
+- **Grants:** metrics-writer identity needs `MODIFY, SELECT` + `USE CATALOG`/
+  `USE SCHEMA` on the managed table **and `CAN_USE` on the SQL warehouse** (it
+  writes via DBSQL); DBSQL reader gets `SELECT`/`USE`; pre-flight check. (No
+  external location, temp-table-credentials, or `EXTERNAL USE SCHEMA`.)
 - **Validation (S6):** after each bounded real-time/micro-batch run, assert
   metrics rows landed, **verify the Databricks-runtime latency percentiles
   appear** (`e2eLatencyMs`/`processingLatencyMs`/`sourceQueuingLatencyMs` are
-  Databricks-only — proves the delta-rs + OAuth-SP + grants path end-to-end),
+  Databricks-only — proves the Spark managed-table metrics-write path end-to-end),
   **DBSQL-read** via `GET /api/pipeline/{id}/streaming-metrics`; cleanup empties
   rows (keep table).
 
@@ -335,10 +340,10 @@ only dotted variants are ever created.
 | G7 | Idempotent-retry on failure; stop cluster on finish; 90-min auto-terminate. |
 | G8 | Partition-increase-only on edit; `RF=min(3,brokers)`. |
 | G9 | **Struck** — trigger intervals were correct (`realTime="5 minutes"` vs `processingTime="10 seconds"`). |
-| H1 | Metrics table = UC external Delta; creds via UC temporary-table-credentials. |
-| H2 | Metrics schema = typed columns + raw `progress` VARIANT (STRING+parse_json fallback). |
-| H3 | Metrics grants to writer SP + DBSQL reader; pre-flight. |
-| S1–S6 | Streaming-metrics capture via delta-rs for real-time + micro-batch; validated on the harness. |
+| H1 | Metrics table = UC **managed** Delta (no external location / temp-creds). |
+| H2 | Metrics schema = typed columns + `progress` **VARIANT** (native; written via DBSQL `parse_json`). |
+| H3 | Metrics grants: writer needs MODIFY/USE **+ warehouse `CAN_USE`**; reader SELECT; pre-flight. |
+| S1–S6 | Streaming metrics: listener **buffers → background thread → batched DBSQL INSERT** to the managed table (NOT `saveAsTable`/delta-rs — avoids hindering the streaming query); validated on the harness. |
 
 ## Parked for later sections
 
