@@ -139,6 +139,10 @@ app.include_router(static_files_router)
 # Static file mounts — must come after route registration
 app.mount("/assets", StaticFiles(directory="static/dist/assets"), name="spa-assets")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+# Vite copies client/public/* to the dist root; serve brand SVGs from there so
+# the SPA catch-all below doesn't swallow /brand/*.svg and return index.html.
+if os.path.isdir("static/dist/brand"):
+    app.mount("/brand", StaticFiles(directory="static/dist/brand"), name="brand")
 
 # SPA catch-all — must be the very last route
 SPA_INDEX = "static/dist/index.html"

@@ -48,6 +48,10 @@ env:
   - name: ADMIN_GROUP
     value: "iot-admins"
 
+  # Explicit admin emails (CSV) — granted admin regardless of group membership.
+  - name: ADMIN_EMAILS
+    value: "taranpreetsingh.grover@databricks.com"
+
   # ── LakeTS source — vendored; Apps runtime has no git egress ──
   - name: LAKETS_SQL_PATH
     value: "/app/python/source_code/databricks/vendor/lakets.sql"

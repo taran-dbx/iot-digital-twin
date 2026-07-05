@@ -127,14 +127,27 @@ def _is_app_owner(request: Any) -> bool:
         return False
 
 
-def is_admin(request: Any) -> bool:
-    """True if the caller is in the admin group or is the app owner.
+def _admin_emails() -> set[str]:
+    """Lowercased set of explicit admin emails from ``ADMIN_EMAILS`` (CSV)."""
+    raw = os.getenv("ADMIN_EMAILS", "") or ""
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
-    Admin group membership is resolved via ``_user_groups`` against
-    ``ADMIN_GROUP`` (default ``"iot-admins"`` when unset). Falls back to an
-    app-owner check. Defensive throughout: any failure denies rather than
-    raises.
+
+def is_admin(request: Any) -> bool:
+    """True if the caller is an explicit admin email, in the admin group, or the app owner.
+
+    Resolution order (any one grants admin): the caller's email is listed in
+    ``ADMIN_EMAILS`` (CSV); membership in ``ADMIN_GROUP`` (default
+    ``"iot-admins"``) via ``_user_groups``; or the app-owner fallback.
+    Defensive throughout: any failure denies rather than raises.
     """
+    try:
+        caller = _caller_email(request)
+        if caller and caller.strip().lower() in _admin_emails():
+            return True
+    except Exception as exc:
+        logger.warning("is_admin: email allowlist check failed (denying): %s", exc)
+
     try:
         if _admin_group() in _user_groups(request):
             return True
