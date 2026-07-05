@@ -6,6 +6,8 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
+from services import app_permissions, industry_service
+from services.industry_templates import CURATED_INDUSTRIES, MODES
 
 router = APIRouter()
 
@@ -113,3 +115,45 @@ async def generate_sample(request: Request, state: AppState = Depends(get_app_st
         }
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@router.get("/api/industries/catalog")
+async def get_industries_catalog(
+    request: Request, state: AppState = Depends(get_app_state)
+):
+    """Return the curated industry catalog plus whether the caller is an admin."""
+    catalog = await industry_service.get_catalog(state)
+    return {"industries": catalog, "is_admin": app_permissions.is_admin(request)}
+
+
+def _validate_industry_mode(industry: str, mode: str) -> JSONResponse | None:
+    """Return a 400 JSONResponse if ``industry``/``mode`` aren't curated, else None."""
+    if industry not in CURATED_INDUSTRIES:
+        return JSONResponse(
+            status_code=400, content={"error": f"Unknown industry: {industry}"}
+        )
+    if mode not in MODES:
+        return JSONResponse(status_code=400, content={"error": f"Unknown mode: {mode}"})
+    return None
+
+
+@router.post("/api/industries/{industry}/modes/{mode}/start")
+async def start_industry_mode(
+    industry: str, mode: str, state: AppState = Depends(get_app_state)
+):
+    """Provision (idempotently) and start a curated industry's streaming mode."""
+    error = _validate_industry_mode(industry, mode)
+    if error is not None:
+        return error
+    return await industry_service.start_mode(state, industry, mode)
+
+
+@router.post("/api/industries/{industry}/modes/{mode}/stop")
+async def stop_industry_mode(
+    industry: str, mode: str, state: AppState = Depends(get_app_state)
+):
+    """Stop a curated industry's streaming mode, keeping provisioned assets."""
+    error = _validate_industry_mode(industry, mode)
+    if error is not None:
+        return error
+    return await industry_service.stop_mode(state, industry, mode)
