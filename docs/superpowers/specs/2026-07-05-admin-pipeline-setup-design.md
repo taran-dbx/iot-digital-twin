@@ -427,6 +427,15 @@ iot_<industry>/
 Real-time **live** data is in the Lakebase branch; `realtime.sensor_readings` is
 the CDF-synced **historical** copy for DBSQL.
 
+**Provisioning note (verified 2026-07-05):** this metastore has no storage root
+(Default Storage is UI-only), so `CREATE CATALOG` via SQL/API **must supply an
+explicit `MANAGED LOCATION`** — use `s3://taran-shared-interop/<catalog>` (external
+location `taran-shared-interop`). The `metrics.streaming_metrics` external Delta
+table also lives under `taran-shared-interop` (e.g.
+`s3://taran-shared-interop/iot-digital-twin/<catalog>/metrics/streaming_metrics/`).
+Schemas, managed volumes, external tables, and SP grants (`iot-sss-industries`,
+appId `9927a7fa-2427-4b6a-97b6-cd41b878d405`) all confirmed working.
+
 ### 2.6 Job inventory (per fully-enabled industry = 7 jobs)
 
 | Mode | Job | Type | Tasks | Schedule |
