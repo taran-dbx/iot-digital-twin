@@ -225,12 +225,19 @@ producer-only; **no cluster to proxy**. Write identity = **zerobus SP**.
   processing_p50/p99, queuing_p50/p99`) **+ raw `progress` as a VARIANT column**.
   Fixes the `metrics_json` vs `progress` column-name inconsistency between the
   generated notebook and the DDL/read endpoint.
-  - ⚠️ **Verify at implementation:** delta-rs may not yet write the VARIANT
-    logical type. Fallback: write raw as JSON **STRING** and expose VARIANT via
-    `parse_json(...)` in a view/computed column. Reads are unaffected because the
-    typed columns carry the metrics.
-- **Grants (H3):** `MODIFY, SELECT` + `USE CATALOG/SCHEMA` to the metrics-writer SP
-  and the DBSQL reader; pre-flight check (fixes today's zerobus-only grant).
+  - ✅ **Resolved (2026-07-05 spike):** delta-rs 1.6.1 **cannot** write VARIANT
+    (UC creates VARIANT with the `VariantShredding` writer feature, unsupported by
+    delta-rs). **Decision: `progress` is a `STRING` column**; parse it with
+    `parse_json(progress)` at read time via DBSQL. Also: delta-rs cannot READ
+    UC tables (they enable `deletionVectors`) — **all metrics reads go through
+    DBSQL/Spark**, never delta-rs. Writer needs `storage_options` with the vended
+    AWS creds + `AWS_REGION=us-east-1` + `AWS_S3_ALLOW_UNSAFE_RENAME=true`;
+    regenerate UC temp-table-credentials **per write batch** (they expire).
+- **Grants (H3):** `MODIFY, SELECT` + `USE CATALOG/SCHEMA` **+ `EXTERNAL USE
+  SCHEMA`** to the metrics-writer SP (the last is required for
+  `GenerateTemporaryTableCredentials` to return creds for delta-rs), and
+  `SELECT`/`USE` to the DBSQL reader; pre-flight check (fixes today's zerobus-only
+  grant).
 - **Validation (S6):** after each bounded real-time/micro-batch run, assert
   metrics rows landed, **verify the Databricks-runtime latency percentiles
   appear** (`e2eLatencyMs`/`processingLatencyMs`/`sourceQueuingLatencyMs` are
