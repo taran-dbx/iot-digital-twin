@@ -37,8 +37,16 @@ env:
   - name: UC_STORAGE_ROOT
     value: ""
 
+  # Industry-first UI. Thin slice ships pharmaceutical only;
+  # expand to "manufacturing,pharmaceutical,energy,automotive" once verified.
   - name: INDUSTRIES
     value: "pharmaceutical"
+
+  # Admin gate for the industry-first UI (services/app_permissions.is_admin).
+  # Members of this Databricks group see provisioning internals + add-industry;
+  # everyone else gets the end-user view. Shared streaming SP: iot-sss-industries.
+  - name: ADMIN_GROUP
+    value: "iot-admins"
 
   # ── LakeTS source — vendored; Apps runtime has no git egress ──
   - name: LAKETS_SQL_PATH
