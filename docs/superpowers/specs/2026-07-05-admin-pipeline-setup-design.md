@@ -208,7 +208,9 @@ producer-only; **no cluster to proxy**. Write identity = **zerobus SP**.
 - **Capture:** `StreamingQueryListener.onQueryProgress` → **delta-rs
   `write_deltalake` (append)**, decoupled from the Spark sink; identical for both
   Spark modes. Replaces the Spark `saveAsTable` path and the zerobus-metrics
-  branch (standardize on delta-rs). Zerobus has no metrics (`has_metrics=False`).
+  branch (standardize on delta-rs). **Always on** for both Spark modes — the
+  home-page `metrics_enabled` toggle is **removed** (no user choice). Zerobus has
+  no metrics (`has_metrics=False`).
 - **Auth (H1/H3):** metrics-writer **SP OAuth → UC temporary-table-credentials
   (READ_WRITE) → S3 creds** into delta-rs `storage_options`.
 - **Table (H1):** UC **external** Delta table `iot_<industry>.metrics
@@ -276,7 +278,22 @@ objects.
 `iot.<industry>.<mode>` (dot notation). No `.`/`_` metric-name collision because
 only dotted variants are ever created.
 
----
+### 1.15 Data rate & producer generation semantics
+
+- **Rate units:** the generation rate is configured/shown as **records/sec**
+  (NOT Hz), with an **estimated MB/s** displayed alongside (derived from the
+  average `SensorRecord` size). This replaces the old `update_rate_hz` Hz field
+  everywhere it surfaces (setup preview, home-page config, `pipeline_setup`).
+- **Real-time mode:** the producer generates and **flushes each row as fast as
+  possible — unbatched** (producer `linger.ms ≈ 0`, no client-side batching), for
+  lowest end-to-end latency; the consumer uses the real-time trigger. Rows land
+  in Lakebase/LakeTS individually, not in batches.
+- **Micro-batch mode:** the producer **batches** records before flushing, and the
+  consumer uses `.trigger(processingTime="10 seconds")`. Throughput over latency.
+- **Zerobus mode:** producer flushes per `wait_for_ack()` batch to Delta (its own
+  cadence; no Kafka).
+- Stored on `pipeline_setup` as `records_per_sec` (+ derived `est_mb_per_sec`);
+  no metrics toggle is stored (metrics always on — §1.11).
 
 ## Decisions log (Section 1)
 
@@ -288,6 +305,10 @@ only dotted variants are ever created.
 | M1 | Worker sizing `clamp(ceil(partitions/cores_per_worker),1,8)`; warn if over cap. |
 | M2 | Keep dot topic naming. |
 | M3 | Resumable per-pipeline validation state machine. |
+| Metrics-default | Streaming metrics **always on** for Spark modes; home-page `metrics_enabled` toggle removed. |
+| Rate-units | Generation rate in **records/sec** (+ est. MB/s), not Hz; stored as `records_per_sec`. |
+| Gen-semantics | Real-time = flush each row ASAP, **unbatched**; micro-batch = **batched**. |
+| Kinesis-defer | Kafka only now; **Kinesis "coming soon"** (different field set), like Serverless flavor. |
 | M3+ | Active `cdf_verify` (test STREAMING + LSN advance, not just the click); per-step **Retry** from failure point (fix backend → retry that step + downstream); state persisted in `pipeline_setup.validation_state` (survives tab close); config editable mid-flow (invalidates affected steps); **hard gate** — no deploy until all enabled-mode steps pass + data purged. |
 | A  | Partition guarantee: proactive pre-create + guaranteed manager run + pre-flight gate; 24h/96-chunk horizon (configurable); optional writer-side retry (C). |
 | G1 | Per-pipeline objects in `databricks_postgres` (Lakehouse Sync constraint). |
