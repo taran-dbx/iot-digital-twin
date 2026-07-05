@@ -15,6 +15,7 @@ from databricks.sdk import WorkspaceClient
 
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
+from services import app_permissions
 from services.pipeline_db import get_pipeline_lakebase
 from services.pipeline_service import pipeline_row_to_dict
 from services.producer_service import stop_data_producer
@@ -178,15 +179,25 @@ async def check_source(
 @router.get("/api/pipelines/{pipeline_id}")
 async def get_pipeline(
     pipeline_id: str,
+    request: Request,
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
     if not state.db_available or not state.db:
         return JSONResponse(status_code=503, content={"error": "Database not configured"})
-    row = await state.db.fetchrow(
-        "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-        pipeline_id, user_email,
-    )
+    # Admins may inspect any pipeline (curated-industry pipelines are owned by
+    # a fixed system identity, not the admin's own email — see
+    # ``services.industry_service._INDUSTRY_PIPELINE_OWNER``). End users remain
+    # scoped to their own rows.
+    if app_permissions.is_admin(request):
+        row = await state.db.fetchrow(
+            "SELECT * FROM pipelines WHERE id = $1::uuid", pipeline_id,
+        )
+    else:
+        row = await state.db.fetchrow(
+            "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2",
+            pipeline_id, user_email,
+        )
     if not row:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
     return pipeline_row_to_dict(row)
@@ -206,18 +217,30 @@ async def update_pipeline(
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": f"Invalid JSON: {exc}"})
 
-    existing = await state.db.fetchrow(
-        "SELECT id FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-        pipeline_id, user_email,
-    )
+    # Admins may modify any pipeline (curated-industry pipelines are owned by a
+    # fixed system identity, not the admin's own email); end users stay scoped
+    # to their own rows. See ``get_pipeline`` for the same admin/owner split.
+    caller_is_admin = app_permissions.is_admin(request)
+    if caller_is_admin:
+        existing = await state.db.fetchrow(
+            "SELECT id, user_email FROM pipelines WHERE id = $1::uuid", pipeline_id,
+        )
+    else:
+        existing = await state.db.fetchrow(
+            "SELECT id, user_email FROM pipelines WHERE id = $1::uuid AND user_email = $2",
+            pipeline_id, user_email,
+        )
     if not existing:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
 
+    # Duplicate-name check runs within the owning user's namespace (names are
+    # unique per owner, not globally — see ``create_pipeline``).
+    owner_email = existing["user_email"]
     if "name" in body and body["name"]:
         new_name = body["name"].strip()
         dup = await state.db.fetchrow(
             "SELECT id FROM pipelines WHERE user_email = $1 AND LOWER(name) = LOWER($2) AND id != $3::uuid AND status != 'deleted'",
-            user_email, new_name, pipeline_id,
+            owner_email, new_name, pipeline_id,
         )
         if dup:
             return JSONResponse(status_code=409, content={"error": f"A pipeline named '{new_name}' already exists"})

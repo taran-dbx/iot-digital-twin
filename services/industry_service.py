@@ -70,7 +70,7 @@ async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
         return []
     try:
         rows = await state.db.fetch(
-            "SELECT name, status, industry, source_type, source_config "
+            "SELECT id, name, status, industry, source_type, source_config "
             "FROM pipelines WHERE status != 'deleted'"
         )
     except Exception as exc:
@@ -213,6 +213,11 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
                     "to": cfg["to"],
                     "desc": cfg["desc"],
                     "status": status,
+                    # Real pipeline row id (when one exists) so admins can jump
+                    # straight into the existing per-pipeline inspection/config
+                    # view (``/pipelines/:id``). None when no row is provisioned
+                    # yet — the UI then routes to the create wizard instead.
+                    "pipeline_id": str(row["id"]) if row and row.get("id") else None,
                 }
             )
 
@@ -254,6 +259,8 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
             continue  # never override an already-resolved running/starting
 
         mode_entry["status"] = "running"
+        if row.get("id"):
+            mode_entry["pipeline_id"] = str(row["id"])
         entry["running_count"] += 1
 
     return catalog

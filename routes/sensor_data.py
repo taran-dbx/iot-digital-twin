@@ -941,11 +941,17 @@ async def get_lakets_histogram(
 @router.get("/api/pipeline/{pipeline_id}/streaming-metrics")
 async def get_streaming_metrics(
     pipeline_id: str,
+    request: Request,
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
     """Query streaming_metrics table from the pipeline's UC catalog via DBSQL."""
-    catalog = await get_pipeline_catalog(state.db, state.db_available, pipeline_id, user_email)
+    from services import app_permissions
+
+    catalog = await get_pipeline_catalog(
+        state.db, state.db_available, pipeline_id, user_email,
+        is_admin=app_permissions.is_admin(request),
+    )
     if not catalog:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
     if not validate_catalog(catalog):

@@ -120,14 +120,25 @@ async def execute_dbsql(
 
 async def get_pipeline_catalog(
     db: Any, db_available: bool, pipeline_id: str, user_email: str,
+    is_admin: bool = False,
 ) -> str | None:
-    """Resolve UC catalog from a pipeline's resources. Returns None if unavailable."""
+    """Resolve UC catalog from a pipeline's resources. Returns None if unavailable.
+
+    ``is_admin`` lifts the per-user ownership filter so an admin can inspect
+    curated-industry pipelines (owned by a fixed system identity, not the
+    admin's own email — see ``services.industry_service._INDUSTRY_PIPELINE_OWNER``).
+    """
     if not db_available or not db:
         return None
-    row = await db.fetchrow(
-        "SELECT resources FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-        pipeline_id, user_email,
-    )
+    if is_admin:
+        row = await db.fetchrow(
+            "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id,
+        )
+    else:
+        row = await db.fetchrow(
+            "SELECT resources FROM pipelines WHERE id = $1::uuid AND user_email = $2",
+            pipeline_id, user_email,
+        )
     if not row:
         return None
     resources = row["resources"] if isinstance(row["resources"], dict) else json.loads(row["resources"] or "{}")
