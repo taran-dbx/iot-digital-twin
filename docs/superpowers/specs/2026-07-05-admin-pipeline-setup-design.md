@@ -202,6 +202,22 @@ transform`) generates **five** artifacts so nothing can drift:
 > SDK lacks `w.postgres`). (4) RTM `ForeachWriter.process()` receives a
 > **positional tuple**, not a named Row. (5) MSK is reached via `iotdemo` **public
 > `:9198`** from `fe-vm-shared-interop` — not a separate sandbox workspace.
+>
+> **Full MSK→RTM→Lakebase loop VERIFIED 2026-07-05 (200 rows + metrics landed).**
+> Exact RTM Kafka read config (no `kafka.sasl.*`/`security.protocol` — the service
+> credential handles MSK-IAM): `spark.readStream.format("kafka")` +
+> `.option("kafka.bootstrap.servers", "<b-1/2/3-public.iotdemo…:9198>")` +
+> `.option("subscribe", topic)` + `.option("startingOffsets","earliest")` +
+> `.option("databricks.serviceCredential", "iot-rtm-sc").load()`; writer
+> `.outputMode("update").foreach(LakebaseWriter).trigger(realTime="15 seconds")`.
+> Producer (kafka-python): `SASL_SSL`/`OAUTHBEARER`, token provider subclassing
+> `AbstractTokenProvider` → `MSKAuthTokenProvider.generate_auth_token("us-east-1")`.
+> **Gotcha:** `getServiceCredentialsProvider(name)` returns a botocore **Session** —
+> call `provider.get_credentials().get_frozen_credentials()` directly (also for
+> delta-rs S3 creds). 18.2 cluster libs: `databricks-sdk==0.120.0`,
+> `kafka-python>=3`, `aws-msk-iam-sasl-signer-python`, `psycopg2-binary`,
+> `deltalake`. Orphan test topics on `iotdemo` (DeleteTopic denied → manual
+> cleanup): `iot.spike.338409`, `iot.e2e.a7ff7d`.
 
 A **schema-conformance gate** runs first: produce sample records for the selected
 industry → write into the freshly-created table → assert columns line up and the
