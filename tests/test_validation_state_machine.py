@@ -212,3 +212,106 @@ def test_data_purged_true_when_all_cleanups_pass():
     for k in cleanups:
         state = sm.set_step(state, k, sm.PASSED)
     assert sm.data_purged(state) is True
+
+
+# ---------------------------------------------------------------------------
+# Per-mode deploy gate (single source of truth for the per-mode deploy)
+# ---------------------------------------------------------------------------
+def _pass_all(state: dict) -> dict:
+    for k in state["sequence"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    return state
+
+
+def test_mode_required_keys_common_plus_lane():
+    keys = sm.mode_required_keys("microbatch")
+    assert keys[:4] == list(sm.COMMON_STEPS)
+    assert "microbatch:write_test" in keys
+    assert "microbatch:cleanup" in keys
+    # No other lane leaks in.
+    assert not any(k.startswith("realtime:") for k in keys)
+
+
+def test_mode_required_keys_zerobus_lane_only_no_kafka_common():
+    keys = sm.mode_required_keys("zerobus")
+    # Zerobus is non-Kafka/serverless — its gate must not require the common
+    # Kafka-cluster steps (spec §1.10).
+    for common in sm.COMMON_STEPS:
+        assert common not in keys
+    assert "zerobus:create_table" in keys
+    assert "zerobus:cleanup" in keys
+
+
+def test_mode_required_keys_unknown_mode_raises():
+    with pytest.raises(ValueError):
+        sm.mode_required_keys("bogus")
+
+
+def test_is_mode_gate_open_true_on_fully_green_microbatch():
+    state = _pass_all(sm.initial_state(["microbatch"]))
+    assert sm.is_mode_gate_open(state, "microbatch") is True
+    assert sm.mode_outstanding_steps(state, "microbatch") == []
+    status = sm.mode_gate_status(state, "microbatch")
+    assert status == {"can_deploy": True, "data_purged": True, "outstanding": []}
+
+
+def test_is_mode_gate_open_false_with_nested_outstanding_keys():
+    state = sm.initial_state(["microbatch"])
+    # Pass everything except one lane step.
+    for k in state["sequence"]:
+        if k != "microbatch:write_test":
+            state = sm.set_step(state, k, sm.PASSED)
+    assert sm.is_mode_gate_open(state, "microbatch") is False
+    outstanding = sm.mode_outstanding_steps(state, "microbatch")
+    assert outstanding == ["microbatch:write_test"]  # nested key, not flat mb_*
+
+
+def test_mode_gate_open_ignores_other_lane_status():
+    # A three-mode run where only the microbatch lane is fully green.
+    state = sm.initial_state(["realtime", "microbatch", "zerobus"])
+    for k in list(sm.COMMON_STEPS) + [
+        sm.step_key("microbatch", s) for s in sm.MODE_STEPS["microbatch"]
+    ]:
+        state = sm.set_step(state, k, sm.PASSED)
+    assert sm.is_mode_gate_open(state, "microbatch") is True
+    # Realtime lane still pending → its gate is closed.
+    assert sm.is_mode_gate_open(state, "realtime") is False
+
+
+def test_zerobus_gate_open_without_kafka_common_steps():
+    # Only the zerobus lane passed; common Kafka steps left pending.
+    state = sm.initial_state(["zerobus"])
+    for s in sm.MODE_STEPS["zerobus"]:
+        state = sm.set_step(state, sm.step_key("zerobus", s), sm.PASSED)
+    assert sm.is_mode_gate_open(state, "zerobus") is True
+
+
+def test_mode_gate_tolerates_empty_and_missing_state():
+    assert sm.is_mode_gate_open({}, "microbatch") is False
+    outstanding = sm.mode_outstanding_steps({}, "microbatch")
+    assert outstanding == sm.mode_required_keys("microbatch")
+
+
+def test_mode_data_purged_tracks_cleanup():
+    state = _pass_all(sm.initial_state(["microbatch"]))
+    assert sm.mode_gate_status(state, "microbatch")["data_purged"] is True
+    state = sm.set_step(state, "microbatch:cleanup", sm.PENDING)
+    assert sm.mode_gate_status(state, "microbatch")["data_purged"] is False
+
+
+def test_multi_mode_gate_status_aggregates_enabled_modes():
+    state = sm.initial_state(["microbatch", "zerobus"])
+    # Only the microbatch lane green.
+    for k in list(sm.COMMON_STEPS) + [
+        sm.step_key("microbatch", s) for s in sm.MODE_STEPS["microbatch"]
+    ]:
+        state = sm.set_step(state, k, sm.PASSED)
+    agg = sm.multi_mode_gate_status(state, ["microbatch", "zerobus"])
+    assert set(agg["modes"]) == {"microbatch", "zerobus"}
+    assert agg["modes"]["microbatch"]["can_deploy"] is True
+    assert agg["modes"]["zerobus"]["can_deploy"] is False
+    # Aggregate is only open when every enabled mode is open.
+    assert agg["can_deploy"] is False
+    # Outstanding is the de-duplicated union across enabled modes.
+    assert "zerobus:create_table" in agg["outstanding"]
+    assert agg["outstanding"].count("zerobus:create_table") == 1

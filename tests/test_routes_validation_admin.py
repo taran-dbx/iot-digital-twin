@@ -177,11 +177,18 @@ async def test_can_deploy_returns_gate(client):
     c, monkeypatch = client
     monkeypatch.setattr(
         validation_service, "can_deploy",
-        AsyncMock(return_value={"can_deploy": True, "data_purged": True,
-                                "outstanding": []}),
+        AsyncMock(return_value={
+            "can_deploy": True, "data_purged": True, "outstanding": [],
+            "modes": {
+                "microbatch": {"can_deploy": True, "data_purged": True,
+                               "outstanding": []},
+            },
+        }),
     )
     resp = await c.get("/api/admin/industries/pharmaceutical/validate/can-deploy")
     assert resp.status_code == 200
     body = resp.json()
     assert body["can_deploy"] is True
     assert body["outstanding"] == []
+    # Per-mode verdicts are surfaced so the frontend can gate Deploy per lane.
+    assert body["modes"]["microbatch"]["can_deploy"] is True

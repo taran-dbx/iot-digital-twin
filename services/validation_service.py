@@ -277,13 +277,19 @@ async def set_cdf_enabled(
 
 
 async def can_deploy(db: Any, industry: str) -> dict:
-    """Return the hard deploy-gate verdict for an industry.
+    """Return the **per-mode** deploy-gate verdict for an industry.
+
+    Aligns with the per-mode ``deployment_gate`` used by ``deploy_pipeline`` so
+    the frontend can enable Deploy per mode.  Returns an aggregate
+    (``can_deploy`` / ``data_purged`` / ``outstanding`` over all enabled modes)
+    plus a ``modes`` map of per-mode verdicts.
 
     A setup with no started validation reports ``can_deploy=False`` with the
     full outstanding step list derived from its enabled modes.
     """
     setup = await _require_setup(db, industry)
     state = setup.get("validation_state") or {}
+    enabled = setup.get("enabled_modes") or []
     if not state.get("sequence"):
-        state = sm.initial_state(setup.get("enabled_modes") or [])
-    return sm.gate_status(state)
+        state = sm.initial_state(enabled)
+    return sm.multi_mode_gate_status(state, enabled)

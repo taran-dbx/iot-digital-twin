@@ -50,6 +50,8 @@ __all__ = [
     "mark_running", "next_runnable_step", "retry_from", "mark_cdf_enabled",
     "validation_step_keys", "outstanding_steps", "is_gate_open",
     "data_purged", "gate_status",
+    "mode_required_keys", "mode_outstanding_steps", "is_mode_gate_open",
+    "mode_data_purged", "mode_gate_status", "multi_mode_gate_status",
 ]
 
 # --- Step statuses ---------------------------------------------------------
@@ -275,4 +277,90 @@ def gate_status(state: dict) -> dict:
         "can_deploy": is_gate_open(state),
         "data_purged": data_purged(state),
         "outstanding": outstanding_steps(state),
+    }
+
+
+# --- Per-mode deploy gate (spec §1.10, §1.12) ------------------------------
+# Deploy is *per-mode*: an admin can deploy the micro-batch job the moment the
+# micro-batch lane is green, even if the realtime lane is still running.  This
+# is the single source of truth for the per-mode gate — the ``deployment_gate``
+# module and the ``/validate/can-deploy`` route both delegate here so the two
+# no longer disagree (previously one read a flat ``mb_``/``rt_``/``zb_`` state
+# while the other read the global nested gate).
+def _key_status(state: dict, key: str) -> str:
+    """Return the status of a flat/nested step ``key`` ('pending' if absent).
+
+    Tolerates a missing ``steps`` map and both the nested record shape
+    (``{"status": ...}``) and a bare status string, so a partial / empty state
+    reports every required step as outstanding rather than raising.
+    """
+    rec = (state or {}).get("steps")
+    if isinstance(rec, dict):
+        value = rec.get(key)
+    else:
+        value = (state or {}).get(key)
+    if isinstance(value, dict):
+        return value.get("status", PENDING)
+    return value or PENDING
+
+
+def mode_required_keys(mode: str) -> list[str]:
+    """Return the flat step keys a ``mode`` must pass to open its deploy gate.
+
+    The common Kafka-cluster steps (:data:`COMMON_STEPS`) plus that mode's lane
+    steps — **except** zerobus, which is non-Kafka / serverless and therefore
+    requires only its own lane (spec §1.10).
+    """
+    if mode not in MODE_STEPS:
+        raise ValueError(f"unknown mode: {mode!r}")
+    common: list[str] = [] if mode == "zerobus" else list(COMMON_STEPS)
+    lane = [step_key(mode, s) for s in MODE_STEPS[mode]]
+    return common + lane
+
+
+def mode_outstanding_steps(state: dict, mode: str) -> list[str]:
+    """Return the required keys for ``mode`` that are not yet ``passed``."""
+    return [k for k in mode_required_keys(mode) if _key_status(state, k) != PASSED]
+
+
+def is_mode_gate_open(state: dict, mode: str) -> bool:
+    """True when every required step for ``mode`` is ``passed`` (per-mode gate)."""
+    return not mode_outstanding_steps(state, mode)
+
+
+def mode_data_purged(state: dict, mode: str) -> bool:
+    """True when the mode's ``cleanup`` step passed (its test data was purged)."""
+    return _key_status(state, step_key(mode, CLEANUP_STEP)) == PASSED
+
+
+def mode_gate_status(state: dict, mode: str) -> dict:
+    """Return the per-mode deploy-gate verdict + what is still outstanding."""
+    return {
+        "can_deploy": is_mode_gate_open(state, mode),
+        "data_purged": mode_data_purged(state, mode),
+        "outstanding": mode_outstanding_steps(state, mode),
+    }
+
+
+def multi_mode_gate_status(state: dict, modes: Iterable[str]) -> dict:
+    """Return per-mode gate verdicts for ``modes`` plus an enabled-set aggregate.
+
+    ``modes`` (the setup's enabled modes) is normalised to :data:`MODE_ORDER`.
+    The top-level ``can_deploy`` / ``data_purged`` / ``outstanding`` summarise the
+    whole set (all enabled modes open, all purged, de-duplicated union of
+    outstanding keys) so existing global consumers keep working, while ``modes``
+    carries the per-mode verdicts the frontend uses to enable Deploy per lane.
+    """
+    ordered = [m for m in MODE_ORDER if m in set(modes or ())]
+    per_mode = {m: mode_gate_status(state, m) for m in ordered}
+    outstanding: list[str] = []
+    for m in ordered:
+        for k in per_mode[m]["outstanding"]:
+            if k not in outstanding:
+                outstanding.append(k)
+    return {
+        "can_deploy": bool(ordered) and all(g["can_deploy"] for g in per_mode.values()),
+        "data_purged": bool(ordered) and all(g["data_purged"] for g in per_mode.values()),
+        "outstanding": outstanding,
+        "modes": per_mode,
     }

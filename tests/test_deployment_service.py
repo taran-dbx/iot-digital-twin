@@ -21,8 +21,8 @@ from services import deployment_service as ds
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 def _all_passed(mode: str) -> dict:
-    """A validation_state with every required step for ``mode`` passed."""
-    return {step: "passed" for step in ds.REQUIRED_STEPS[mode]}
+    """A nested validation_state with every required step for ``mode`` passed."""
+    return {"steps": {key: {"status": "passed"} for key in ds.REQUIRED_STEPS[mode]}}
 
 
 def _ws() -> MagicMock:
@@ -102,22 +102,25 @@ class TestGate:
 
     def test_one_pending_blocks(self):
         state = _all_passed("realtime")
-        state["rt_cdf_verify"] = "waiting_admin"
+        # Nested per-mode key, not the old flat rt_* key.
+        state["steps"]["realtime:cdf_verify"] = {"status": "waiting_admin"}
         assert ds.gate_passed(state, "realtime") is False
-        assert "rt_cdf_verify" in ds.outstanding_steps(state, "realtime")
+        assert "realtime:cdf_verify" in ds.outstanding_steps(state, "realtime")
 
     def test_empty_state_all_outstanding(self):
         assert ds.outstanding_steps({}, "microbatch") == list(ds.REQUIRED_STEPS["microbatch"])
         assert ds.outstanding_steps(None, "zerobus") == list(ds.REQUIRED_STEPS["zerobus"])
 
-    def test_dict_status_shape_supported(self):
-        state = {s: {"status": "passed"} for s in ds.REQUIRED_STEPS["zerobus"]}
+    def test_nested_status_shape_supported(self):
+        state = {"steps": {k: {"status": "passed"} for k in ds.REQUIRED_STEPS["zerobus"]}}
         assert ds.gate_passed(state, "zerobus") is True
 
     def test_zerobus_gate_ignores_common_kafka_steps(self):
         # Zerobus is non-Kafka: its gate must not require provision_cluster etc.
         assert "provision_cluster" not in ds.REQUIRED_STEPS["zerobus"]
         assert "topics_created" not in ds.REQUIRED_STEPS["zerobus"]
+        # Its required keys are the zerobus lane only.
+        assert all(k.startswith("zerobus:") for k in ds.REQUIRED_STEPS["zerobus"])
 
     def test_assert_raises(self):
         with pytest.raises(ds.DeployGateError) as exc:
@@ -292,6 +295,24 @@ class TestDeployPipeline:
         calls = [c.args[0].lower() for c in db.fetchrow.call_args_list]
         assert any("insert into provisioned_resource" in c for c in calls)
         assert any("update pipeline_deployment" in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_fully_green_microbatch_deploys_without_override(self):
+        # A fully-green nested micro-batch state must pass the gate on the happy
+        # path — no gate_override needed (regression: nested vs flat key shape).
+        setup = {**BASE_SETUP, "validation_state": _all_passed("microbatch")}
+        db = _db(setup, {"id": "dep-mb", "mode": "microbatch"})
+        w = _ws()
+        result = await ds.deploy_pipeline(
+            db,
+            "setup-1",
+            "microbatch",
+            consumer_notebook="# c",
+            producer_notebook="# p",
+            w=w,
+        )
+        assert result["job_name"] == "iot-pharmaceutical-microbatch"
+        w.jobs.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_gate_override_skips_check(self):

@@ -1,55 +1,32 @@
 """Validation hard-gate for per-mode pipeline deploy (spec §1.12).
 
 The admin cannot deploy a mode until **every** required validation step for
-that mode is ``passed`` (and test data purged).  This module is the single
-source of truth for *which* steps a mode requires and whether the gate is open.
+that mode is ``passed`` (and its test data purged).  This module is a thin,
+per-mode facade over the single source of truth — the pure validation state
+machine (``services/validation_state_machine.py``) — so the deploy gate and the
+``/validate/can-deploy`` route never disagree.
 
-Step ids mirror the frontend state machine
-(``client/src/pages/setup-validation/types.ts``): common steps are shared,
-per-lane steps are prefixed ``rt_`` / ``mb_`` / ``zb_``.
+Historically this module read a *flat* ``validation_state`` with keys like
+``mb_write_test`` / ``rt_*`` / ``zb_*`` while the state machine persists a
+*nested* ``{"steps": {"microbatch:write_test": {"status": "passed"}}, ...}``
+shape — so a fully-green setup looked entirely "outstanding" and every deploy
+raised unless ``gate_override`` was forced.  We now delegate to the state
+machine's per-mode helpers (nested keys, per-mode lanes; zerobus = its lane
+only, no common Kafka steps per §1.10).
 """
 
 from __future__ import annotations
 
-COMMON_STEPS: tuple[str, ...] = (
-    "provision_cluster",
-    "source_connectivity",
-    "topics_created",
-    "schema_conformance",
-)
-REALTIME_STEPS: tuple[str, ...] = (
-    "rt_partitions_precreate",
-    "rt_write_test",
-    "rt_cdf_manual",
-    "rt_cdf_verify",
-    "rt_read_back",
-    "rt_dbsql_read",
-    "rt_metrics_check",
-    "rt_cleanup",
-)
-MICROBATCH_STEPS: tuple[str, ...] = (
-    "mb_write_test",
-    "mb_dbsql_read",
-    "mb_metrics_check",
-    "mb_cleanup",
-)
-# Zerobus is non-Kafka / serverless (no cluster, no topics) so it does not
-# require the common Kafka-cluster steps — only its own lane.
-ZEROBUS_STEPS: tuple[str, ...] = (
-    "zb_create_table",
-    "zb_auth_probe",
-    "zb_produce_test",
-    "zb_dbsql_read",
-    "zb_cleanup",
-)
+from services import validation_state_machine as sm
 
+# Re-exported for callers/tests that reference the mode catalogue.  ``COMMON_STEPS``
+# and the per-mode required-key lists are derived from the state machine so there
+# is exactly one definition of "what a mode requires".
+COMMON_STEPS: tuple[str, ...] = sm.COMMON_STEPS
+VALID_MODES: tuple[str, ...] = tuple(sm.MODE_STEPS.keys())
 REQUIRED_STEPS: dict[str, tuple[str, ...]] = {
-    "realtime": COMMON_STEPS + REALTIME_STEPS,
-    "microbatch": COMMON_STEPS + MICROBATCH_STEPS,
-    "zerobus": ZEROBUS_STEPS,
+    mode: tuple(sm.mode_required_keys(mode)) for mode in VALID_MODES
 }
-
-VALID_MODES: tuple[str, ...] = tuple(REQUIRED_STEPS.keys())
 
 
 class DeployGateError(RuntimeError):
@@ -64,31 +41,25 @@ class DeployGateError(RuntimeError):
         )
 
 
-def _step_status(validation_state: dict | None, step: str) -> str:
-    """Return the status of ``step`` from ``validation_state`` ('pending' if unset).
-
-    Tolerates two shapes: ``{step: "passed"}`` and ``{step: {"status": "passed"}}``.
-    """
-    value = (validation_state or {}).get(step)
-    if isinstance(value, dict):
-        return value.get("status", "pending")
-    return value or "pending"
-
-
 def outstanding_steps(validation_state: dict | None, mode: str) -> list[str]:
-    """Return the required steps for ``mode`` that are not yet ``passed``."""
-    if mode not in REQUIRED_STEPS:
+    """Return the required (nested) steps for ``mode`` that are not yet ``passed``."""
+    if mode not in VALID_MODES:
         raise ValueError(f"unknown mode: {mode!r}")
-    return [
-        step
-        for step in REQUIRED_STEPS[mode]
-        if _step_status(validation_state, step) != "passed"
-    ]
+    return sm.mode_outstanding_steps(validation_state or {}, mode)
 
 
 def gate_passed(validation_state: dict | None, mode: str) -> bool:
     """True when every required validation step for ``mode`` is ``passed``."""
-    return not outstanding_steps(validation_state, mode)
+    if mode not in VALID_MODES:
+        raise ValueError(f"unknown mode: {mode!r}")
+    return sm.is_mode_gate_open(validation_state or {}, mode)
+
+
+def gate_status(validation_state: dict | None, mode: str) -> dict:
+    """Return the per-mode deploy-gate verdict (can_deploy / data_purged / outstanding)."""
+    if mode not in VALID_MODES:
+        raise ValueError(f"unknown mode: {mode!r}")
+    return sm.mode_gate_status(validation_state or {}, mode)
 
 
 def assert_gate_passed(validation_state: dict | None, mode: str) -> None:

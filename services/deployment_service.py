@@ -51,13 +51,11 @@ from services.resource_ledger import record_resource
 from services.deployment_gate import (  # noqa: F401  (re-export)
     COMMON_STEPS,
     DeployGateError,
-    MICROBATCH_STEPS,
-    REALTIME_STEPS,
     REQUIRED_STEPS,
     VALID_MODES,
-    ZEROBUS_STEPS,
     assert_gate_passed,
     gate_passed,
+    gate_status,
     outstanding_steps,
 )
 

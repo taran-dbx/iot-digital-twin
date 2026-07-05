@@ -224,6 +224,9 @@ async def test_can_deploy_reflects_gate(repo):
     gate = await vs.can_deploy(None, "pharmaceutical")
     assert gate["can_deploy"] is False
     assert "microbatch:metrics_check" in gate["outstanding"]
+    # Per-mode verdicts are exposed so the frontend can gate Deploy per lane.
+    assert gate["modes"]["microbatch"]["can_deploy"] is False
+    assert "microbatch:metrics_check" in gate["modes"]["microbatch"]["outstanding"]
 
     # A never-started setup still reports a closed gate with full outstanding list.
     repo.setup["validation_state"] = {}

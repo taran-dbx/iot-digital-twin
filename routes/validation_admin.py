@@ -177,7 +177,12 @@ async def validate_cdf_enabled(
 async def validate_can_deploy(
     industry: str, request: Request, state: AppState = Depends(get_app_state)
 ):
-    """Return the hard deploy-gate verdict (all enabled-mode steps passed + purged)."""
+    """Return the **per-mode** deploy-gate verdict, aligned with ``deploy_pipeline``.
+
+    Response carries an enabled-set aggregate (``can_deploy`` / ``data_purged`` /
+    ``outstanding``) plus a ``modes`` map of per-mode verdicts so the frontend can
+    enable Deploy per lane.
+    """
     _require_admin(request)
     db = _require_db(state)
     try:
