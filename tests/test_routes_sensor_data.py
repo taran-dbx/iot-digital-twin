@@ -919,3 +919,25 @@ class TestDbsqlTimeseries:
                 )
 
         assert resp.status_code == 400
+
+    async def test_industry_param_resolves_catalog_directly(self) -> None:
+        # Industry-first pipelines have no legacy `pipelines` row/catalog, so the
+        # `industry` param resolves iot_<industry> directly — even when the
+        # legacy per-pipeline catalog lookup returns nothing.
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        patches, exec_mock = _patch_dbsql_timeseries_deps(catalog=None)
+        with patches[0], patches[1], patches[2], patches[3]:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipeline/none/dbsql-timeseries?minutes=60&mode=microbatch&industry=energy"
+                )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["table"] == "iot_energy.microbatch.sensor_data"
+        sql = exec_mock.await_args_list[0].args[0]
+        assert "iot_energy.microbatch.sensor_data" in sql

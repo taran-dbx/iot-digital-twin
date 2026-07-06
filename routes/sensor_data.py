@@ -1313,20 +1313,35 @@ async def get_dbsql_timeseries(
     mode: str | None = Query(
         None, description="Streaming mode: realtime, microbatch, or zerobus"
     ),
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the catalog as iot_<industry> directly "
+        "(for industry-first dashboards that have no legacy `pipelines` row).",
+    ),
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
     """Query time-series sensor data from the pipeline's UC catalog via DBSQL.
 
-    Table selection is mode-aware — see ``_DBSQL_MODE_TABLES``. When ``mode``
-    isn't supplied it's inferred from the pipeline row (``_resolve_dbsql_mode``).
+    Catalog resolution: an explicit ``industry`` resolves to ``iot_<industry>``
+    directly (industry-first pipelines live in ``pipeline_setup``, not the legacy
+    ``pipelines`` table, so there's no ``pipeline_id`` → catalog mapping for them);
+    otherwise fall back to the legacy per-pipeline catalog lookup.  Table selection
+    is mode-aware — see ``_DBSQL_MODE_TABLES``.
     """
     from services import app_permissions
+    from services import industry_catalog_service as _icat
 
     is_admin = app_permissions.is_admin(request)
-    catalog = await get_pipeline_catalog(
-        state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
-    )
+    if industry:
+        try:
+            catalog = _icat.catalog_name(industry)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Invalid industry"})
+    else:
+        catalog = await get_pipeline_catalog(
+            state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
+        )
     if not catalog:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
     if not validate_catalog(catalog):
