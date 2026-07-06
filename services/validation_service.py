@@ -212,8 +212,12 @@ async def run_machine(
         state = _apply_result(state, key, result)
         await _persist(db, setup_id, state)
 
-        if result.status != sm.PASSED:
-            break  # failed or waiting_admin — stop and wait for admin action
+        if result.status == sm.FAILED:
+            break  # hard failure — stop and wait for admin fix/retry (§1.12)
+        # A ``waiting_admin`` step only parks its own lane: keep driving so
+        # independent lanes (micro-batch / zerobus) still run to green while the
+        # realtime lane waits on the manual CDF enable.  ``next_runnable_step``
+        # skips the parked lane, so the loop advances instead of looping on it.
 
     return state
 

@@ -223,16 +223,41 @@ def next_runnable_step(state: dict) -> str | None:
 
     Walks the sequence: skips ``passed`` steps; returns the first
     ``pending`` / ``failed`` / ``running`` step (running = interrupted, safe to
-    re-run on resume).  Returns ``None`` if the first non-passed step is
-    ``waiting_admin`` (parked on a manual action) or if every step is passed.
+    re-run on resume).
+
+    Lane-aware parking (honours the documented per-mode deploy design — a lane
+    parked on a manual action must not block *independent* lanes): when a lane
+    step is ``waiting_admin`` that whole lane is skipped (its downstream steps
+    depend on the parked step) while sibling lanes keep advancing.  So a
+    realtime lane parked at ``cdf_manual`` no longer stops the micro-batch /
+    zerobus lanes from running to green.  Common (mode-less) steps gate every
+    lane and are therefore returned before any lane step.  Terminal steps run
+    only once nothing is parked (a parked lane means the run is not complete).
     """
+    parked_lanes: set[str | None] = set()
+    terminal_candidate: str | None = None
     for key in state["sequence"]:
         status = state["steps"][key]["status"]
         if status == PASSED:
             continue
+        if is_terminal(key):
+            if terminal_candidate is None:
+                terminal_candidate = key
+            continue
+        mode = mode_of(key)
         if status == WAITING_ADMIN:
-            return None
+            # Park this lane; skip its remaining (downstream) steps but keep
+            # scanning sibling lanes.
+            parked_lanes.add(mode)
+            continue
+        if mode in parked_lanes:
+            # A downstream step of an already-parked lane — cannot run yet.
+            continue
         return key
+    # Every non-terminal step is passed or parked.  Only advance to a terminal
+    # step when no lane is parked (an open park means the run isn't finished).
+    if terminal_candidate is not None and not parked_lanes:
+        return terminal_candidate
     return None
 
 

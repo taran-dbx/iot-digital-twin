@@ -40,7 +40,12 @@ RTM_TABLE = "sensor_readings"
 
 logger = logging.getLogger("iot_digital_twin.services.validation_steps")
 
-_CLUSTER_WAIT_S = 600
+# Interactive validation cluster bring-up ceiling.  This workspace's AWS
+# instance acquisition for the GP fleet node can take ~12 min (observed
+# "acquiring more instances" holds), so 600s was too tight and timed the step
+# out even though the cluster reached RUNNING shortly after.  20 min gives
+# headroom; the loop still returns as soon as the cluster is RUNNING.
+_CLUSTER_WAIT_S = 1200
 _CLUSTER_POLL_S = 15
 _LIB_WAIT_S = 300
 _LIB_POLL_S = 10

@@ -176,7 +176,19 @@ def make_all_deleters(
         await _run_sql(f"DROP TABLE IF EXISTS {res['identifier']}")
         location = (res.get("metadata") or {}).get("location")
         if location:
-            await _del_s3(location)
+            try:
+                await _del_s3(location)
+            except (ImportError, ModuleNotFoundError) as exc:
+                # The deployed Databricks App runtime has no ``boto3`` (S3
+                # cleanup is designed for the DBR kernel).  The UC table is
+                # already dropped; degrade to a logged warning so a missing
+                # boto3 never fails teardown and blocks the cascade delete of
+                # the setup row.  The S3 data files are left orphaned.
+                logger.warning(
+                    "teardown: boto3 unavailable (%s) — dropped UC table '%s' but "
+                    "could not delete S3 objects under %s (left orphaned)",
+                    exc, res.get("identifier"), location,
+                )
         else:
             logger.warning(
                 "teardown: metrics_table '%s' has no S3 location in metadata — "

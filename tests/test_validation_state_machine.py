@@ -118,6 +118,36 @@ def test_next_runnable_none_when_all_passed():
     assert sm.next_runnable_step(state) is None
 
 
+def test_next_runnable_parked_lane_does_not_block_sibling_lane():
+    # Per-mode design: a realtime lane parked at cdf_manual must NOT block the
+    # independent micro-batch lane — the driver advances to it.
+    state = sm.initial_state(["realtime", "microbatch"])
+    for k in ("provision_cluster", "source_connectivity", "topics_created",
+              "schema_conformance", "realtime:partitions_precreate",
+              "realtime:write_test"):
+        state = sm.set_step(state, k, sm.PASSED)
+    state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
+    # Realtime parks, but micro-batch's first lane step is now runnable.
+    assert sm.next_runnable_step(state) == "microbatch:write_test"
+
+
+def test_next_runnable_defers_terminal_while_a_lane_is_parked():
+    # With one lane parked, all sibling lanes green, terminal steps still wait.
+    state = sm.initial_state(["realtime", "microbatch"])
+    for k in state["sequence"]:
+        if sm.is_terminal(k) or k == "realtime:cdf_manual":
+            continue
+        # Downstream realtime steps stay pending (depend on the parked step).
+        if sm.mode_of(k) == "realtime" and k not in (
+            "realtime:partitions_precreate", "realtime:write_test"
+        ):
+            continue
+        state = sm.set_step(state, k, sm.PASSED)
+    state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
+    # Micro-batch green + realtime parked → nothing runnable (terminal deferred).
+    assert sm.next_runnable_step(state) is None
+
+
 # ---------------------------------------------------------------------------
 # Retry from failure point
 # ---------------------------------------------------------------------------
