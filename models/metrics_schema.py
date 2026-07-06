@@ -45,7 +45,10 @@ METRICS_SCHEMA = "metrics"
 METRICS_TABLE = "streaming_metrics"
 
 # The three streaming-pipeline flavors, each with its own metrics table.
-ALL_METRIC_MODES: tuple[str, ...] = ("realtime", "microbatch", "zerobus")
+# Only the Spark structured-streaming modes emit onQueryProgress metrics, so only
+# they get a streaming_metrics_<mode> table. Zerobus ingest is NOT a Spark stream
+# (no query listener), so it has no streaming-metrics table.
+ALL_METRIC_MODES: tuple[str, ...] = ("realtime", "microbatch")
 
 
 @dataclass(frozen=True)

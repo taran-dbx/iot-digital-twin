@@ -107,23 +107,24 @@ class TestProvisionCatalog:
         assert vkwargs["name"] == "stream_checkpoints"
 
     @pytest.mark.asyncio
-    async def test_external_metrics_tables_ddl_executed_for_all_modes(self) -> None:
+    async def test_external_metrics_tables_ddl_executed_for_streaming_modes(self) -> None:
         ws = _make_ws()
         exec_mock = AsyncMock(return_value={})
         with patch.object(ics, "execute_dbsql", new=exec_mock):
             res = await ics.provision_industry_catalog("spiketest", ws=ws)
         ddl_calls = [c.args[0] for c in exec_mock.call_args_list]
-        for mode in ("realtime", "microbatch", "zerobus"):
+        for mode in ("realtime", "microbatch"):
             assert any(
                 f"streaming_metrics_{mode}" in s and "LOCATION" in s for s in ddl_calls
             ), f"missing DDL for mode {mode}"
+        # Zerobus is not a Spark stream → no metrics table for it.
+        assert not any("streaming_metrics_zerobus" in s for s in ddl_calls)
         assert res["metrics_table"] == {
             "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
             "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
-            "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
         }
         assert res["metrics_tables"] == res["metrics_table"]
-        assert set(res["metrics_locations"]) == {"realtime", "microbatch", "zerobus"}
+        assert set(res["metrics_locations"]) == {"realtime", "microbatch"}
 
     @pytest.mark.asyncio
     async def test_idempotent_catalog_already_exists(self) -> None:
@@ -152,7 +153,7 @@ class TestProvisionCatalog:
         assert "uc_catalog" in types
         assert "uc_schema" in types
         assert "uc_volume" in types
-        assert types.count("metrics_table") == 3
+        assert types.count("metrics_table") == 2
 
 
 # ---------------------------------------------------------------------------

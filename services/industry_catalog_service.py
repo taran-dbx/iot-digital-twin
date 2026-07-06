@@ -13,7 +13,7 @@ Layout (spec §2.5)::
     ├── zerobus/      iot_sensor_data              Delta   (zerobus ingest target)
     ├── metrics/      streaming_metrics_realtime   Delta   EXTERNAL, delta-rs writes
     │                 streaming_metrics_microbatch Delta   EXTERNAL, delta-rs writes
-    │                 streaming_metrics_zerobus    Delta   EXTERNAL, delta-rs writes
+    │                 (zerobus ingest is not a Spark stream → no metrics table)
     └── checkpoints/  stream_checkpoints           Volume  (SS checkpoints)
 
 Provisioning notes (spike-verified 2026-07-05):

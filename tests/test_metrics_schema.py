@@ -32,12 +32,13 @@ class TestMetricsColumns:
 
 
 class TestAllMetricModes:
-    def test_three_modes(self) -> None:
-        assert ms.ALL_METRIC_MODES == ("realtime", "microbatch", "zerobus")
+    def test_streaming_modes_only(self) -> None:
+        # Only Spark streaming modes emit query metrics — zerobus is not a stream.
+        assert ms.ALL_METRIC_MODES == ("realtime", "microbatch")
 
 
 class TestMetricsDdl:
-    @pytest.mark.parametrize("mode", ["realtime", "microbatch", "zerobus"])
+    @pytest.mark.parametrize("mode", ["realtime", "microbatch"])
     def test_fqn_and_location_per_mode(self, mode: str) -> None:
         assert ms.metrics_table_fqn("iot_spiketest", mode) == (
             f"iot_spiketest.metrics.streaming_metrics_{mode}"
@@ -68,10 +69,11 @@ class TestMetricsDdl:
         with pytest.raises(ValueError):
             ms.metrics_external_table_ddl("iot_x", "s3://bucket", "batch")
 
-    def test_metrics_tables_returns_all_three_fqns(self) -> None:
+    def test_metrics_tables_returns_streaming_mode_fqns(self) -> None:
+        # Only Spark streaming modes get a metrics table — zerobus is not a stream.
         tables = ms.metrics_tables("iot_spiketest")
         assert tables == {
             "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
             "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
-            "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
         }
+        assert "zerobus" not in tables

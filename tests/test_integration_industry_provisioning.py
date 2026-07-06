@@ -100,7 +100,6 @@ async def test_integration_full_provision_and_teardown() -> None:
         assert {
             "streaming_metrics_realtime",
             "streaming_metrics_microbatch",
-            "streaming_metrics_zerobus",
         } <= tbls
         metrics_location = summary["metrics_table"]
 
