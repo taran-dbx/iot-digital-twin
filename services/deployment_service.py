@@ -83,7 +83,7 @@ CLASSIC_CONSUMER_LIBRARIES: tuple[str, ...] = (
     "kafka-python>=3",
     "aws-msk-iam-sasl-signer-python",
     "psycopg2-binary",
-    "deltalake",
+    "deltalake==1.6.1",  # pinned: newer versions break write_deltalake (metrics listener)
 )
 
 # Producer task only needs to reach MSK (kafka-python + MSK-IAM signer) and the
