@@ -105,6 +105,35 @@ def test_rtm_produce_uses_msk_iam_kafka_producer():
     assert "api_version=(2, 8, 1)" in code
     assert "iot.x.realtime" in code
     assert "range(100)" in code
+    # Returns the earliest event_time floor so the consumer can drop stale rows.
+    assert "_min_ts = time.time()" in code
+    assert "min_ts=_min_ts" in code
+
+
+def test_rtm_write_test_freshness_filter_drops_stale_rows():
+    """With a floor, the consumer must gate rows on event_time >= floor so stale
+    prior-run messages (past-dated -> no ChronoTable partition) never INSERT."""
+    code = snip.rtm_write_test(
+        "iot.x.realtime", "b-1:9198", "iot-rtm-sc",
+        project_id="iot-pipelines", branch="x", pg_database="databricks_postgres",
+        table="sensor_readings",
+        checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
+        metrics_table_fqn="iot_x.metrics.streaming_metrics",
+        metrics_table_location="s3://bkt/iot_x/metrics/streaming_metrics/",
+        pg_host="ep-x.database.us-east-1.cloud.databricks.com",
+        pg_user="app-user", pg_token="lb-oauth-token", region="us-east-1",
+        min_event_epoch=1751780000.0,
+    )
+    assert "timestamp_seconds" in code
+    assert "1751780000.0" in code
+    assert 'F.col("event_time") >=' in code
+
+
+def test_rtm_write_test_no_floor_no_filter():
+    """Without a floor the freshness gate is a no-op (backwards compatible)."""
+    code = _rtm_write_test_code()  # no min_event_epoch
+    assert "_MIN_EVENT_EPOCH = None" in code
+    assert "if _MIN_EVENT_EPOCH is not None:" in code
 
 
 def test_remove_path_deletes_checkpoint():

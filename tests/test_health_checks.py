@@ -102,12 +102,15 @@ class TestCheckDeltaTables:
         )
         assert res["status"] == hc.PASS
 
-    async def test_fail_when_expected_table_missing(self):
+    async def test_skip_when_expected_table_not_yet_created(self):
+        # Per-mode Delta tables are written on the first pipeline run, so a
+        # missing table on a not-yet-run pipeline is "not yet created" (SKIP),
+        # not a health failure.
         rows = [{"table_schema": "microbatch", "table_name": "sensor_data"}]
         res = await hc.check_delta_tables(
             "iot_pharma", ["microbatch", "zerobus"], _run_sql_returning(rows)
         )
-        assert res["status"] == hc.FAIL
+        assert res["status"] == hc.SKIP
         assert "iot_sensor_data" in res["detail"]
 
     async def test_only_checks_enabled_modes(self):
@@ -147,13 +150,23 @@ class TestCheckMetricsRecent:
         res = await hc.check_metrics_recent("iot_pharma", _run_sql_returning(rows))
         assert res["status"] == hc.PASS
 
-    async def test_fail_when_no_rows(self):
+    async def test_skip_when_no_rows_yet(self):
+        # Metrics rows only land once a mode streams — an empty table on a
+        # not-yet-run pipeline is expected (SKIP), not a failure.
         rows = [{"n": 0, "latest": None}]
         res = await hc.check_metrics_recent("iot_pharma", _run_sql_returning(rows))
-        assert res["status"] == hc.FAIL
+        assert res["status"] == hc.SKIP
 
-    async def test_fail_gracefully_when_table_missing(self):
-        run_sql = AsyncMock(side_effect=RuntimeError("TABLE_OR_VIEW_NOT_FOUND"))
+    async def test_skip_when_table_not_created(self):
+        # The external metrics table is created on the first streaming run; a
+        # DBSQL TABLE_OR_VIEW_NOT_FOUND means "not provisioned yet", so SKIP.
+        run_sql = AsyncMock(side_effect=RuntimeError("[TABLE_OR_VIEW_NOT_FOUND] table not found"))
+        res = await hc.check_metrics_recent("iot_pharma", run_sql)
+        assert res["status"] == hc.SKIP
+
+    async def test_fail_on_genuine_error(self):
+        # A real error (not a missing table) must still FAIL, not be masked.
+        run_sql = AsyncMock(side_effect=RuntimeError("PERMISSION_DENIED: cannot read table"))
         res = await hc.check_metrics_recent("iot_pharma", run_sql)
         assert res["status"] == hc.FAIL
 

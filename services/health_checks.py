@@ -147,6 +147,29 @@ def _is_missing_relation(exc: Exception) -> bool:
     return "does not exist" in msg and ("relation" in msg or "schema" in msg)
 
 
+# DBSQL / Spark markers for a not-yet-created table or its backing Delta path.
+_MISSING_TABLE_MARKERS = (
+    "table_or_view_not_found",
+    "delta_table_not_found",
+    "delta_missing_delta_table",
+    "path_not_found",
+    "table or view not found",
+)
+
+
+def _is_missing_table(exc: Exception) -> bool:
+    """True when the error means the (DBSQL-queried) table has not been created.
+
+    Covers both the Postgres relation errors (:func:`_is_missing_relation`) and
+    the Spark/DBSQL markers raised when a UC/Delta table doesn't exist yet — the
+    external metrics table only appears after the first streaming write.
+    """
+    if _is_missing_relation(exc):
+        return True
+    msg = str(exc).lower()
+    return any(m in msg for m in _MISSING_TABLE_MARKERS)
+
+
 # ---------------------------------------------------------------------------
 # Tier 1 — Unity Catalog / DBSQL
 # ---------------------------------------------------------------------------
@@ -188,7 +211,13 @@ async def check_delta_tables(
         have = {(r.get("table_schema"), r.get("table_name")) for r in _rows(res)}
         missing = [f"{catalog}.{s}.{t}" for (s, t) in sorted(expected) if (s, t) not in have]
         if missing:
-            return _result(DELTA_TABLES_CHECK, FAIL, f"missing tables: {', '.join(missing)}")
+            # Per-mode Delta tables are created by the streaming write on the FIRST
+            # pipeline run — before that they legitimately don't exist. That is
+            # "not yet created", not a health failure, so surface it as SKIP.
+            return _result(
+                DELTA_TABLES_CHECK, SKIP,
+                f"not yet created (written on first pipeline run): {', '.join(missing)}",
+            )
         return _result(
             DELTA_TABLES_CHECK, PASS,
             f"{len(expected)} Delta table(s) present for {', '.join(sorted(enabled_modes))}",
@@ -231,11 +260,25 @@ async def check_metrics_recent(
         n = int(row.get("n") or 0)
         latest = row.get("latest")
         if n <= 0:
-            return _result(METRICS_TABLE_CHECK, FAIL, f"{fqn} has no rows yet")
+            # Metrics rows only land once a mode actually streams — an empty table
+            # on a not-yet-run pipeline is expected, not a failure.
+            return _result(
+                METRICS_TABLE_CHECK, SKIP,
+                f"{fqn} has no rows yet (populated once a mode streams)",
+            )
         return _result(
             METRICS_TABLE_CHECK, PASS, f"{fqn}: {n} rows (latest {latest})"
         )
     except Exception as exc:
+        # The external metrics table is created on the first streaming run; before
+        # that a missing-table error is "not provisioned", not a failure. The
+        # table is queried via DBSQL, so a missing table surfaces as Spark's
+        # TABLE_OR_VIEW_NOT_FOUND / DELTA_* (not a Postgres relation error).
+        if _is_missing_table(exc):
+            return _result(
+                METRICS_TABLE_CHECK, SKIP,
+                f"{fqn} not created yet (created on first streaming run)",
+            )
         return _result(METRICS_TABLE_CHECK, FAIL, f"metrics check failed: {exc}")
 
 

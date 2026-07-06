@@ -184,6 +184,13 @@ try:
     )
     sensors = ["reactor_temp", "reactor_pressure", "ph_probe", "flow_rate"]
     sent = 0
+    # Floor for the consumer's freshness filter: the earliest event_time this run
+    # stamps. The consumer reads the topic from EARLIEST (so it always has data),
+    # which replays stale messages left by PRIOR runs; those carry past-dated
+    # event_times with no partition in the forward-only LakeTS ChronoTable and
+    # would fail the INSERT. Returning this floor lets the consumer land only
+    # THIS run's fresh rows (all inside the forward partition window).
+    _min_ts = time.time()
     for i in range({num_records}):
         s = sensors[i % len(sensors)]
         rec = {{
@@ -196,7 +203,7 @@ try:
         producer.send({topic!r}, rec)
         sent += 1
     producer.flush(); producer.close()
-    _ok(topic={topic!r}, produced=sent)
+    _ok(topic={topic!r}, produced=sent, min_ts=_min_ts)
 except Exception as e:
     _fail(traceback.format_exc())
 '''
@@ -220,6 +227,7 @@ def rtm_write_test(
     source: str = "validation",
     trigger: str = "15 seconds",
     run_seconds: int = 75,
+    min_event_epoch: float | None = None,
 ) -> str:
     """Bounded RTM Kafka→Lakebase write test that TRULY lands + measures data.
 
@@ -382,6 +390,14 @@ try:
                   F.col("d.fault_active").alias("fault_active"),
                   F.col("d.metadata").alias("metadata"),
               ))
+    # Freshness gate: land only THIS run's freshly-produced rows. Reading from
+    # earliest replays prior runs' stale messages whose past-dated event_time has
+    # no partition in the forward-only ChronoTable (INSERT -> CheckViolation). The
+    # floor is the producer's earliest stamp (same cluster clock), so fresh rows
+    # (event_time >= floor) are all inside the forward partition window.
+    _MIN_EVENT_EPOCH = {min_event_epoch!r}
+    if _MIN_EVENT_EPOCH is not None:
+        parsed = parsed.where(F.col("event_time") >= F.timestamp_seconds(F.lit(_MIN_EVENT_EPOCH)))
     q = (parsed.writeStream
          .outputMode("update")
          .foreach(LakebaseWriter())

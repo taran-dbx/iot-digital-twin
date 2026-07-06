@@ -20,6 +20,7 @@ the driver parks until the admin enables the managed Lakebase→Delta sync and t
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import timedelta
 from typing import Any
@@ -180,6 +181,17 @@ def _extract_fail(output: str) -> str | None:
         if line.startswith(snip.FAIL_SENTINEL):
             return line[len(snip.FAIL_SENTINEL):].strip()
     return None
+
+
+def _ok_payload(output: str) -> dict:
+    """Parse the ``VALIDATION_OK {json}`` sentinel line into its payload dict."""
+    for line in (output or "").splitlines():
+        if line.startswith(snip.OK_SENTINEL):
+            try:
+                return json.loads(line[len(snip.OK_SENTINEL):].strip())
+            except Exception:  # malformed / truncated payload → no fields
+                return {}
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +436,15 @@ async def write_test(ctx: StepContext) -> StepResult:
     )
     if produce.status != sm.PASSED:
         return produce
+    # Freshness floor: the earliest event_time the producer stamped (cluster
+    # clock). The consumer reads from earliest, so this drops stale rows from
+    # PRIOR runs (past-dated event_time -> no partition in the forward-only
+    # ChronoTable -> INSERT CheckViolation) and lands only THIS run's data.
+    min_event_epoch = _ok_payload((produce.data or {}).get("output", "")).get("min_ts")
+    if isinstance(min_event_epoch, (int, float)):
+        min_event_epoch = float(min_event_epoch) - 5.0  # small epsilon for clock granularity
+    else:
+        min_event_epoch = None
     # Resolve the Lakebase PRIMARY connection HERE on the harness driver (the
     # cluster SDK lacks the .postgres API and executors have no default auth) and
     # inject host/user/token as literals into the ForeachWriter snippet.
@@ -437,6 +458,7 @@ async def write_test(ctx: StepContext) -> StepResult:
         metrics_table_location=cfg["metrics_table_location"],
         pg_host=pg_host, pg_user=pg_user, pg_token=pg_token,
         region=cfg["region"], source=VALIDATION_SOURCE,
+        min_event_epoch=min_event_epoch,
     )
     return await _run_on_cluster(ctx, code, timeout_s=300)
 
