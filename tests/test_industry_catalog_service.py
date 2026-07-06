@@ -242,6 +242,29 @@ class TestGrants:
         with patch.dict(os.environ, {"DATABRICKS_CLIENT_ID": "cid-123"}):
             assert ics.resolve_app_principal(MagicMock()) == "cid-123"
 
+    @pytest.mark.asyncio
+    async def test_zerobus_sp_grants_create_table_on_zerobus(self) -> None:
+        # The Zerobus ingest SP needs CREATE TABLE + write on the zerobus schema
+        # to land rows — the industry path must grant it (not just the legacy path).
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            res = await ics.grant_zerobus_sp("spiketest", ws=ws, principal="zb-999")
+        sqls = " ".join(c.args[0] for c in exec_mock.call_args_list)
+        assert "CREATE TABLE ON SCHEMA iot_spiketest.zerobus" in sqls
+        assert "USE CATALOG ON CATALOG iot_spiketest" in sqls
+        assert "`zb-999`" in sqls
+        assert res["principal"] == "zb-999"
+
+    @pytest.mark.asyncio
+    async def test_zerobus_sp_skips_when_client_id_unset(self) -> None:
+        import os
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ZEROBUS_CLIENT_ID", None)
+            res = await ics.grant_zerobus_sp("spiketest", ws=MagicMock())
+        assert res["principal"] is None
+        assert res["results"][0]["status"] == "skipped"
+
 
 # ---------------------------------------------------------------------------
 # Secret scope

@@ -145,4 +145,11 @@ async def provision_industry(
     )
     _section("app_read_grants", app_grants)
 
+    # 5c. Grant the Zerobus ingest SP write/create on the zerobus schema so the
+    #     zerobus producer can land rows (ZEROBUS_CLIENT_ID; skipped if unset).
+    zerobus_grants = await cat.grant_zerobus_sp(
+        industry, ws=ws, warehouse_id=warehouse_id, db=db, setup_id=setup_id,
+    )
+    _section("zerobus_grants", zerobus_grants)
+
     return summary

@@ -511,6 +511,71 @@ async def grant_app_backend_read(
     return {"catalog": catalog, "principal": principal, "results": results}
 
 
+def resolve_zerobus_principal() -> str | None:
+    """Return the Zerobus ingest SP's application id (``ZEROBUS_CLIENT_ID`` env),
+    or ``None`` if unset (grant then skipped, non-fatal)."""
+    import os
+
+    return os.getenv("ZEROBUS_CLIENT_ID") or None
+
+
+def _zerobus_grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
+    """USE CATALOG + write/create on the zerobus schema for the Zerobus SP.
+
+    The Zerobus Ingest client authenticates as its own SP (``ZEROBUS_CLIENT_ID``),
+    distinct from the streaming + app SPs, and needs CREATE TABLE + write on the
+    zerobus schema to ingest into ``zerobus.iot_sensor_data`` (mirrors
+    ``routes/provisioning.py::_grant_zerobus_sp`` for the industry path)."""
+    q = f"`{principal}`"
+    return [
+        ("zerobus USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
+        (
+            "zerobus USE/MODIFY/SELECT/CREATE on zerobus",
+            f"GRANT USE SCHEMA, MODIFY, SELECT, CREATE TABLE ON SCHEMA {catalog}.zerobus TO {q}",
+        ),
+    ]
+
+
+async def grant_zerobus_sp(
+    industry: str,
+    *,
+    ws: Any | None = None,
+    warehouse_id: str | None = None,
+    principal: str | None = None,
+    db: Any | None = None,
+    setup_id: Any | None = None,
+    deployment_id: Any | None = None,
+) -> dict:
+    """Grant the Zerobus ingest SP the privileges it needs on ``iot_<industry>``.
+
+    Records each grant in the ledger. Skips (non-fatal) if ``ZEROBUS_CLIENT_ID``
+    is unset. Returns ``{catalog, principal, results}``.
+    """
+    ws = ws or _new_ws()
+    catalog = catalog_name(industry)
+    principal = principal or resolve_zerobus_principal()
+    if not principal:
+        return {"catalog": catalog, "principal": None,
+                "results": [{"resource": "zerobus SP grant", "status": "skipped",
+                             "error": "ZEROBUS_CLIENT_ID not set"}]}
+    wh = resolve_warehouse_id(ws, warehouse_id)
+    results: list[dict] = []
+    for label, sql in _zerobus_grant_statements(catalog, principal):
+        res = await _run_sql(sql, wh)
+        results.append({"resource": f"GRANT {label} → {principal}", "status": res["status"],
+                        **({"error": res["error"]} if res.get("error") else {})})
+        if res["status"] != "failed":
+            await _record(
+                db, setup_id, deployment_id,
+                resource_type="grant",
+                identifier=f"{catalog}:{label}:{principal}",
+                parent_ref=catalog,
+                teardown_order=TEARDOWN_ORDER_GRANT,
+                metadata={"sql": sql},
+            )
+    return {"catalog": catalog, "principal": principal, "results": results}
+
+
 # --- Secrets + SP ----------------------------------------------------------
 async def ensure_secret_scope(
     scope: str = SHARED_STREAMING_SP_SECRET_SCOPE,
