@@ -304,6 +304,7 @@ class TestListPipelines:
         assert pipe["modes"][0] == {
             "mode": "realtime", "status": "stopped",
             "health": "unhealthy", "startable": False,
+            "runtime_detail": None, "tasks": [],
         }
         # resource ledger rollup preserved under resource_health
         assert pipe["resource_health"]["overall"] == "healthy"

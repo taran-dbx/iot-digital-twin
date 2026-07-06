@@ -83,8 +83,13 @@ def _require_db(state: AppState) -> Any:
 # WorkspaceClient (tests / no creds) or a Jobs-API error degrades a deployed
 # mode to "stopped" (not running) rather than 500-ing the whole list.
 # ---------------------------------------------------------------------------
-def _job_running_lookup(deployments: list[dict]) -> dict[str, bool]:
-    """Return ``{job_id: is_running}`` for every deployed mode across ``deployments``."""
+def _job_running_lookup(deployments: list[dict]) -> dict[str, dict]:
+    """Return ``{job_id: {running, degraded, detail, tasks}}`` for every deployed mode.
+
+    Per-mode runtime derived from the Jobs API: ``running`` (run life-cycle RUNNING),
+    ``degraded`` (run up but a task crashed — e.g. producer died so data isn't
+    flowing), a human ``detail``, and the per-task states for the UI.
+    """
     job_ids = pipeline_view.collect_job_ids(deployments)
     if not job_ids:
         return {}
@@ -93,14 +98,19 @@ def _job_running_lookup(deployments: list[dict]) -> dict[str, bool]:
     except Exception as exc:  # pragma: no cover - no creds in tests
         logger.warning("Jobs API client unavailable; modes report not-running: %s", exc)
         return {}
-    lookup: dict[str, bool] = {}
+    lookup: dict[str, dict] = {}
     for job_id in job_ids:
         try:
             status = deployment_service.pipeline_status(job_id, w=w)
-            lookup[str(job_id)] = status.get("state") == "RUNNING"
+            lookup[str(job_id)] = {
+                "running": status.get("state") == "RUNNING",
+                "degraded": bool(status.get("degraded")),
+                "detail": status.get("detail"),
+                "tasks": status.get("tasks") or [],
+            }
         except Exception as exc:  # pragma: no cover - best-effort
             logger.warning("pipeline_status(%s) failed; treating as not-running: %s", job_id, exc)
-            lookup[str(job_id)] = False
+            lookup[str(job_id)] = {"running": False, "degraded": False, "detail": None, "tasks": []}
     return lookup
 
 

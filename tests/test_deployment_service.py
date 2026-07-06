@@ -399,8 +399,39 @@ class TestLifecycle:
         run = MagicMock()
         run.state.life_cycle_state.value = "RUNNING"
         run.state.result_state = None
+        run.tasks = None  # no task info → run-level state stands
         w.jobs.list_runs.return_value = [run]
-        assert ds.pipeline_status(4242, w=w)["state"] == "RUNNING"
+        st = ds.pipeline_status(4242, w=w)
+        assert st["state"] == "RUNNING"
+        assert st["degraded"] is False
+
+    def test_status_degraded_when_a_task_crashed(self):
+        # Run life-cycle RUNNING (continuous job) but the producer task crashed —
+        # must report degraded so the UI never implies data is flowing.
+        w = _ws()
+        run = MagicMock()
+        run.state.life_cycle_state.value = "RUNNING"
+        run.state.result_state = None
+        run.run_id = 999
+        consumer = MagicMock()
+        consumer.task_key = "microbatch_consumer"
+        consumer.state.life_cycle_state.value = "RUNNING"
+        consumer.state.result_state = None
+        consumer.state.state_message = "In run"
+        producer = MagicMock()
+        producer.task_key = "data_producer"
+        producer.state.life_cycle_state.value = "INTERNAL_ERROR"
+        producer.state.result_state.value = "FAILED"
+        producer.state.state_message = "Driver stopped unexpectedly during the run."
+        full = MagicMock()
+        full.tasks = [consumer, producer]
+        w.jobs.list_runs.return_value = [run]
+        w.jobs.get_run.return_value = full
+        st = ds.pipeline_status(4242, w=w)
+        assert st["state"] == "RUNNING"
+        assert st["degraded"] is True
+        assert "data_producer" in (st["detail"] or "")
+        assert any(t["task"] == "data_producer" for t in st["tasks"])
 
     def test_status_no_runs(self):
         w = _ws()

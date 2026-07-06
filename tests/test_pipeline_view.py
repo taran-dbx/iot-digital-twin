@@ -41,16 +41,38 @@ class TestIsDeployed:
 # --- status ------------------------------------------------------------------
 class TestModeStatus:
     def test_draft_is_default_when_no_deployment(self):
-        assert pv.mode_status(None, job_running=True) == pv.STATUS_DRAFT
+        assert pv.mode_status(None, True) == pv.STATUS_DRAFT
 
     def test_draft_when_not_deployed(self):
-        assert pv.mode_status({"job_id": None}, job_running=True) == pv.STATUS_DRAFT
+        assert pv.mode_status({"job_id": None}, True) == pv.STATUS_DRAFT
 
     def test_running_only_when_deployed_and_job_running(self):
-        assert pv.mode_status(_deployed(), job_running=True) == pv.STATUS_RUNNING
+        assert pv.mode_status(_deployed(), True) == pv.STATUS_RUNNING
 
     def test_stopped_when_deployed_but_not_running(self):
-        assert pv.mode_status(_deployed(), job_running=False) == pv.STATUS_STOPPED
+        assert pv.mode_status(_deployed(), False) == pv.STATUS_STOPPED
+
+    def test_degraded_when_deployed_and_a_task_crashed(self):
+        # Job run is up but a task died (e.g. producer) → degraded, NOT running.
+        rt = {"running": True, "degraded": True, "detail": "data_producer: driver stopped"}
+        assert pv.mode_status(_deployed(), rt) == pv.STATUS_DEGRADED
+
+    def test_running_with_healthy_richer_runtime(self):
+        rt = {"running": True, "degraded": False, "detail": None}
+        assert pv.mode_status(_deployed(), rt) == pv.STATUS_RUNNING
+
+    def test_build_mode_view_surfaces_runtime_detail_and_tasks(self):
+        rt = {"running": True, "degraded": True, "detail": "data_producer: boom",
+              "tasks": [{"task": "data_producer", "life_cycle": "INTERNAL_ERROR"}]}
+        v = pv.build_mode_view(None, _deployed(), "microbatch", rt)
+        assert v["status"] == pv.STATUS_DEGRADED
+        assert v["runtime_detail"] == "data_producer: boom"
+        assert v["tasks"] and v["tasks"][0]["task"] == "data_producer"
+
+    def test_rollup_degraded_beats_running(self):
+        views = [{"status": pv.STATUS_RUNNING}, {"status": pv.STATUS_DEGRADED},
+                 {"status": pv.STATUS_DRAFT}]
+        assert pv.rollup_status(views) == pv.STATUS_DEGRADED
 
 
 # --- cdf / gate --------------------------------------------------------------

@@ -677,16 +677,33 @@ def stop_pipeline(job_id: Any, *, w: Any | None = None) -> dict:
     return {"job_id": job_id, "state": "STOPPED"}
 
 
-def pipeline_status(job_id: Any, *, w: Any | None = None) -> dict:
-    """Return the latest run state for the pipeline job.
+# Task life-cycle / result states that mean a task has BROKEN (not merely
+# pending/running). A continuous job keeps its RUN life-cycle at RUNNING even when
+# one of its tasks has crashed, so we must inspect the tasks to catch e.g. a dead
+# producer while the consumer is still up.
+_TASK_BROKEN_LIFECYCLES = ("INTERNAL_ERROR",)
+_TASK_BROKEN_RESULTS = ("FAILED", "TIMEDOUT", "ERROR", "MAXIMUM_CONCURRENT_RUNS_REACHED")
 
-    ``{job_id, life_cycle_state, result_state, state}`` where ``state`` is a
-    coarse ``RUNNING`` / ``IDLE`` / ``FAILED`` / ``STARTING`` rollup.
+
+def pipeline_status(job_id: Any, *, w: Any | None = None) -> dict:
+    """Return the latest run state for the pipeline job, INCLUDING task-level health.
+
+    ``{job_id, life_cycle_state, result_state, state, degraded, detail, tasks}``:
+
+    - ``state`` — coarse ``RUNNING`` / ``IDLE`` / ``FAILED`` / ``STARTING`` rollup
+      of the run's life-cycle.
+    - ``degraded`` — ``True`` when the run is up (RUNNING/STARTING) but ≥1 task has
+      crashed (``INTERNAL_ERROR`` / a failed result). This is the "job is RUNNING
+      but the producer died, so data isn't flowing" case that the run-level state
+      alone hides.
+    - ``detail`` — a short human reason naming the broken task(s), or ``None``.
+    - ``tasks`` — per-task ``{task, life_cycle, result, message}`` for the UI.
     """
     w = w or _new_ws()
     runs = list(w.jobs.list_runs(job_id=int(job_id), active_only=False, limit=1))
     if not runs:
-        return {"job_id": job_id, "state": "IDLE", "life_cycle_state": None}
+        return {"job_id": job_id, "state": "IDLE", "life_cycle_state": None,
+                "degraded": False, "detail": None, "tasks": []}
     run = runs[0]
     lcs = None
     rs = None
@@ -705,11 +722,42 @@ def pipeline_status(job_id: Any, *, w: Any | None = None) -> dict:
     else:
         coarse = "IDLE"
 
+    # Per-task states (for degraded detection). list_runs may omit tasks, so fetch
+    # the full run — but only trust a real list, so a mocked/absent value degrades
+    # cleanly to "no task info" (run-level state stands).
+    task_list = None
+    try:
+        full = w.jobs.get_run(run_id=run.run_id)
+        if isinstance(getattr(full, "tasks", None), list):
+            task_list = full.tasks
+    except Exception:  # pragma: no cover - best-effort
+        pass
+    if task_list is None and isinstance(getattr(run, "tasks", None), list):
+        task_list = run.tasks
+
+    tasks: list[dict] = []
+    broken: list[str] = []
+    for tr in (task_list or []):
+        tlc = tr.state.life_cycle_state.value if tr.state and tr.state.life_cycle_state else None
+        trs = tr.state.result_state.value if tr.state and tr.state.result_state else None
+        tmsg = (tr.state.state_message if tr.state else None) or None
+        tasks.append({"task": tr.task_key, "life_cycle": tlc, "result": trs, "message": tmsg})
+        if tlc in _TASK_BROKEN_LIFECYCLES or trs in _TASK_BROKEN_RESULTS:
+            reason = tmsg or trs or tlc or "failed"
+            broken.append(f"{tr.task_key}: {str(reason)[:80]}")
+
+    # Degraded = the run is up but a task broke (data likely not flowing).
+    degraded = coarse in ("RUNNING", "STARTING") and bool(broken)
+    detail = "; ".join(broken) if broken else None
+
     return {
         "job_id": job_id,
         "life_cycle_state": lcs,
         "result_state": rs,
         "state": coarse,
+        "degraded": degraded,
+        "detail": detail,
+        "tasks": tasks,
     }
 
 
