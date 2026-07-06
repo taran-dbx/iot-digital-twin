@@ -215,7 +215,12 @@ async def create_or_update_setup(
                 status_code=409,
                 detail={
                     "error": f"a pipeline setup already exists for industry '{industry}'",
-                    "setup_id": existing["id"],
+                    # ``existing["id"]`` is a ``uuid.UUID`` (asyncpg maps the pg
+                    # uuid column) — coerce to str, since FastAPI renders the
+                    # HTTPException detail with plain json.dumps (no
+                    # jsonable_encoder), and a raw UUID there raises TypeError
+                    # → the intended 409 would otherwise surface as a 500.
+                    "setup_id": str(existing["id"]),
                     "industry": industry,
                 },
             )

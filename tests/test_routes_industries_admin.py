@@ -150,6 +150,33 @@ class TestCreateOrUpdateSetup:
         create_mock.assert_not_awaited()
         update_mock.assert_not_awaited()
 
+    async def test_create_only_409_serializes_uuid_setup_id(self) -> None:
+        """Regression: real Lakebase returns the ``id`` column as a
+        ``uuid.UUID``. FastAPI renders the HTTPException detail with plain
+        ``json.dumps`` (no jsonable_encoder), so a raw UUID there raised
+        TypeError → the intended 409 surfaced as a 500. The route must coerce
+        ``setup_id`` to str so the guard returns a clean 409.
+        """
+        import uuid as _uuid
+
+        setup_uuid = _uuid.UUID("6aa89e69-b749-4480-a5d6-f381b37e3dcf")
+        existing = {"id": setup_uuid, "industry": "pharmaceutical"}
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+            AsyncMock(return_value=existing),
+        ), patch(
+            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()
+        ), patch(
+            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
+        ):
+            async with _client(_state()) as c:
+                resp = await c.post(
+                    "/api/admin/industries/pharmaceutical/setup",
+                    json={"create_only": True},
+                )
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["setup_id"] == str(setup_uuid)
+
 
 # ---------------------------------------------------------------------------
 # GET /api/admin/industries/{industry}/setup
