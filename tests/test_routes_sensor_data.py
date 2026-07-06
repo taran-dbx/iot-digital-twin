@@ -667,3 +667,58 @@ class TestZerobusMetrics:
                 )
 
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# /api/sss/aggregates — graceful when the sensor_aggregates table is missing
+# ---------------------------------------------------------------------------
+class _UndefinedTable(Exception):
+    """Stand-in for asyncpg UndefinedTableError (SQLSTATE 42P01)."""
+
+    sqlstate = "42P01"
+
+
+@pytest.mark.asyncio
+class TestSssAggregates:
+    async def test_missing_table_returns_empty_not_500(self) -> None:
+        db = _mock_db()
+        db.fetch = AsyncMock(
+            side_effect=_UndefinedTable('relation "sensor_aggregates" does not exist')
+        )
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sss/aggregates?minutes=30")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_other_db_error_still_500(self) -> None:
+        db = _mock_db()
+        db.fetch = AsyncMock(side_effect=Exception("connection reset by peer"))
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sss/aggregates?minutes=30")
+        assert resp.status_code == 500
+
+    async def test_happy_path_returns_rows(self) -> None:
+        db = _mock_db(fetch_return=[{"sensor_name": "s1", "avg_value": 1.5}])
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sss/aggregates?minutes=30")
+        assert resp.status_code == 200
+        assert resp.json() == [{"sensor_name": "s1", "avg_value": 1.5}]
+
+    async def test_503_when_db_unavailable(self) -> None:
+        state = AppState()
+        state.db = None
+        state.db_available = False
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sss/aggregates?minutes=30")
+        assert resp.status_code == 503

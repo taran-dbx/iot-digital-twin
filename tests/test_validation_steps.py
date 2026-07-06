@@ -241,6 +241,20 @@ class _ProvisionWs:
         self.current_user = type("U", (), {"me": staticmethod(lambda: _FakeMe())})()
 
 
+class _VersionedClusters(_RecordingClusters):
+    """Recording clusters that also serve a latest-LTS spark version."""
+
+    def __init__(self, version="99.9.x-scala2.13", raises=False):
+        super().__init__()
+        self._version = version
+        self._raises = raises
+
+    def select_spark_version(self, long_term_support=False, latest=False):
+        if self._raises:
+            raise RuntimeError("versions API down")
+        return self._version
+
+
 @pytest.mark.asyncio
 async def test_provision_cluster_terminates_created_cluster_on_failure(monkeypatch):
     clusters = _RecordingClusters()
@@ -262,3 +276,42 @@ async def test_provision_cluster_terminates_created_cluster_on_failure(monkeypat
         await vs.provision_cluster(ctx)
     # The just-created cluster was terminated rather than leaked.
     assert clusters.deleted == "0706-created"
+
+
+@pytest.mark.asyncio
+async def test_provision_cluster_uses_latest_lts_runtime(monkeypatch):
+    ws = _ProvisionWs(_VersionedClusters(version="99.9.x-scala2.13"))
+    captured: dict = {}
+
+    monkeypatch.setattr(vs, "_pick_gp_node", lambda w: ("m5.xlarge", 4))
+    monkeypatch.setattr(vs.vc, "worker_sizing", lambda parts, cores: {"workers": 1})
+
+    def _spec(**kwargs):
+        captured.update(kwargs)
+        return {"cluster_name": "iot-validate-x"}
+
+    monkeypatch.setattr(vs.vc, "build_validation_cluster_spec", _spec)
+    monkeypatch.setattr(vs, "_create_validation_cluster", lambda w, spec: "0706-ok")
+
+    async def _ok(w, cluster_id):
+        return None
+
+    monkeypatch.setattr(vs, "_wait_cluster_running", _ok)
+
+    async def _libs(w, cluster_id, packages):
+        return None
+
+    monkeypatch.setattr(vs, "_install_cluster_libraries", _libs)
+
+    ctx = StepContext(db=None, setup=_SETUP, state={}, key="provision_cluster",
+                      step="provision_cluster", mode=None, ws=ws)
+    result = await vs.provision_cluster(ctx)
+    assert result.status == sm.PASSED
+    # The interactive cluster runs the workspace's latest LTS runtime, not a pin.
+    assert captured["spark_version"] == "99.9.x-scala2.13"
+
+
+@pytest.mark.asyncio
+async def test_latest_lts_falls_back_to_pinned_dbr_on_error():
+    ws = _ProvisionWs(_VersionedClusters(raises=True))
+    assert vs._latest_lts_spark_version(ws) == vs.vc.VALIDATION_DBR

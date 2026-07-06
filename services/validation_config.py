@@ -45,7 +45,10 @@ __all__ = [
 ]
 
 # --- Verified constants ----------------------------------------------------
-# DBR 18.2 GA (Spark 4.1.0); service credentials verified on 18.2 + single-user.
+# Fallback DBR only: the interactive cluster resolves the workspace's latest LTS
+# runtime dynamically (validation_steps._latest_lts_spark_version) and drops back
+# to this pinned DBR 18.2 GA (Spark 4.1.0; verified on service creds + single-user)
+# only if that lookup fails.
 VALIDATION_DBR = "18.2.x-scala2.13"
 SERVICE_CREDENTIAL = "iot-rtm-sc"
 DEFAULT_REGION = "us-east-1"

@@ -198,6 +198,25 @@ def _pick_gp_node(ws: Any) -> tuple[str, int]:
     return node_type_id, cores
 
 
+def _latest_lts_spark_version(ws: Any) -> str:
+    """Resolve the latest LTS DBR version key for the interactive cluster.
+
+    Mirrors how the node type is picked dynamically: the interactive validation
+    cluster runs on the newest LTS runtime the workspace offers rather than a
+    pinned DBR, degrading to :data:`vc.VALIDATION_DBR` if the SDK lookup fails.
+    """
+    try:
+        version = ws.clusters.select_spark_version(long_term_support=True, latest=True)
+        if version:
+            return version
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning(
+            "latest LTS spark-version lookup failed; using pinned %s: %s",
+            vc.VALIDATION_DBR, exc,
+        )
+    return vc.VALIDATION_DBR
+
+
 def _create_validation_cluster(ws: Any, spec: dict) -> str:
     from databricks.sdk.service.compute import (
         AwsAttributes, DataSecurityMode, EbsVolumeType, RuntimeEngine,
@@ -264,6 +283,7 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
     ws = ctx.ws or _new_ws()
     cfg = _cfg(ctx)
     node_type_id, cores = await asyncio.to_thread(_pick_gp_node, ws)
+    spark_version = await asyncio.to_thread(_latest_lts_spark_version, ws)
     sizing = vc.worker_sizing(cfg["partitions"], cores)
     user = (await asyncio.to_thread(ws.current_user.me)).user_name
     spec = vc.build_validation_cluster_spec(
@@ -271,6 +291,7 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
         num_workers=sizing["workers"],
         single_user_name=user,
         cluster_name=f"iot-validate-{cfg['industry']}",
+        spark_version=spark_version,
     )
     cluster_id = await asyncio.to_thread(_create_validation_cluster, ws, spec)
     try:

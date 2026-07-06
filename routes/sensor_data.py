@@ -24,6 +24,20 @@ logger = logging.getLogger("iot_digital_twin.routes.sensor_data")
 router = APIRouter()
 
 
+def _is_undefined_relation(exc: Exception) -> bool:
+    """True when a query hit a Postgres 'undefined table' (SQLSTATE 42P01).
+
+    A rollup/aggregate table that was never provisioned or populated means "no
+    data yet", not a server fault — callers degrade to an empty result instead
+    of a 500.
+    """
+    sqlstate = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if sqlstate == "42P01":
+        return True
+    msg = str(exc).lower()
+    return "does not exist" in msg and "relation" in msg
+
+
 @router.post("/api/sss/ingest")
 async def sss_ingest(request: Request, state: AppState = Depends(get_app_state)):
     """Receive aggregated sensor data from the SSS Databricks Job.
@@ -195,6 +209,11 @@ async def sss_aggregates(
         )
         return [dict(r) for r in rows]
     except Exception as exc:
+        # The sensor_aggregates rollup table may not be provisioned/populated
+        # yet — that is "no aggregates", not a server error.
+        if _is_undefined_relation(exc):
+            logger.info("sss_aggregates: sensor_aggregates not provisioned yet — returning empty")
+            return []
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
