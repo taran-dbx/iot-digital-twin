@@ -423,17 +423,47 @@ def microbatch_write_test(
 
     ``.trigger(processingTime="10 seconds")``, latest offsets, distinct
     validation checkpoint, writes to the UC Delta table.
+
+    Parses the Kafka JSON to the **SSOT schema** (the same columns the deployed
+    micro-batch consumer writes: sensor_name, industry, value, unit, sensor_type,
+    event_time, min/max/nominal_value, fault_active, metadata) — writing a raw
+    string instead collides with the table's real schema (DELTA_METADATA_MISMATCH)
+    both when the table already exists (deployed) and by poisoning a fresh table's
+    schema for the production consumer.
     """
     return _PREAMBLE + f'''
 try:
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import (StructType, StringType, DoubleType,
+                                   BooleanType, MapType)
     q = (spark.readStream.format("kafka")
          .option("kafka.bootstrap.servers", {bootstrap_public!r})
          .option("subscribe", {topic!r})
          .option("startingOffsets", "latest")
          .option("databricks.serviceCredential", {service_credential!r})
          .load())
-    stream = (q.selectExpr("CAST(value AS STRING) AS raw")
-              .writeStream
+    SCHEMA = (StructType()
+              .add("sensor_name", StringType()).add("industry", StringType())
+              .add("value", DoubleType()).add("unit", StringType())
+              .add("sensor_type", StringType()).add("timestamp", DoubleType())
+              .add("min_value", DoubleType()).add("max_value", DoubleType())
+              .add("nominal_value", DoubleType()).add("fault_active", BooleanType())
+              .add("metadata", MapType(StringType(), StringType())))
+    parsed = (q.select(F.from_json(F.col("value").cast("string"), SCHEMA).alias("d"))
+              .select(
+                  F.col("d.sensor_name").alias("sensor_name"),
+                  F.col("d.industry").alias("industry"),
+                  F.col("d.value").alias("value"),
+                  F.col("d.unit").alias("unit"),
+                  F.col("d.sensor_type").alias("sensor_type"),
+                  F.timestamp_seconds(F.col("d.timestamp")).alias("event_time"),
+                  F.col("d.min_value").alias("min_value"),
+                  F.col("d.max_value").alias("max_value"),
+                  F.col("d.nominal_value").alias("nominal_value"),
+                  F.col("d.fault_active").alias("fault_active"),
+                  F.col("d.metadata").alias("metadata"),
+              ))
+    stream = (parsed.writeStream
               .option("checkpointLocation", {checkpoint_path!r})
               .trigger(processingTime="10 seconds")
               .toTable({delta_table!r}))

@@ -150,6 +150,13 @@ def test_microbatch_write_test_processing_time_trigger():
     assert 'processingTime="10 seconds"' in code
     assert '"latest"' in code
     assert "iot_x.microbatch.sensor_data" in code
+    # Must parse to the SSOT schema the table actually has — a raw-string write
+    # collides with the real schema (DELTA_METADATA_MISMATCH).
+    assert "CAST(value AS STRING) AS raw" not in code
+    assert "from_json" in code
+    assert 'alias("event_time")' in code
+    assert "timestamp_seconds" in code
+    assert 'alias("sensor_name")' in code
 
 
 def test_cdf_verify_polls_streaming_and_lsn():
