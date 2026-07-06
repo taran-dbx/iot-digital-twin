@@ -70,7 +70,7 @@ def _generate_temp_path_credentials(ws: Any, url: str) -> dict:
     resp = ws.api_client.do(
         "POST",
         _TEMP_PATH_CREDS_ENDPOINT,
-        body={"url": url, "operation": "PATH_DELETE"},
+        body={"url": url, "operation": "PATH_READ_WRITE"},
     )
     creds = (resp or {}).get("aws_temp_credentials") or {}
     return {

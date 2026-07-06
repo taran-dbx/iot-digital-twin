@@ -60,6 +60,9 @@ async def test_realtime_write_test_produces_then_consumes(monkeypatch):
     monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
     monkeypatch.setattr(vs.snip, "rtm_produce", fake_produce)
     monkeypatch.setattr(vs.snip, "rtm_write_test", fake_write)
+    monkeypatch.setattr(
+        vs, "_resolve_lakebase_write_conn", lambda ctx, branch: ("pg-host", "pg-user", "pg-token")
+    )
 
     result = await vs.write_test(_ctx("realtime"))
 

@@ -277,6 +277,9 @@ async def stage_validate_rt():
         state = sm.initial_state(["realtime"])
         # Reuse the already-running validation cluster if we have one.
         if st.get("mb_cluster_id"):
+            from services import validation_steps as vs
+            await vs._install_cluster_libraries(
+                w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES)
             state["cluster_id"] = st["mb_cluster_id"]
             # Mark provision_cluster passed so the driver reuses the cluster.
             state = sm.set_step(state, "provision_cluster", sm.PASSED)
@@ -467,7 +470,8 @@ q.awaitTermination()
 
 
 async def stage_deploy_mb():
-    from services import deployment_service, pipeline_setup_repo
+    from services import deployment_service, pipeline_setup_repo, validation_service
+    from services import validation_state_machine as sm
     from services.dbsql_service import execute_dbsql
     from services import industry_catalog_service as cat
 
@@ -490,25 +494,23 @@ async def stage_deploy_mb():
         producer_nb = _producer_notebook(topic)
         consumer_nb = _microbatch_consumer_notebook(topic, delta, checkpoint)
 
-        # 1. Demonstrate the deploy gate WITHOUT override (expected behavior).
-        try:
-            await deployment_service.deploy_pipeline(
-                db, setup_id, "microbatch",
-                consumer_notebook=consumer_nb, producer_notebook=producer_nb,
-            )
-            print("\nGATE (no override): PASSED (deploy proceeded)")
-        except deployment_service.DeployGateError as e:
-            print("\nGATE (no override): BLOCKED ->", str(e))
-        except Exception as e:
-            print("\nGATE (no override): unexpected", type(e).__name__, str(e)[:300])
+        # --- FIX-A validation: the per-mode gate must now be OPEN on the nested
+        # validation_state, so deploy proceeds WITHOUT gate_override. ---
+        setup = await pipeline_setup_repo.get_setup(db, setup_id)
+        vstate = setup.get("validation_state") or {}
+        gate = await validation_service.can_deploy(db, INDUSTRY)
+        _pp("can_deploy (per-mode aggregate)", gate)
+        mb_open = sm.is_mode_gate_open(vstate, "microbatch")
+        mb_outstanding = sm.mode_outstanding_steps(vstate, "microbatch")
+        print(f"is_mode_gate_open(state,'microbatch') = {mb_open}")
+        print(f"microbatch outstanding steps = {mb_outstanding}")
 
-        # 2. Deploy for real (gate_override reflects that microbatch validated
-        #    green; see report re: deploy-gate key mismatch).
+        # Deploy WITHOUT gate_override — the fix must let this proceed.
         result = await deployment_service.deploy_pipeline(
             db, setup_id, "microbatch",
             consumer_notebook=consumer_nb, producer_notebook=producer_nb,
-            gate_override=True,
         )
+        print("\nGATE (no override): PASSED — deploy_pipeline proceeded WITHOUT gate_override")
         _pp("DEPLOY microbatch result", result)
         st["mb_job_id"] = result["job_id"]
         st["mb_delta"] = delta
@@ -538,7 +540,7 @@ async def stage_deploy_status():
 # ---------------------------------------------------------------------------
 async def stage_teardown():
     """Run teardown exactly as the admin DELETE path wires it, then report."""
-    from services import teardown_service, resource_ledger
+    from services import teardown_service, resource_ledger, pipeline_setup_repo
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -549,13 +551,17 @@ async def stage_teardown():
             {t: sum(1 for r in before if r["resource_type"] == t)
              for t in {r["resource_type"] for r in before}})
 
-        # Exact wiring copied from routes/industries_admin.delete_pipeline:
+        # Exact wiring copied from routes/industries_admin.delete_pipeline
+        # (FIXED path — per-type deleters registry, not job-only):
+        setup = await pipeline_setup_repo.get_setup(db, setup_id)
         deleters = None
         try:
-            from services.deployment_service import make_job_deleter
-            deleters = {"job": make_job_deleter()}
+            from services import resource_deleters
+            deleters = resource_deleters.make_all_deleters(
+                warehouse_id=setup.get("warehouse_id"),
+            )
         except Exception as exc:
-            print("job deleter unavailable:", exc)
+            print("deleter registry unavailable:", exc)
 
         result = await teardown_service.teardown_setup(db, setup_id, deleters)
         # Summarize step actions by (type, action).
@@ -563,13 +569,20 @@ async def stage_teardown():
         for s in result["steps"]:
             key = f"{s['resource_type']}:{s['action']}"
             summary[key] = summary.get(key, 0) + 1
-        _pp("TEARDOWN step actions (admin-path deleters)", summary)
+        _pp("TEARDOWN step actions (admin-path FIXED deleters)", summary)
+        _pp("TEARDOWN summary counts", result["summary"])
         print("teardown success:", result["success"],
               "deleted_setup:", result["deleted_setup"])
-        # Show which resources were skipped (the wiring gap).
-        skipped = [(s["resource_type"], s["identifier"]) for s in result["steps"]
-                   if s["action"] == "skipped"]
-        _pp("SKIPPED by admin-path teardown (NOT deleted in cloud)", skipped)
+        # Show deleted vs skipped vs failed detail.
+        deleted = [(s["resource_type"], s["identifier"]) for s in result["steps"]
+                   if s["action"] == "deleted"]
+        skipped = [(s["resource_type"], s["identifier"], s.get("reason", "")[:80])
+                   for s in result["steps"] if s["action"] == "skipped"]
+        failed = [(s["resource_type"], s["identifier"], s.get("error", ""))
+                  for s in result["steps"] if s["action"] == "failed"]
+        _pp("DELETED in cloud", deleted)
+        _pp("SKIPPED (intentional)", skipped)
+        _pp("FAILED (surfaced — setup kept)", failed)
     finally:
         await db.close()
 

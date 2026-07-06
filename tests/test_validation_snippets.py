@@ -38,6 +38,9 @@ def _rtm_write_test_code() -> str:
         checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
         metrics_table_fqn="iot_x.metrics.streaming_metrics",
         metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics/",
+        pg_host="ep-x.database.us-east-1.cloud.databricks.com",
+        pg_user="app-user",
+        pg_token="lb-oauth-token",
         region="us-east-1",
     )
 
@@ -68,9 +71,14 @@ def test_rtm_write_test_lands_data_not_noop():
     assert "row[0]" in code and "row[10]" in code   # positional, not named Row
     assert "INSERT INTO" in code
     assert "sensor_readings" in code
-    # Writes go to the Lakebase branch PRIMARY (READ_WRITE) endpoint.
-    assert "generate_database_credential" in code
-    assert "iot-pipelines" in code
+    # Creds are INJECTED by the harness driver as literals — executors can't call
+    # generate_database_credential (no default auth) and the cluster SDK lacks the
+    # .postgres API. So the snippet has NO cluster-side credential resolution; the
+    # pg_host/pg_user literals appear and psycopg2 connects with them.
+    assert "generate_database_credential" not in code
+    assert "ep-x.database.us-east-1.cloud.databricks.com" in code   # injected pg_host
+    assert "app-user" in code                                       # injected pg_user
+    assert "psycopg2.connect" in code
 
 
 def test_rtm_write_test_wires_buffered_metrics_listener():

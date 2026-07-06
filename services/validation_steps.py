@@ -53,7 +53,7 @@ VALIDATION_CLUSTER_LIBRARIES: tuple[str, ...] = (
     "kafka-python>=3",
     "aws-msk-iam-sasl-signer-python",
     "psycopg2-binary",   # RTM ForeachWriter → Lakebase ChronoTable
-    "deltalake",         # buffered delta-rs streaming-metrics write
+    "deltalake==1.6.1",  # buffered delta-rs streaming-metrics write (pinned: newer versions break write_deltalake)
 )
 
 
@@ -103,22 +103,48 @@ def _checkpoint(catalog: str, mode: str) -> str:
 # ---------------------------------------------------------------------------
 # Cluster command execution
 # ---------------------------------------------------------------------------
-def _run_python_sync(ws: Any, cluster_id: str, code: str, timeout_s: int) -> dict:
+_CONTEXT_CACHE: dict[str, str] = {}
+
+
+def _get_or_create_context(ws: Any, cluster_id: str) -> str:
+    """Return a persistent command-execution context id for ``cluster_id``.
+
+    Each command-execution context on this runtime gets its OWN ephemeral
+    per-context virtualenv (verified 2026-07-06:
+    ``/local_disk0/.ephemeral_nfs/envs/pythonEnv-<uuid>``), so pip installs made
+    in one context are invisible to a freshly created sibling.  Reusing a single
+    context across the steps of a validation run makes ``provision_cluster``'s
+    library install persist to every downstream step, as the harness intends.
+    """
     from databricks.sdk.service.compute import Language as CmdLanguage
 
+    ctx_id = _CONTEXT_CACHE.get(cluster_id)
+    if ctx_id:
+        return ctx_id
     ctx = ws.command_execution.create(
         cluster_id=cluster_id, language=CmdLanguage.PYTHON
     ).result()
+    _CONTEXT_CACHE[cluster_id] = ctx.id
+    return ctx.id
+
+
+def _run_python_sync(ws: Any, cluster_id: str, code: str, timeout_s: int) -> dict:
+    from databricks.sdk.service.compute import Language as CmdLanguage
+
+    context_id = _get_or_create_context(ws, cluster_id)
     try:
         result = ws.command_execution.execute(
-            cluster_id=cluster_id, context_id=ctx.id,
+            cluster_id=cluster_id, context_id=context_id,
             language=CmdLanguage.PYTHON, command=code,
         ).result(timeout=timedelta(seconds=timeout_s))
-    finally:
-        try:
-            ws.command_execution.destroy(cluster_id=cluster_id, context_id=ctx.id)
-        except Exception:  # pragma: no cover - best-effort
-            pass
+    except Exception:
+        # Context may have expired — recreate once and retry.
+        _CONTEXT_CACHE.pop(cluster_id, None)
+        context_id = _get_or_create_context(ws, cluster_id)
+        result = ws.command_execution.execute(
+            cluster_id=cluster_id, context_id=context_id,
+            language=CmdLanguage.PYTHON, command=code,
+        ).result(timeout=timedelta(seconds=timeout_s))
     status = result.status.value if result.status else "UNKNOWN"
     output = ""
     cause = None
@@ -344,6 +370,10 @@ async def write_test(ctx: StepContext) -> StepResult:
     )
     if produce.status != sm.PASSED:
         return produce
+    # Resolve the Lakebase PRIMARY connection HERE on the harness driver (the
+    # cluster SDK lacks the .postgres API and executors have no default auth) and
+    # inject host/user/token as literals into the ForeachWriter snippet.
+    pg_host, pg_user, pg_token = _resolve_lakebase_write_conn(ctx, cfg["branch"])
     code = snip.rtm_write_test(
         topic, cfg["bootstrap"], cfg["service_credential"],
         project_id=cfg["project_id"], branch=cfg["branch"],
@@ -351,9 +381,23 @@ async def write_test(ctx: StepContext) -> StepResult:
         checkpoint_path=checkpoint,
         metrics_table_fqn=cfg["metrics_table_fqn"],
         metrics_table_location=cfg["metrics_table_location"],
+        pg_host=pg_host, pg_user=pg_user, pg_token=pg_token,
         region=cfg["region"], source=VALIDATION_SOURCE,
     )
     return await _run_on_cluster(ctx, code, timeout_s=300)
+
+
+def _resolve_lakebase_write_conn(ctx: StepContext, branch: str) -> tuple[str, str, str]:
+    """Resolve (host, user, token) for the branch PRIMARY on the harness driver."""
+    import os as _os
+
+    ws = ctx.ws or _new_ws()
+    name = pps.endpoint_resource_name(branch, pps.PRIMARY_ENDPOINT_ID, pps.PIPELINES_PROJECT)
+    endpoint = ws.postgres.get_endpoint(name=name)
+    host = pps._endpoint_host(endpoint)
+    cred = ws.postgres.generate_database_credential(endpoint=name)
+    user = _os.getenv("DATABRICKS_CLIENT_ID") or ws.current_user.me().user_name
+    return host, user, cred.token
 
 
 async def cdf_manual(ctx: StepContext) -> StepResult:

@@ -213,6 +213,9 @@ def rtm_write_test(
     checkpoint_path: str,
     metrics_table_fqn: str,
     metrics_table_location: str,
+    pg_host: str,
+    pg_user: str,
+    pg_token: str,
     region: str = "us-east-1",
     source: str = "validation",
     trigger: str = "15 seconds",
@@ -248,7 +251,11 @@ try:
                                    BooleanType, MapType)
     from pyspark.sql.streaming import StreamingQueryListener
 
-    spark.conf.set("spark.databricks.streaming.realTimeMode.enabled", "true")
+    # RTM is enabled as a STATIC cluster conf by build_validation_cluster_spec /
+    # rtm_spark_conf(); it CANNOT be set at runtime (raises CANNOT_MODIFY_CONFIG),
+    # so only set it defensively when the cluster did not already provide it.
+    if spark.conf.get("spark.databricks.streaming.realTimeMode.enabled", "false") != "true":
+        spark.conf.set("spark.databricks.streaming.realTimeMode.enabled", "true")
 
     # --- buffered delta-rs streaming-metrics listener (P5a, §1.11) ------------
     # onQueryProgress() ONLY enqueues; a daemon thread flushes batches via
@@ -317,21 +324,17 @@ try:
         "fault_active, metadata, source) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )
+    # Lakebase connection is resolved ON THE HARNESS DRIVER (which has the newer
+    # databricks-sdk with the .postgres API + auth) and injected as literals —
+    # the cluster's SDK lacks .postgres and executors have no default auth.
+    PG_HOST = {pg_host!r}
+    PG_USER = {pg_user!r}
+    PG_TOKEN = {pg_token!r}
     class LakebaseWriter:
         def open(self, partition_id, epoch_id):
-            w = WorkspaceClient()
-            parent = "projects/" + PROJECT_ID + "/branches/" + BRANCH_ID
-            endpoints = list(w.postgres.list_endpoints(parent=parent))
-            if not endpoints:
-                raise RuntimeError("No Lakebase endpoints on " + parent)
-            primary = next((e for e in endpoints
-                            if getattr(e, "endpoint_type", "") == "READ_WRITE"), endpoints[0])
-            endpoint = w.postgres.get_endpoint(name=primary.name)
-            cred = w.postgres.generate_database_credential(endpoint=primary.name)
-            pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
             self.conn = psycopg2.connect(
-                host=endpoint.status.hosts.host, port=5432, dbname=PG_DATABASE,
-                user=pg_user, password=cred.token, sslmode="require")
+                host=PG_HOST, port=5432, dbname=PG_DATABASE,
+                user=PG_USER, password=PG_TOKEN, sslmode="require")
             self.conn.autocommit = True
             self.cur = self.conn.cursor()
             return True
