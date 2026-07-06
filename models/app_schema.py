@@ -113,10 +113,25 @@ async def ensure_pipeline_deployment_table(db: _Executor) -> None:
 
 
 async def ensure_provisioned_resource_table(db: _Executor) -> None:
-    """Create the ``provisioned_resource`` ledger table + indexes."""
+    """Create the ``provisioned_resource`` ledger table + indexes.
+
+    ``CREATE INDEX IF NOT EXISTS`` performs a Postgres **ownership check before**
+    the IF-NOT-EXISTS skip, so if the table was created by a different identity
+    (e.g. seeded by a human before the app SP first ran), the index DDL raises
+    ``InsufficientPrivilegeError`` ("must be owner of table ...") even though the
+    index already exists — which previously failed the whole app-backend init and
+    503'd every admin route. The index is a non-critical perf optimization, so
+    tolerate that specific case (re-raise anything else) to keep boot resilient.
+    """
     await db.execute(PROVISIONED_RESOURCE_DDL)
     for index_ddl in PROVISIONED_RESOURCE_INDEXES:
-        await db.execute(index_ddl)
+        try:
+            await db.execute(index_ddl)
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            if "must be owner" in msg or "insufficientprivilege" in type(exc).__name__.lower():
+                continue
+            raise
 
 
 async def ensure_app_schema(db: _Executor) -> None:
