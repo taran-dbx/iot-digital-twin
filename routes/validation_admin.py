@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.state import AppState, get_app_state
 from services import app_permissions, validation_service
-from services.validation_service import ValidationError
+from services.validation_service import IncompleteSetupError, ValidationError
 
 logger = logging.getLogger("iot_digital_twin.routes.validation_admin")
 
@@ -87,6 +87,10 @@ async def validate_start(
     db = _require_db(state)
     try:
         setup = await validation_service.prepare_start(db, industry)
+    except IncompleteSetupError as exc:
+        # Draft missing required inputs — a clear 400, never a 500, so the button
+        # is safe to press on an incomplete draft.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     _run_in_background(db, setup)

@@ -784,6 +784,7 @@ async def provision_lakebase_role(
     database: str = "databricks_postgres",
     endpoint_name: str | None = None,
     sink_tables: Any = ("sensor_readings",),
+    ws: Any | None = None,
     **kwargs: Any,
 ) -> list[dict]:
     """Register a service principal as an OAuth-auth Postgres role and grant
@@ -829,7 +830,7 @@ async def provision_lakebase_role(
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
-    w = WorkspaceClient()
+    w = ws or WorkspaceClient()
 
     # Resolve the SP client id when not supplied — when the app runs as its
     # own SP, ``current_user.me().user_name`` is the SP's client id.

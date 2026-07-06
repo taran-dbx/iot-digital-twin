@@ -218,3 +218,47 @@ async def test_cdf_verify_passes_specific_shadow_table(monkeypatch):
     result = await vs.cdf_verify(_ctx("realtime"))
     assert result.status == sm.PASSED
     assert captured["code"] == "CDF::sensor_readings"
+
+
+# ---------------------------------------------------------------------------
+# provision_cluster must NOT leak a cluster when bring-up / library install fails
+# ---------------------------------------------------------------------------
+class _FakeMe:
+    user_name = "sp-app-id"
+
+
+class _RecordingClusters:
+    def __init__(self):
+        self.deleted = None
+
+    def delete(self, cluster_id=None):
+        self.deleted = cluster_id
+
+
+class _ProvisionWs:
+    def __init__(self, clusters):
+        self.clusters = clusters
+        self.current_user = type("U", (), {"me": staticmethod(lambda: _FakeMe())})()
+
+
+@pytest.mark.asyncio
+async def test_provision_cluster_terminates_created_cluster_on_failure(monkeypatch):
+    clusters = _RecordingClusters()
+    ws = _ProvisionWs(clusters)
+
+    monkeypatch.setattr(vs, "_pick_gp_node", lambda w: ("m5.xlarge", 4))
+    monkeypatch.setattr(vs.vc, "worker_sizing", lambda parts, cores: {"workers": 1})
+    monkeypatch.setattr(vs.vc, "build_validation_cluster_spec", lambda **k: {"cluster_name": "iot-validate-x"})
+    monkeypatch.setattr(vs, "_create_validation_cluster", lambda w, spec: "0706-created")
+
+    async def boom(w, cluster_id):
+        raise RuntimeError("cluster 0706-created entered PENDING timeout")
+
+    monkeypatch.setattr(vs, "_wait_cluster_running", boom)
+
+    ctx = StepContext(db=None, setup=_SETUP, state={}, key="provision_cluster",
+                      step="provision_cluster", mode=None, ws=ws)
+    with pytest.raises(RuntimeError):
+        await vs.provision_cluster(ctx)
+    # The just-created cluster was terminated rather than leaked.
+    assert clusters.deleted == "0706-created"

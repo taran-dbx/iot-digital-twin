@@ -48,6 +48,7 @@ def repo(monkeypatch):
         "enabled_modes": ["microbatch"],
         "validation_state": {},
         "warehouse_id": "wh-1",
+        "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9098",
     }
     fake = FakeRepo(setup)
     monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry",
@@ -150,6 +151,7 @@ def rt_repo(monkeypatch):
         "enabled_modes": ["realtime"],
         "validation_state": {},
         "warehouse_id": "wh-1",
+        "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9098",
     }
     fake = FakeRepo(setup)
     monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry",
@@ -376,3 +378,75 @@ async def test_get_state_none_when_no_state(monkeypatch):
 async def test_get_state_none_when_no_setup(monkeypatch):
     _repo_with(monkeypatch, {"id": "s", "industry": "other", "validation_state": {}})
     assert await vs.get_state(None, "pharmaceutical") is None
+
+
+# ---------------------------------------------------------------------------
+# prepare_start readiness guard (spec §1.10 — never 500; 4xx on incomplete draft)
+# ---------------------------------------------------------------------------
+def _ready_setup(**extra):
+    """A setup that has every input an interactive validation run needs."""
+    base = {
+        "id": "setup-ready",
+        "industry": "automotive",
+        "enabled_modes": ["realtime", "microbatch", "zerobus"],
+        "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9098",
+        "warehouse_id": "wh-1",
+        "validation_state": {},
+    }
+    base.update(extra)
+    return base
+
+
+async def test_incomplete_setup_error_is_validation_error():
+    # The route relies on the subclass relationship (catch 400 before 404).
+    assert issubclass(vs.IncompleteSetupError, vs.ValidationError)
+
+
+async def test_prepare_start_valid_returns_initial_state(monkeypatch):
+    fake = _repo_with(monkeypatch, _ready_setup())
+    out = await vs.prepare_start(None, "automotive")
+    state = out["validation_state"]
+    # A fresh, fully-pending state was built and persisted synchronously.
+    assert state["sequence"] == sm.build_sequence(
+        ["realtime", "microbatch", "zerobus"]
+    )
+    assert state["steps"]["provision_cluster"]["status"] == sm.PENDING
+    assert fake.setup["validation_state"]["sequence"]  # persisted
+
+
+async def test_prepare_start_incomplete_missing_warehouse_raises(monkeypatch):
+    _repo_with(monkeypatch, _ready_setup(warehouse_id=None))
+    with pytest.raises(vs.IncompleteSetupError) as ei:
+        await vs.prepare_start(None, "automotive")
+    assert "warehouse_id" in str(ei.value)
+    assert "complete the source config first" in str(ei.value)
+
+
+async def test_prepare_start_incomplete_missing_bootstrap_raises(monkeypatch):
+    _repo_with(monkeypatch, _ready_setup(bootstrap_servers="   "))
+    with pytest.raises(vs.IncompleteSetupError) as ei:
+        await vs.prepare_start(None, "automotive")
+    assert "bootstrap_servers" in str(ei.value)
+
+
+async def test_prepare_start_incomplete_no_enabled_modes_raises(monkeypatch):
+    _repo_with(monkeypatch, _ready_setup(enabled_modes=[]))
+    with pytest.raises(vs.IncompleteSetupError) as ei:
+        await vs.prepare_start(None, "automotive")
+    assert "enabled_modes" in str(ei.value)
+
+
+async def test_prepare_start_zerobus_only_needs_no_bootstrap(monkeypatch):
+    # Zerobus is serverless (no Kafka), so a missing broker list is fine.
+    _repo_with(monkeypatch, _ready_setup(enabled_modes=["zerobus"],
+                                         bootstrap_servers=None))
+    out = await vs.prepare_start(None, "automotive")
+    assert out["validation_state"]["sequence"] == sm.build_sequence(["zerobus"])
+
+
+async def test_prepare_start_missing_setup_raises_plain_validation_error(monkeypatch):
+    # No setup at all → base ValidationError (route maps to 404), NOT incomplete.
+    _repo_with(monkeypatch, {"id": "s", "industry": "other", "validation_state": {}})
+    with pytest.raises(vs.ValidationError) as ei:
+        await vs.prepare_start(None, "automotive")
+    assert not isinstance(ei.value, vs.IncompleteSetupError)

@@ -104,6 +104,24 @@ async def test_start_404_when_no_setup(client):
     assert resp.status_code == 404
 
 
+async def test_start_400_when_setup_incomplete(client):
+    # An incomplete draft (e.g. no bootstrap_servers / warehouse_id) must return a
+    # clean 4xx with a helpful message — never a 500 — so the health-page e2e
+    # button can be pressed safely on a draft pipeline.
+    c, monkeypatch = client
+    from services.validation_service import IncompleteSetupError
+
+    monkeypatch.setattr(
+        validation_service, "prepare_start",
+        AsyncMock(side_effect=IncompleteSetupError(
+            "complete the source config first — missing: warehouse_id"
+        )),
+    )
+    resp = await c.post("/api/admin/industries/automotive/validate/start")
+    assert resp.status_code == 400
+    assert "complete the source config first" in resp.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # state
 # ---------------------------------------------------------------------------

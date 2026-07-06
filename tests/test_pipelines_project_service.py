@@ -188,6 +188,57 @@ class TestProvisionIndustryBranch:
             await pps.provision_industry_branch("pharmaceutical", ws=ws, db=MagicMock())
             rec.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_registers_app_sp_role_on_branch(self, monkeypatch) -> None:
+        # Roles are branch-scoped: provisioning a branch must register the app's
+        # OWN SP as a Postgres role on it (else get_read_conn → password auth fail).
+        ws = _make_ws(branch_exists=False, replica_exists=False)
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-0d42")
+
+        calls: list[dict] = []
+        from services import provisioning_service
+
+        async def _fake_role(**kwargs):
+            calls.append(kwargs)
+            return [{"resource": "role", "status": "created"}]
+
+        monkeypatch.setattr(provisioning_service, "provision_lakebase_role", _fake_role)
+
+        recorded: list[dict] = []
+
+        async def _record(_db, **kwargs):
+            recorded.append(kwargs)
+            return kwargs
+
+        with patch.object(pps, "record_resource", side_effect=_record):
+            result = await pps.provision_industry_branch(
+                "pharmaceutical", ws=ws, db=MagicMock(), setup_id="setup-1"
+            )
+
+        # The app SP was registered as a role on THIS branch.
+        assert calls and calls[0]["sp_client_id"] == "app-sp-0d42"
+        assert calls[0]["branch_id"] == "pharmaceutical"
+        assert calls[0]["project_id"] == pps.PIPELINES_PROJECT
+        # Recorded in the ledger for visibility.
+        role_rows = [r for r in recorded if r["resource_type"] == "lakebase_role"]
+        assert role_rows and role_rows[0]["metadata"]["sp_client_id"] == "app-sp-0d42"
+        assert result["app_sp_role"]["client_id"] == "app-sp-0d42"
+
+    @pytest.mark.asyncio
+    async def test_branch_role_failure_is_non_fatal(self, monkeypatch) -> None:
+        ws = _make_ws(branch_exists=False, replica_exists=False)
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-0d42")
+        from services import provisioning_service
+
+        async def _boom(**kwargs):
+            raise RuntimeError("lakebase project-admin required")
+
+        monkeypatch.setattr(provisioning_service, "provision_lakebase_role", _boom)
+        # Branch provisioning still returns its contract (role step is best-effort).
+        result = await pps.provision_industry_branch("pharmaceutical", ws=ws)
+        assert result["branch"] == "pharmaceutical"
+        assert result["app_sp_role"]["results"][0]["status"] == "failed"
+
 
 # ---------------------------------------------------------------------------
 # get_read_conn / get_write_conn

@@ -239,8 +239,28 @@ async def _wait_cluster_running(ws: Any, cluster_id: str) -> None:
         await asyncio.sleep(_CLUSTER_POLL_S)
 
 
+def _terminate_cluster_sync(ws: Any, cluster_id: str) -> None:
+    """Best-effort terminate ``cluster_id`` (Clusters ``delete`` = terminate)."""
+    try:
+        ws.clusters.delete(cluster_id=cluster_id)
+    except Exception as exc:  # pragma: no cover - best-effort cleanup
+        logger.warning("failed to terminate validation cluster %s: %s", cluster_id, exc)
+
+
+async def _terminate_cluster(ws: Any, cluster_id: str | None) -> None:
+    if not cluster_id:
+        return
+    await asyncio.to_thread(_terminate_cluster_sync, ws, cluster_id)
+
+
 async def provision_cluster(ctx: StepContext) -> StepResult:
-    """Provision the interactive validation cluster (DBR 18.2, verified config)."""
+    """Provision the interactive validation cluster (DBR 18.2, verified config).
+
+    If bring-up (wait-for-RUNNING) or the library install fails, the freshly
+    created cluster is **terminated** before the error propagates so a failed /
+    timed-out run never leaks an orphaned PENDING cluster (each start otherwise
+    creates a brand-new cluster).
+    """
     ws = ctx.ws or _new_ws()
     cfg = _cfg(ctx)
     node_type_id, cores = await asyncio.to_thread(_pick_gp_node, ws)
@@ -253,11 +273,15 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
         cluster_name=f"iot-validate-{cfg['industry']}",
     )
     cluster_id = await asyncio.to_thread(_create_validation_cluster, ws, spec)
-    await _wait_cluster_running(ws, cluster_id)
-    # The validation snippets (topic create / producer) import kafka-python +
-    # the MSK-IAM signer, which are not on the base DBR image — install them and
-    # wait until they are ready before any snippet runs.
-    await _install_cluster_libraries(ws, cluster_id, VALIDATION_CLUSTER_LIBRARIES)
+    try:
+        await _wait_cluster_running(ws, cluster_id)
+        # The validation snippets (topic create / producer) import kafka-python +
+        # the MSK-IAM signer, which are not on the base DBR image — install them and
+        # wait until they are ready before any snippet runs.
+        await _install_cluster_libraries(ws, cluster_id, VALIDATION_CLUSTER_LIBRARIES)
+    except Exception:
+        await _terminate_cluster(ws, cluster_id)
+        raise
     return StepResult(sm.PASSED, data={"cluster_id": cluster_id,
                                        "worker_sizing": sizing})
 

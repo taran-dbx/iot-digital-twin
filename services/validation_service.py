@@ -46,6 +46,51 @@ class ValidationError(RuntimeError):
     """Raised for caller-facing validation flow errors (mapped to HTTP 4xx)."""
 
 
+class IncompleteSetupError(ValidationError):
+    """The setup exists but lacks inputs required to run an interactive validation.
+
+    Mapped to HTTP **400** by the route (caught before the base ``ValidationError``
+    → 404) so the health-page end-to-end test button returns a clear "complete the
+    source config first" message instead of a 500 when pressed on a draft pipeline
+    that has no ``bootstrap_servers`` / ``warehouse_id`` / ``enabled_modes`` yet.
+    """
+
+
+# Modes whose validation lanes talk to Kafka and therefore need a broker list.
+# Zerobus is serverless (Delta Ingest), so it needs no ``bootstrap_servers``.
+_KAFKA_MODES: frozenset[str] = frozenset({"realtime", "microbatch"})
+
+
+def _missing_start_inputs(setup: dict) -> list[str]:
+    """Return the required setup inputs missing for an interactive validation run.
+
+    Every enabled lane runs a DBSQL read, so ``warehouse_id`` is always required;
+    the Kafka lanes additionally need ``bootstrap_servers``; a setup with no enabled
+    modes has nothing to validate.  Returned in a stable order for a deterministic
+    message.
+    """
+    enabled = [m for m in (setup.get("enabled_modes") or []) if m]
+    missing: list[str] = []
+    if not enabled:
+        missing.append("enabled_modes")
+    if any(m in _KAFKA_MODES for m in enabled) and not str(
+        setup.get("bootstrap_servers") or ""
+    ).strip():
+        missing.append("bootstrap_servers")
+    if not setup.get("warehouse_id"):
+        missing.append("warehouse_id")
+    return missing
+
+
+def assert_ready_for_start(setup: dict) -> None:
+    """Raise :class:`IncompleteSetupError` when ``setup`` cannot run a validation."""
+    missing = _missing_start_inputs(setup)
+    if missing:
+        raise IncompleteSetupError(
+            "complete the source config first — missing: " + ", ".join(missing)
+        )
+
+
 @dataclass(frozen=True)
 class StepResult:
     """The outcome of running one step executor.
@@ -179,8 +224,14 @@ async def run_machine(
 # the background (a full run can take minutes provisioning the cluster).
 # ---------------------------------------------------------------------------
 async def prepare_start(db: Any, industry: str) -> dict:
-    """Build a fresh validation state, persist it, return the setup (with state)."""
+    """Build a fresh validation state, persist it, return the setup (with state).
+
+    Raises :class:`ValidationError` (→404) when no setup exists and
+    :class:`IncompleteSetupError` (→400) when the setup is a draft still missing
+    the inputs an interactive run needs — so the caller never sees a 500.
+    """
     setup = await _require_setup(db, industry)
+    assert_ready_for_start(setup)
     state = sm.initial_state(setup.get("enabled_modes") or [])
     await _persist(db, setup["id"], state)
     return {**setup, "validation_state": state}

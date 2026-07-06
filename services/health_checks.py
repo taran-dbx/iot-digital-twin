@@ -132,6 +132,21 @@ def _rows(result: dict | None) -> list[dict]:
     return list((result or {}).get("data") or [])
 
 
+def _is_missing_relation(exc: Exception) -> bool:
+    """True when the error is Postgres 'undefined table/schema' (42P01 / 3F000).
+
+    On a bare / draft branch the LakeTS registry (``lakets._chronotable_registry``)
+    and CDF (``wal2delta.tables``) objects legitimately don't exist yet — that is
+    "not provisioned", not a health failure, so callers surface it as ``skip``
+    rather than a raw ``UndefinedTableError`` string.
+    """
+    sqlstate = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if sqlstate in ("42P01", "3F000"):  # undefined_table / invalid_schema_name
+        return True
+    msg = str(exc).lower()
+    return "does not exist" in msg and ("relation" in msg or "schema" in msg)
+
+
 # ---------------------------------------------------------------------------
 # Tier 1 — Unity Catalog / DBSQL
 # ---------------------------------------------------------------------------
@@ -309,6 +324,11 @@ async def check_chronotable(conn: Any, *, table: str = CHRONOTABLE) -> dict:
             f"{table}: ChronoTable OK, {forward} forward partitions (to {window_end}), columns match SSOT",
         )
     except Exception as exc:
+        if _is_missing_relation(exc):
+            return _result(
+                CHRONOTABLE_CHECK, SKIP,
+                "not provisioned — LakeTS ChronoTable not set up on this branch yet",
+            )
         return _result(CHRONOTABLE_CHECK, FAIL, f"chronotable check failed: {exc}")
 
 
@@ -362,6 +382,11 @@ async def check_cdf_sync(
             f"{qualified} not STREAMING/advancing (streaming={streaming}, advanced={advanced})",
         )
     except Exception as exc:
+        if _is_missing_relation(exc):
+            return _result(
+                CDF_SYNC_CHECK, SKIP,
+                "not provisioned — managed CDF sync not set up on this branch yet",
+            )
         return _result(CDF_SYNC_CHECK, FAIL, f"cdf check failed: {exc}")
 
 
@@ -369,12 +394,16 @@ async def check_cdf_sync(
 # Tier 1 — UC grants + secrets
 # ---------------------------------------------------------------------------
 async def check_grants(catalog: str | None, ws: Any, *, principal: str | None = None) -> dict:
-    """Verify the shared streaming SP holds grants on the pipeline's catalog."""
-    from databricks.sdk.service.catalog import SecurableType
+    """Verify the shared streaming SP holds grants on the pipeline's catalog.
 
+    ``securable_type`` MUST be the lowercase string token (``"catalog"``), NOT the
+    SDK ``SecurableType`` enum: the enum stringifies to ``"SecurableType.CATALOG"``
+    and RPC GetPermissions rejects it with "SECURABLETYPE.CATALOG is not a valid
+    securable type" (same gotcha as ``routes/provisioning.py::_grant_zerobus_sp``).
+    """
     try:
         principal = principal or cat.resolve_streaming_sp_principal(ws)
-        resp = ws.grants.get(securable_type=SecurableType.CATALOG, full_name=catalog)
+        resp = ws.grants.get(securable_type="catalog", full_name=catalog)
         assignments = getattr(resp, "privilege_assignments", None) or []
         principals = {getattr(a, "principal", None) for a in assignments}
         if principal not in principals:

@@ -56,6 +56,9 @@ TEARDOWN_ORDER_PROJECT = 5
 TEARDOWN_ORDER_BRANCH = 20
 TEARDOWN_ORDER_PRIMARY = 25
 TEARDOWN_ORDER_REPLICA = 30
+# Branch-scoped Postgres role — dropped implicitly when the branch is deleted, so
+# it is recorded (for visibility) but torn down earliest and needs no deleter.
+TEARDOWN_ORDER_ROLE = 35
 
 # Endpoint readiness polling.
 _WAIT_TIMEOUT_S = 120
@@ -321,6 +324,15 @@ async def provision_industry_branch(
         "replica_host": replica_host,
     }
 
+    # 5.5 Register the app's OWN service principal as a Postgres role on THIS
+    #     branch.  Lakebase roles are BRANCH-scoped, so without this the app's
+    #     read/write path (get_read_conn / get_write_conn) fails with "password
+    #     authentication failed" on every freshly provisioned industry branch.
+    result["app_sp_role"] = await _ensure_app_sp_branch_role(
+        ws, project_id, branch,
+        db=db, setup_id=setup_id, deployment_id=deployment_id,
+    )
+
     # 6. Ledger.
     if db is not None and setup_id is not None:
         await _record_ledger(
@@ -339,6 +351,81 @@ async def provision_industry_branch(
         )
 
     return result
+
+
+def _app_sp_client_id(ws: Any) -> str | None:
+    """Resolve the app's own service-principal client id (its connect identity).
+
+    Prefer the injected ``DATABRICKS_CLIENT_ID`` (set for the deployed app SP);
+    fall back to the caller identity (``current_user.me().user_name`` is the SP's
+    client id when the app runs as its own SP).
+    """
+    import os
+
+    client_id = os.getenv("DATABRICKS_CLIENT_ID")
+    if client_id:
+        return client_id
+    try:
+        return ws.current_user.me().user_name
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+async def _ensure_app_sp_branch_role(
+    ws: Any,
+    project_id: str,
+    branch: str,
+    *,
+    db: Any | None = None,
+    setup_id: Any | None = None,
+    deployment_id: Any | None = None,
+) -> dict:
+    """Register the app's own SP as an OAuth Postgres role on ``branch``.
+
+    Roles are branch-scoped: this is what lets the app read the branch replica /
+    write the primary without a "password authentication failed" error.  Mirrors
+    the app-backend grant (``LAKEBASE_OAUTH_V1`` / ``SERVICE_PRINCIPAL`` /
+    ``DATABRICKS_SUPERUSER``).  Best-effort — never raises — and recorded in the
+    ledger for visibility.
+    """
+    from services import provisioning_service
+
+    client_id = _app_sp_client_id(ws)
+    if not client_id:
+        logger.warning(
+            "Could not resolve app SP client id — skipping branch role for %s", branch
+        )
+        return {"status": "skipped", "reason": "unresolved app SP client id"}
+
+    try:
+        role_results = await provisioning_service.provision_lakebase_role(
+            sp_client_id=client_id,
+            project_id=project_id,
+            branch_id=branch,
+            ws=ws,
+        )
+    except Exception as exc:  # pragma: no cover - provision_lakebase_role is best-effort
+        logger.warning(
+            "App SP branch-role registration failed for %s (non-fatal): %s", branch, exc
+        )
+        role_results = [{"status": "failed", "error": str(exc)[:200]}]
+
+    if db is not None and setup_id is not None:
+        await record_resource(
+            db,
+            setup_id=setup_id,
+            deployment_id=deployment_id,
+            resource_type="lakebase_role",
+            identifier=f"{branch}:{client_id}",
+            parent_ref=branch_resource_name(branch, project_id),
+            teardown_order=TEARDOWN_ORDER_ROLE,
+            metadata={
+                "branch_scoped": True,
+                "sp_client_id": client_id,
+                "results": role_results,
+            },
+        )
+    return {"client_id": client_id, "results": role_results}
 
 
 async def _record_ledger(

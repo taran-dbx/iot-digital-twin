@@ -256,6 +256,25 @@ class TestCheckChronotable:
         res = await hc.check_chronotable(conn)
         assert res["status"] == hc.FAIL
 
+    async def test_skip_when_registry_not_provisioned(self):
+        # A bare/draft branch has no LakeTS registry yet — surface "not
+        # provisioned" (skip), NOT a raw UndefinedTableError string.
+        exc = Exception('relation "lakets._chronotable_registry" does not exist')
+        conn = MagicMock()
+        conn.fetchval = AsyncMock(side_effect=exc)
+        res = await hc.check_chronotable(conn)
+        assert res["status"] == hc.SKIP
+        assert "not provisioned" in res["detail"].lower()
+
+    async def test_skip_when_missing_relation_by_sqlstate(self):
+        class _Undefined(Exception):
+            sqlstate = "42P01"
+
+        conn = MagicMock()
+        conn.fetchval = AsyncMock(side_effect=_Undefined("boom"))
+        res = await hc.check_chronotable(conn)
+        assert res["status"] == hc.SKIP
+
 
 # ===========================================================================
 # check_cdf_sync  (wal2delta.tables shadow row STREAMING + advancing lsn)
@@ -309,6 +328,16 @@ class TestCheckCdfSync:
         res = await hc.check_cdf_sync(conn, sleeper=AsyncMock())
         assert res["status"] == hc.FAIL
 
+    async def test_skip_when_cdf_not_provisioned(self):
+        # No wal2delta.tables relation yet on a bare branch → skip, not a raw error.
+        conn = MagicMock()
+        conn.fetch = AsyncMock(
+            side_effect=Exception('relation "wal2delta.tables" does not exist')
+        )
+        res = await hc.check_cdf_sync(conn, sleeper=AsyncMock())
+        assert res["status"] == hc.SKIP
+        assert "not provisioned" in res["detail"].lower()
+
 
 # ===========================================================================
 # check_grants
@@ -340,6 +369,15 @@ class TestCheckGrants:
         ws.grants.get = MagicMock(side_effect=Exception("PERMISSION_DENIED"))
         res = await hc.check_grants("iot_pharma", ws, principal="sp-app-id")
         assert res["status"] == hc.FAIL
+
+    async def test_uses_lowercase_securable_string(self):
+        # RPC GetPermissions rejects the SecurableType enum (stringifies to
+        # "SecurableType.CATALOG"); it wants the lowercase string "catalog".
+        ws = _grants_ws(["sp-app-id"])
+        await hc.check_grants("iot_pharma", ws, principal="sp-app-id")
+        _, kwargs = ws.grants.get.call_args
+        assert kwargs["securable_type"] == "catalog"
+        assert isinstance(kwargs["securable_type"], str)
 
 
 # ===========================================================================
