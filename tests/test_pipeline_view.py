@@ -174,6 +174,28 @@ class TestBuildPipelineView:
         assert pv.rollup_health([{"health": "draft"}]) == pv.HEALTH_DRAFT
 
 
+class TestRollupApiHealth:
+    def _c(self, tier, status):
+        return {"name": "x", "tier": tier, "status": status, "detail": ""}
+
+    def test_unhealthy_when_any_api_check_fails(self):
+        checks = [self._c("api", "pass"), self._c("api", "fail")]
+        assert pv.rollup_api_health(checks) == pv.HEALTH_UNHEALTHY
+
+    def test_healthy_when_pass_and_none_failed(self):
+        checks = [self._c("api", "pass"), self._c("api", "skip")]
+        assert pv.rollup_api_health(checks) == pv.HEALTH_HEALTHY
+
+    def test_unknown_when_all_skipped(self):
+        checks = [self._c("api", "skip"), self._c("api", "skip")]
+        assert pv.rollup_api_health(checks) == pv.HEALTH_UNKNOWN
+
+    def test_e2e_checks_never_gate_health(self):
+        # A failing Tier-2 check must NOT make the pipeline unhealthy.
+        checks = [self._c("api", "pass"), self._c("e2e", "fail")]
+        assert pv.rollup_api_health(checks) == pv.HEALTH_HEALTHY
+
+
 class TestCollectJobIds:
     def test_collects_only_deployed_distinct(self):
         deployments = [

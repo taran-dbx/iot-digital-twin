@@ -52,6 +52,19 @@ STATUS_STOPPED = "stopped"
 HEALTH_DRAFT = "draft"
 HEALTH_HEALTHY = "healthy"
 HEALTH_UNHEALTHY = "unhealthy"
+# ``unknown`` is the live-check rollup verdict when nothing failed but nothing
+# affirmatively passed either (e.g. every Tier-1 check was ``skip``ped).
+HEALTH_UNKNOWN = "unknown"
+
+# --- Tier-1 (API/DB) live health-check verdicts ------------------------------
+# The two-tier health service (``services/health_checks.py``) emits one
+# ``{name, tier, status, detail}`` per check.  These are the shared vocabularies
+# so the pure rollup below and the checks never drift.
+CHECK_PASS = "pass"
+CHECK_FAIL = "fail"
+CHECK_SKIP = "skip"
+TIER_API = "api"   # runs from the app backend, no interactive cluster
+TIER_E2E = "e2e"   # opt-in interactive harness (spins the cluster)
 
 # ``pipeline_deployment.status`` values that (together with a ``job_id``) mean the
 # mode's job was actually created in the workspace.
@@ -215,6 +228,23 @@ def build_pipeline_view(
         "startable": startable,
         "ready": startable,
     }
+
+
+def rollup_api_health(checks: Iterable[Mapping]) -> str:
+    """Roll up the Tier-1 (``tier="api"``) check results into a health verdict.
+
+    Only ``api`` checks count toward the pipeline's live health — the opt-in
+    ``e2e`` interactive test (§1.16) never gates it.  ``unhealthy`` if any Tier-1
+    check ``fail``ed; ``healthy`` if at least one ``pass``ed and none failed;
+    ``unknown`` when everything was ``skip``ped (e.g. no warehouse configured).
+    """
+    api = [c for c in (checks or []) if c.get("tier") == TIER_API]
+    statuses = {c.get("status") for c in api}
+    if CHECK_FAIL in statuses:
+        return HEALTH_UNHEALTHY
+    if CHECK_PASS in statuses:
+        return HEALTH_HEALTHY
+    return HEALTH_UNKNOWN
 
 
 def collect_job_ids(deployments: Iterable[Mapping]) -> list[str]:

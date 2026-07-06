@@ -382,6 +382,63 @@ only dotted variants are ever created.
 - Stored on `pipeline_setup` as `records_per_sec` (+ derived `est_mb_per_sec`);
   no metrics toggle is stored (metrics always on — §1.11).
 
+### 1.16 Two-tier checks (fast API health vs. opt-in interactive e2e)
+
+Pipeline health splits into **two tiers** so day-to-day health never needs the
+interactive cluster; the cluster is reserved for an opt-in end-to-end test.
+
+**Tier 1 — fast API/DB health (default, no cluster, target seconds).**
+Implemented in `services/health_checks.py`; run from the app backend as the
+service principal using only the SDK / REST / DBSQL / a psycopg read connection
+to the branch. Each check returns `{name, tier:"api", status: pass|fail|skip,
+detail}` and every check degrades gracefully (a missing resource or API error →
+`fail`, a missing prerequisite like the warehouse → `skip`, never an exception).
+Checks (for a configured/deployed pipeline):
+
+| Check | How (Tier-1, no cluster) |
+|---|---|
+| `uc_catalog_schemas` | DBSQL `information_schema.schemata` — catalog + `realtime/microbatch/zerobus/metrics/checkpoints` |
+| `delta_tables` | DBSQL `information_schema.tables` — per enabled mode (`realtime.sensor_readings`, `microbatch.sensor_data`, `zerobus.iot_sensor_data`) |
+| `checkpoint_volume` | DBSQL `information_schema.volumes` — `checkpoints.stream_checkpoints` |
+| `metrics_table` | DBSQL `count(*)`/`max(timestamp)` on `metrics.streaming_metrics` (rows/freshness) |
+| `lakebase_endpoints` | `w.postgres.get_project/get_branch/get_endpoint` — project + branch + primary/replica `current_state ∈ {ACTIVE, IDLE}` |
+| `chronotable` | psycopg on branch replica — `lakets._chronotable_registry` (exists) + `lakets._chunk_metadata` (forward partitions, `range_end > now()`) + `information_schema.columns` matches the SSOT (`models/sensor_schema.py`) |
+| `cdf_sync` | psycopg on branch — `wal2delta.tables` row for `lakets_cdf._shadow_sensor_readings` is `STREAMING` **and** `committed_lsn` advances across two snapshots |
+| `uc_grants` | `w.grants.get(CATALOG, iot_<industry>)` — shared streaming SP present |
+| `secrets` | `w.secrets.list_secrets("iot-secrets")` — `sss-industries-client-id`/`-secret` present |
+| `jobs` | Jobs API `pipeline_status` (reused from `deployment_service`) — deployed mode job(s) `RUNNING` |
+| `interactive_cluster` | Clusters API `w.clusters.get` — **informational only**, always returned, never makes the pipeline unhealthy; its state is surfaced as `cluster_state` |
+
+The orchestrator `run_api_health_checks(setup_id) -> {checks, health, startable,
+cluster_state}` aggregates the **Tier-1** results (`pipeline_view.rollup_api_health`:
+`unhealthy` if any `api` check failed, `healthy` if any passed and none failed,
+else `unknown`); `startable = health == healthy`. This is the primary health for
+`GET /api/admin/pipelines/{setup_id}/health` (top-level `health`/`startable`
+reflect Tier-1; the deploy-gate rollup is preserved under `deploy_health`/
+`deploy_startable`) and the end-user pre-start runtime gate (§2.9).
+
+**Topic-existence verdict — Tier 2, not Tier 1.** Listing MSK topics needs a
+`KafkaAdminClient` authenticated with **MSK-IAM**, and that token is only
+obtainable **on a cluster** via
+`dbutils.credentials.getServiceCredentialsProvider("iot-rtm-sc")` (the verified
+path in §1.8). The app backend / SP has **no** `dbutils.credentials`, cannot mint
+an MSK-IAM token, and the public MSK bootstrap is not reachable from the Apps
+egress. So the `kafka_topics` check is emitted with `tier:"e2e"`, `status:"skip"`
+and a note that it belongs to the interactive test — it is **never** a Tier-1
+API check.
+
+**Tier 2 — interactive end-to-end test (opt-in, ~10 min, spins the cluster).**
+The existing validation harness (`services/validation_service.py` state machine,
+§1.7–1.13) is unchanged: source DNS/TCP/TLS connectivity, **topic existence /
+create**, produce→RTM-consume→land rows, CDF verify, metrics. It stays the
+on-demand, cluster-backed test, started via
+`POST /api/admin/industries/{industry}/validate/start` and polled at
+`.../validate/state`. The health response advertises it under `e2e_test`
+(`{tier:"e2e", spins_interactive_cluster:true, eta_minutes:10, start_endpoint,
+state_endpoint}`) so the frontend can offer "Run end-to-end test" distinctly from
+the fast Tier-1 health. The interactive cluster's live state is also surfaced in
+the Tier-1 payload (`cluster_state` / the `interactive_cluster` check).
+
 ## Decisions log (Section 1)
 
 | ID | Decision |

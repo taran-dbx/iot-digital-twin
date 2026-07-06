@@ -367,6 +367,71 @@ class TestPipelineHealth:
         assert body["resources"]["uc_catalog"][0]["health"] == "healthy"
         assert body["resources"]["job"][0]["health"] == "degraded"
 
+    async def test_no_ws_falls_back_to_deploy_gate_view(self) -> None:
+        # Default path: no WorkspaceClient (no creds) -> Tier-1 checks skipped, the
+        # endpoint still returns the ledger view + an empty checks list + e2e desc.
+        setup = {"id": "s1", "industry": "pharmaceutical", "status": "draft",
+                 "enabled_modes": ["realtime"]}
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
+        ), patch(
+            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
+        ), patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ), patch(
+            f"{MOD}._gather_api_health", AsyncMock(return_value=None)
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/pipelines/s1/health")
+        body = resp.json()
+        assert body["checks"] == []
+        assert body["cluster_state"] is None
+        assert body["health"] == "draft"          # deploy-gate view preserved
+        assert body["e2e_test"]["tier"] == "e2e"
+        assert body["e2e_test"]["spins_interactive_cluster"] is True
+
+    async def test_tier1_checks_become_primary_health(self) -> None:
+        # When the Tier-1 sweep runs, its rollup is the primary health/startable
+        # and checks[] + cluster_state are surfaced; deploy-gate view is preserved.
+        setup = {"id": "s1", "industry": "pharmaceutical", "status": "deployed",
+                 "enabled_modes": ["microbatch"]}
+        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed",
+                        "job_id": "j1"}]
+        api = {
+            "checks": [
+                {"name": "uc_catalog_schemas", "tier": "api", "status": "pass",
+                 "detail": "ok"},
+                {"name": "kafka_topics", "tier": "e2e", "status": "skip",
+                 "detail": "cluster-only"},
+            ],
+            "health": "healthy",
+            "startable": True,
+            "cluster_state": "TERMINATED",
+        }
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
+        ), patch(
+            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=deployments)
+        ), patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ), patch(
+            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})
+        ), patch(
+            f"{MOD}._gather_api_health", AsyncMock(return_value=api)
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/pipelines/s1/health")
+        body = resp.json()
+        assert body["health"] == "healthy"
+        assert body["startable"] is True
+        assert body["cluster_state"] == "TERMINATED"
+        assert len(body["checks"]) == 2
+        # deploy-gate rollup preserved for admin detail
+        assert "deploy_health" in body and "deploy_startable" in body
+        # Tier-2 topic check is present and marked e2e
+        topic = [c for c in body["checks"] if c["name"] == "kafka_topics"][0]
+        assert topic["tier"] == "e2e"
+
 
 # ---------------------------------------------------------------------------
 # DELETE /api/admin/pipelines/{setup_id}

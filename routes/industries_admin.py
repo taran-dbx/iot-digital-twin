@@ -36,11 +36,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.state import AppState, get_app_state
 from services import (
     app_permissions,
+    dbsql_service,
     deployment_repo,
     deployment_service,
+    health_checks,
     industry_provisioning_service,
     pipeline_setup_repo,
     pipeline_view,
+    pipelines_project_service,
     resource_ledger,
     teardown_service,
 )
@@ -140,6 +143,59 @@ def _rollup_health(
         "jobs_total": len(jobs),
         "enabled_modes": setup.get("enabled_modes") or [],
         "deployment_count": len(deployments),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tier-1 live API/DB health checks (spec §1.16) — fast, NO interactive cluster.
+# Best-effort: a missing WorkspaceClient (tests / no creds) degrades to ``None``
+# so the endpoint still returns the ledger-backed inventory instead of 500-ing.
+# ---------------------------------------------------------------------------
+async def _gather_api_health(setup: dict, deployments: list[dict]) -> dict | None:
+    """Run the Tier-1 API/DB health sweep for one pipeline, or ``None`` if no ws."""
+    try:
+        ws = deployment_service._new_ws()
+    except Exception as exc:  # pragma: no cover - no creds in tests
+        logger.info("Tier-1 API health checks skipped (no workspace client): %s", exc)
+        return None
+
+    warehouse_id = setup.get("warehouse_id")
+    run_sql = None
+    if warehouse_id:
+        async def run_sql(sql: str) -> dict:  # noqa: A001 - local binding
+            return await dbsql_service.execute_dbsql(sql, warehouse_id)
+
+    async def open_read_conn(branch: str):
+        return await pipelines_project_service.get_read_conn(branch, ws=ws)
+
+    try:
+        return await health_checks.gather_checks(
+            setup,
+            deployments,
+            ws=ws,
+            run_sql=run_sql,
+            open_read_conn=open_read_conn,
+        )
+    except Exception as exc:  # pragma: no cover - gather_checks is self-guarding
+        logger.warning("Tier-1 API health checks failed: %s", exc)
+        return None
+
+
+def _e2e_test_descriptor(industry: str) -> dict:
+    """Describe the opt-in Tier-2 interactive end-to-end test (spec §1.16)."""
+    return {
+        "tier": "e2e",
+        "available": True,
+        "spins_interactive_cluster": True,
+        "eta_minutes": 10,
+        "description": (
+            "Opt-in end-to-end test: spins the interactive validation cluster "
+            "(~10 min) to verify source DNS/TCP/TLS connectivity, Kafka topics, "
+            "and a produce→consume→land→metrics round-trip. Distinct from the "
+            "fast Tier-1 API health above."
+        ),
+        "start_endpoint": f"POST /api/admin/industries/{industry}/validate/start",
+        "state_endpoint": f"GET /api/admin/industries/{industry}/validate/state",
     }
 
 
@@ -368,12 +424,21 @@ async def list_pipelines(request: Request, state: AppState = Depends(get_app_sta
 async def pipeline_health(
     setup_id: str, request: Request, state: AppState = Depends(get_app_state)
 ):
-    """Return per-resource health for one pipeline by walking the ledger.
+    """Return per-pipeline health: **Tier-1 live API/DB checks** + ledger inventory.
 
-    Health is currently derived from the ``provisioned_resource`` ledger status.
-    Live (cheap) status checks — Lakebase endpoint state, CDF ``STREAMING`` — are
-    layered on by Phase 4's validation/health service; this endpoint is the
-    ledger-backed inventory that surface reads.
+    Primary health is the fast Tier-1 sweep (spec §1.16) — UC/DBSQL, Lakebase
+    endpoints, the ChronoTable + CDF sync, grants/secrets, metrics freshness, and
+    Jobs-API run state — run from the app backend with **no interactive cluster**.
+    Each check is ``{name, tier, status, detail}``; they aggregate into the
+    top-level ``health`` / ``startable`` and surface the informational
+    ``cluster_state``.  The opt-in Tier-2 interactive end-to-end test (which spins
+    the cluster ~10 min) is described under ``e2e_test``.
+
+    The deploy-gate rollup (``build_pipeline_view``) is preserved under
+    ``deploy_health`` / ``deploy_startable`` and the ledger inventory under
+    ``resource_health`` / ``resources`` for admin detail.  When no WorkspaceClient
+    is available (tests / no creds), the live checks are skipped and the endpoint
+    falls back to the deploy-gate view.
     """
     _require_admin(request)
     db = _require_db(state)
@@ -387,13 +452,29 @@ async def pipeline_health(
     running = _job_running_lookup(deployments)
 
     view = pipeline_view.build_pipeline_view(setup, deployments, running)
-    return {
+    response = {
         **view,
         "setup": setup,
         "deployments": deployments,
         "resource_health": _rollup_health(setup, deployments, resources),
         "resources": _group_resource_health(resources),
+        "e2e_test": _e2e_test_descriptor(setup.get("industry") or ""),
     }
+
+    # Tier-1 live health is the PRIMARY health for this endpoint (spec §1.16).
+    api = await _gather_api_health(setup, deployments)
+    if api is not None:
+        response["checks"] = api["checks"]
+        response["cluster_state"] = api["cluster_state"]
+        response["deploy_health"] = view["health"]
+        response["deploy_startable"] = view["startable"]
+        response["health"] = api["health"]
+        response["startable"] = api["startable"]
+        response["ready"] = api["startable"]
+    else:
+        response["checks"] = []
+        response["cluster_state"] = None
+    return response
 
 
 # ---------------------------------------------------------------------------
