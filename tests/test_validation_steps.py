@@ -250,6 +250,38 @@ async def test_cdf_manual_parks_even_if_shadow_prep_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dbsql_read_realtime_targets_cdf_synced_table(monkeypatch):
+    """Realtime data reaches UC only via the CDF-synced Delta table
+    (lb__shadow_sensor_readings_history) — NOT realtime.sensor_readings, which
+    doesn't exist (realtime writes land in the Lakebase ChronoTable)."""
+    captured = {}
+
+    async def fake_dbsql(sql, wh):
+        captured["sql"] = sql
+        return {"data": [{"n": 3}]}
+
+    monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
+    result = await vs.dbsql_read(_ctx("realtime"))
+    assert result.status == sm.PASSED
+    assert "lb__shadow_sensor_readings_history" in captured["sql"]
+    assert ".realtime.sensor_readings" not in captured["sql"]
+
+
+@pytest.mark.asyncio
+async def test_dbsql_read_microbatch_targets_sensor_data(monkeypatch):
+    captured = {}
+
+    async def fake_dbsql(sql, wh):
+        captured["sql"] = sql
+        return {"data": [{"n": 9}]}
+
+    monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
+    result = await vs.dbsql_read(_ctx("microbatch"))
+    assert result.status == sm.PASSED
+    assert ".microbatch.sensor_data" in captured["sql"]
+
+
+@pytest.mark.asyncio
 async def test_cdf_verify_checks_lakebase_not_cluster(monkeypatch):
     """cdf_verify must query CDF status on the branch Lakebase (wal2delta.tables
     lives in Postgres, not Spark) via the Tier-1 check keyed on THIS shadow — a

@@ -39,6 +39,11 @@ from services.validation_service import StepContext, StepResult
 # the test data it produced (test-data isolation, §1.13).
 VALIDATION_SOURCE = "validation"
 RTM_TABLE = "sensor_readings"
+# The unpartitioned CDC shadow enable_sync creates (lakets_cdf._shadow_sensor_readings)
+# and the UC Delta table the managed CDF sync writes it to (lb_<shadow>_history,
+# the Lakebase CDF naming convention) in the destination `realtime` schema.
+CDF_SHADOW_TABLE = f"_shadow_{RTM_TABLE}"
+CDF_SYNCED_TABLE = f"lb_{CDF_SHADOW_TABLE}_history"  # lb__shadow_sensor_readings_history
 
 logger = logging.getLogger("iot_digital_twin.services.validation_steps")
 
@@ -587,7 +592,12 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
     elif ctx.mode == "zerobus":
         table = f"{cfg['catalog']}.zerobus.iot_sensor_data"
     else:
-        table = f"{cfg['catalog']}.realtime.sensor_readings"
+        # Realtime data lands in the Lakebase ChronoTable, not a UC Delta table —
+        # it reaches UC only through the managed CDF sync, which writes a Delta
+        # table named lb_<shadow>_history (Lakebase CDF convention) in the sync's
+        # destination `realtime` schema. So DBSQL-read the SYNCED table, not the
+        # (nonexistent) realtime.sensor_readings.
+        table = f"{cfg['catalog']}.realtime.{CDF_SYNCED_TABLE}"
     res = await execute_dbsql(f"SELECT count(*) AS n FROM {table}", wh)
     return StepResult(sm.PASSED, data={"dbsql": table, "result": res})
 
