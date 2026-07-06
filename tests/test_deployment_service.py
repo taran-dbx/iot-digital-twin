@@ -189,7 +189,7 @@ class TestClusterLibraries:
             "kafka-python>=3",
             "aws-msk-iam-sasl-signer-python",
             "psycopg2-binary",
-            "deltalake",
+            "deltalake==1.6.1",
         }
         assert not any("boto3" in p for p in pkgs)
 
