@@ -405,7 +405,23 @@ try:
          .trigger(realTime={trigger!r})
          .start())
     _t.sleep({run_seconds}); q.stop()
-    _ok(topic={topic!r}, table=PG_TABLE, checkpoint={checkpoint_path!r})
+    # Synchronously flush metrics from the query's OWN recorded progress. Does NOT
+    # rely on the async listener firing per trigger or the daemon flush thread
+    # surviving the command end — recentProgress holds the per-trigger progress the
+    # query actually made, so we write it here, before the command returns.
+    _mwritten = 0; _nprog = 0; _mflush_err = None
+    try:
+        _progs = list(getattr(q, "recentProgress", []) or [])
+        _nprog = len(_progs)
+        _rows = [_metrics_record(p.json()) for p in _progs]
+        if _rows:
+            write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(_rows),
+                            mode="append", storage_options=_metrics_storage_options())
+            _mwritten = len(_rows)
+    except Exception as _e:
+        _mflush_err = type(_e).__name__ + ": " + str(_e)[:300]
+    _ok(topic={topic!r}, table=PG_TABLE, checkpoint={checkpoint_path!r},
+        metrics_written=_mwritten, recent_progress=_nprog, metrics_flush_error=_mflush_err)
 except Exception as e:
     _fail(traceback.format_exc())
 '''
@@ -555,7 +571,23 @@ try:
               .trigger(processingTime="10 seconds")
               .toTable({delta_table!r}))
     import time as _t; _t.sleep({run_seconds}); stream.stop()
-    _ok(delta_table={delta_table!r}, checkpoint={checkpoint_path!r})
+    # Synchronously flush metrics from the query's OWN recorded progress (only when
+    # the metrics listener was wired in — see _metrics_listener_code). Robust to the
+    # async flush thread / trigger cadence.
+    _mwritten = 0; _nprog = 0; _mflush_err = None
+    if "_metrics_record" in dir():
+        try:
+            _progs = list(getattr(stream, "recentProgress", []) or [])
+            _nprog = len(_progs)
+            _rows = [_metrics_record(p.json()) for p in _progs]
+            if _rows:
+                write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(_rows),
+                                mode="append", storage_options=_metrics_storage_options())
+                _mwritten = len(_rows)
+        except Exception as _e:
+            _mflush_err = type(_e).__name__ + ": " + str(_e)[:300]
+    _ok(delta_table={delta_table!r}, checkpoint={checkpoint_path!r},
+        metrics_written=_mwritten, recent_progress=_nprog, metrics_flush_error=_mflush_err)
 except Exception as e:
     _fail(traceback.format_exc())
 '''

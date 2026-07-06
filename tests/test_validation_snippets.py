@@ -90,6 +90,10 @@ def test_rtm_write_test_wires_buffered_metrics_listener():
     assert "onQueryProgress" in code
     assert "iot_x.metrics.streaming_metrics" in code       # metrics table fqn
     assert "streaming_metrics/" in code                    # metrics table location
+    # Synchronous post-run flush from the query's own recentProgress (robust to
+    # trigger cadence / daemon thread) + diagnostics in the OK payload.
+    assert "recentProgress" in code
+    assert "metrics_written=" in code
 
 
 def test_rtm_produce_uses_msk_iam_kafka_producer():
