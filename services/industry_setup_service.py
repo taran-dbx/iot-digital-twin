@@ -32,6 +32,8 @@ logger = logging.getLogger("iot_digital_twin.services.industry_setup")
 # --- Constants -------------------------------------------------------------
 SENSOR_TABLE = "sensor_readings"
 TIME_COLUMN = "event_time"
+# Schema enable_sync creates the CDC shadow mirror in (lakets_cdf._shadow_<table>).
+CDF_SHADOW_SCHEMA = "lakets_cdf"
 CHUNK_INTERVAL = "15 minutes"
 # ~24h forward window at 15-minute chunks (spec §1.10 partition pre-create).
 DEFAULT_FUTURE_PARTITIONS = 96
@@ -117,6 +119,21 @@ async def setup_lakets_on_branch(
         created = await conn.fetchval(_ENSURE_PARTITIONS_SQL, chrono_id, future_count)
         result["partitions_created"] = created
         _step("precreate_partitions", "ok", future_count=future_count, created=created)
+
+    # 4b. Prepare the Lakebase CDF shadow. enable_sync creates the unpartitioned
+    #     mirror lakets_cdf._shadow_sensor_readings + a trigger (REPLICA IDENTITY
+    #     FULL) that forwards every INSERT/UPDATE/DELETE. This is REQUIRED before
+    #     the admin can enable the managed Lakebase->Delta sync in the UI — that
+    #     sync targets the shadow, NOT the partitioned ChronoTable (Lakebase CDF
+    #     rejects partitioned tables). Idempotent + never raises.
+    sync_result = await lakets_service.enable_sync(conn, SENSOR_TABLE, schema="public")
+    result["cdf_shadow"] = sync_result.get("status", "failed")
+    _step(
+        "enable_sync",
+        sync_result.get("status", "failed"),
+        shadow=f"{CDF_SHADOW_SCHEMA}._shadow_{SENSOR_TABLE}",
+        error=sync_result.get("error"),
+    )
 
     # 5. Deploy the LakeTS operational jobs (partition manager / rollup /
     #    tiering / retention).

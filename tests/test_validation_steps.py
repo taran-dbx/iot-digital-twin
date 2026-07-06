@@ -205,6 +205,51 @@ async def test_cleanup_purges_rows_and_deletes_checkpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cdf_manual_ensures_shadow_then_parks(monkeypatch):
+    """cdf_manual must call enable_sync on sensor_readings (prep the CDC shadow)
+    before parking for the admin — the managed sync has nothing to sync otherwise."""
+    called = {}
+
+    class FakeConn:
+        async def close(self):
+            called["closed"] = True
+
+    async def fake_write_conn(branch, *, ws=None):
+        called["branch"] = branch
+        return FakeConn()
+
+    async def fake_enable_sync(conn, table, *, schema="public"):
+        called["table"] = table
+        called["schema"] = schema
+        return {"status": "created"}
+
+    monkeypatch.setattr(vs.pps, "get_write_conn", fake_write_conn)
+    monkeypatch.setattr(vs.lakets_svc, "enable_sync", fake_enable_sync)
+
+    result = await vs.cdf_manual(_ctx("realtime"))
+    assert result.status == sm.WAITING_ADMIN
+    assert called["table"] == "sensor_readings"
+    assert called["schema"] == "public"
+    assert result.data["cdf_shadow"] == "created"
+    assert result.data["shadow_table"] == "lakets_cdf._shadow_sensor_readings"
+    assert called.get("closed") is True
+
+
+@pytest.mark.asyncio
+async def test_cdf_manual_parks_even_if_shadow_prep_fails(monkeypatch):
+    """A shadow-prep failure is non-fatal — cdf_manual must still park for the
+    admin (surfacing the error) rather than failing the whole lane."""
+    async def boom_conn(branch, *, ws=None):
+        raise RuntimeError("branch auth failed")
+
+    monkeypatch.setattr(vs.pps, "get_write_conn", boom_conn)
+
+    result = await vs.cdf_manual(_ctx("realtime"))
+    assert result.status == sm.WAITING_ADMIN
+    assert "error" in str(result.data["cdf_shadow"])
+
+
+@pytest.mark.asyncio
 async def test_cdf_verify_passes_specific_shadow_table(monkeypatch):
     captured = {}
 

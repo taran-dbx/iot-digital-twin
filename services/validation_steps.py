@@ -27,6 +27,7 @@ from typing import Any
 
 from models.metrics_schema import metrics_table_fqn, metrics_table_location
 from services import industry_catalog_service as cat
+from services import lakets_service as lakets_svc
 from services import pipelines_project_service as pps
 from services import validation_config as vc
 from services import validation_snippets as snip
@@ -477,10 +478,32 @@ def _resolve_lakebase_write_conn(ctx: StepContext, branch: str) -> tuple[str, st
 
 
 async def cdf_manual(ctx: StepContext) -> StepResult:
-    # Park: the app has prepped the shadow table + trigger; the admin enables the
-    # managed Lakebase→Delta sync in the UI, then /validate/cdf-enabled releases.
-    return StepResult(sm.WAITING_ADMIN, error=None,
-                     data={"note": "waiting for admin to enable managed CDF sync"})
+    # Ensure the CDC shadow exists, THEN park for the admin. enable_sync creates
+    # the unpartitioned lakets_cdf._shadow_sensor_readings mirror + trigger — the
+    # thing the admin enables the managed Lakebase→Delta sync ON. It's idempotent
+    # (skips when already prepared), so this is safe to run every time and also
+    # self-heals pipelines provisioned before shadow-prep moved into provisioning.
+    cfg = _cfg(ctx)
+    shadow_status: str | None = None
+    conn = None
+    try:
+        conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
+        res = await lakets_svc.enable_sync(conn, RTM_TABLE, schema="public")
+        shadow_status = res.get("status")
+    except Exception as exc:  # non-fatal — surface, don't block the park
+        logger.warning("cdf_manual shadow prep (enable_sync) failed: %s", exc)
+        shadow_status = f"error: {str(exc)[:160]}"
+    finally:
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception:  # pragma: no cover - best-effort
+                pass
+    return StepResult(sm.WAITING_ADMIN, error=None, data={
+        "note": "waiting for admin to enable managed CDF sync",
+        "shadow_table": f"lakets_cdf._shadow_{RTM_TABLE}",
+        "cdf_shadow": shadow_status,
+    })
 
 
 async def cdf_verify(ctx: StepContext) -> StepResult:
