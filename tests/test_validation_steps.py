@@ -279,8 +279,10 @@ async def test_provision_cluster_terminates_created_cluster_on_failure(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_provision_cluster_uses_latest_lts_runtime(monkeypatch):
-    ws = _ProvisionWs(_VersionedClusters(version="99.9.x-scala2.13"))
+async def test_provision_cluster_pins_verified_dbr(monkeypatch):
+    # Workspace "latest LTS" is 16.4 (Spark 3.5, no realTime trigger) — provision
+    # must IGNORE it and pin the verified DBR 18.2 (RTM + service creds).
+    ws = _ProvisionWs(_VersionedClusters(version="16.4.x-scala2.12"))
     captured: dict = {}
 
     monkeypatch.setattr(vs, "_pick_gp_node", lambda w: ("m5.xlarge", 4))
@@ -307,8 +309,9 @@ async def test_provision_cluster_uses_latest_lts_runtime(monkeypatch):
                       step="provision_cluster", mode=None, ws=ws)
     result = await vs.provision_cluster(ctx)
     assert result.status == sm.PASSED
-    # The interactive cluster runs the workspace's latest LTS runtime, not a pin.
-    assert captured["spark_version"] == "99.9.x-scala2.13"
+    # Pins the VERIFIED DBR (18.2), NOT the workspace's latest LTS (16.4).
+    assert captured["spark_version"] == vs.vc.VALIDATION_DBR
+    assert captured["spark_version"] == "18.2.x-scala2.13"
 
 
 @pytest.mark.asyncio

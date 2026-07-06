@@ -283,7 +283,11 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
     ws = ctx.ws or _new_ws()
     cfg = _cfg(ctx)
     node_type_id, cores = await asyncio.to_thread(_pick_gp_node, ws)
-    spark_version = await asyncio.to_thread(_latest_lts_spark_version, ws)
+    # Pin the VERIFIED DBR 18.2 (Spark 4.1) — RTM real-time mode + service
+    # credentials were proven to coexist on it. The workspace's "latest LTS" is
+    # 16.4 (Spark 3.5), which does NOT support the `realTime` trigger, so do NOT
+    # resolve LTS dynamically here (user directive: latest 18.x).
+    spark_version = vc.VALIDATION_DBR
     sizing = vc.worker_sizing(cfg["partitions"], cores)
     user = (await asyncio.to_thread(ws.current_user.me)).user_name
     spec = vc.build_validation_cluster_spec(
