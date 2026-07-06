@@ -402,6 +402,78 @@ async def grant_streaming_sp(
     return {"catalog": catalog, "principal": principal, "results": results}
 
 
+def resolve_app_principal(ws: Any) -> str | None:
+    """Return the APP BACKEND's own SP application id — the identity that runs the
+    app's DBSQL reads + Tier-1 health checks (distinct from the streaming SP that
+    runs the jobs). In the deployed app this is ``DATABRICKS_CLIENT_ID``; falls
+    back to the current principal. ``None`` if it can't be resolved (grant then
+    skipped, non-fatal)."""
+    import os
+
+    cid = os.getenv("DATABRICKS_CLIENT_ID")
+    if cid:
+        return cid
+    try:
+        return ws.current_user.me().user_name
+    except Exception as exc:  # pragma: no cover - offline / no creds
+        logger.warning("Could not resolve app principal (non-fatal): %s", exc)
+        return None
+
+
+def _app_read_grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
+    """Read-only, catalog-wide grants for the app backend SP. Catalog-level SELECT
+    cascades to ALL current + future tables in every schema — critically the CDF
+    ``lb_<shadow>_history`` Delta table the managed sync creates later, owned by
+    whoever set up the sync (so the app SP would otherwise lack SELECT on it)."""
+    q = f"`{principal}`"
+    return [
+        ("app USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
+        ("app USE SCHEMA", f"GRANT USE SCHEMA ON CATALOG {catalog} TO {q}"),
+        ("app SELECT", f"GRANT SELECT ON CATALOG {catalog} TO {q}"),
+    ]
+
+
+async def grant_app_backend_read(
+    industry: str,
+    *,
+    ws: Any | None = None,
+    warehouse_id: str | None = None,
+    principal: str | None = None,
+    db: Any | None = None,
+    setup_id: Any | None = None,
+    deployment_id: Any | None = None,
+) -> dict:
+    """Grant the app backend SP read-only access to ``iot_<industry>`` so its DBSQL
+    reads (validation ``dbsql_read``) + Tier-1 health checks can query every table,
+    including the CDF-synced Delta table created later by the managed sync.
+
+    Records each grant in the ledger. Returns ``{catalog, principal, results}``.
+    """
+    ws = ws or _new_ws()
+    catalog = catalog_name(industry)
+    principal = principal or resolve_app_principal(ws)
+    if not principal:
+        return {"catalog": catalog, "principal": None,
+                "results": [{"resource": "app read grant", "status": "skipped",
+                             "error": "app principal unresolved"}]}
+    wh = resolve_warehouse_id(ws, warehouse_id)
+    results: list[dict] = []
+    for label, sql in _app_read_grant_statements(catalog, principal):
+        res = await _run_sql(sql, wh)
+        results.append({"resource": f"GRANT {label} → {principal}", "status": res["status"],
+                        **({"error": res["error"]} if res.get("error") else {})})
+        if res["status"] != "failed":
+            await _record(
+                db, setup_id, deployment_id,
+                resource_type="grant",
+                identifier=f"{catalog}:{label}:{principal}",
+                parent_ref=catalog,
+                teardown_order=TEARDOWN_ORDER_GRANT,
+                metadata={"sql": sql},
+            )
+    return {"catalog": catalog, "principal": principal, "results": results}
+
+
 # --- Secrets + SP ----------------------------------------------------------
 async def ensure_secret_scope(
     scope: str = SHARED_STREAMING_SP_SECRET_SCOPE,

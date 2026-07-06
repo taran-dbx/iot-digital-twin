@@ -135,4 +135,13 @@ async def provision_industry(
     )
     _section("grants", grants_result)
 
+    # 5b. Read-only grant for the APP BACKEND SP so its DBSQL reads + health checks
+    #     can query every table in the catalog — including the CDF-synced
+    #     lb_<shadow>_history Delta table the managed sync creates later (owned by
+    #     whoever enables the sync, so the app SP would otherwise lack SELECT).
+    app_grants = await cat.grant_app_backend_read(
+        industry, ws=ws, warehouse_id=warehouse_id, db=db, setup_id=setup_id,
+    )
+    _section("app_read_grants", app_grants)
+
     return summary

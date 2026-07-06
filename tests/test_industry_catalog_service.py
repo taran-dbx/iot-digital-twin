@@ -183,6 +183,38 @@ class TestGrants:
         with patch.object(ics, "_find_sp_by_display_name", return_value=None):
             assert ics.resolve_streaming_sp_principal(ws) == ics.FALLBACK_SP_APP_ID
 
+    @pytest.mark.asyncio
+    async def test_app_backend_read_grants_catalog_wide_select(self) -> None:
+        # The app SP needs catalog-wide SELECT so it can read the CDF-synced
+        # lb_<shadow>_history table the managed sync creates later.
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            res = await ics.grant_app_backend_read(
+                "spiketest", ws=ws, principal="app-sp-999",
+            )
+        sqls = " ".join(c.args[0] for c in exec_mock.call_args_list)
+        assert "SELECT ON CATALOG iot_spiketest" in sqls
+        assert "USE CATALOG ON CATALOG iot_spiketest" in sqls
+        assert "`app-sp-999`" in sqls
+        assert res["principal"] == "app-sp-999"
+
+    @pytest.mark.asyncio
+    async def test_app_backend_read_skips_when_principal_unresolved(self) -> None:
+        ws = MagicMock()
+        ws.current_user.me.side_effect = Exception("no identity")
+        with patch.dict("os.environ", {}, clear=False) as _env:
+            import os
+            os.environ.pop("DATABRICKS_CLIENT_ID", None)
+            res = await ics.grant_app_backend_read("spiketest", ws=ws)
+        assert res["principal"] is None
+        assert res["results"][0]["status"] == "skipped"
+
+    def test_resolve_app_principal_prefers_client_id(self) -> None:
+        import os
+        with patch.dict(os.environ, {"DATABRICKS_CLIENT_ID": "cid-123"}):
+            assert ics.resolve_app_principal(MagicMock()) == "cid-123"
+
 
 # ---------------------------------------------------------------------------
 # Secret scope

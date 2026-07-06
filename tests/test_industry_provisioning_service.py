@@ -53,6 +53,10 @@ def _patch_all(*, preflight_pass=True):
             ips.cat, "grant_streaming_sp",
             new=AsyncMock(return_value={"catalog": "iot_spiketest", "results": []}),
         ),
+        "grant_app_backend_read": patch.object(
+            ips.cat, "grant_app_backend_read",
+            new=AsyncMock(return_value={"catalog": "iot_spiketest", "principal": "app-sp", "results": []}),
+        ),
     }
     return patches, write_mgr
 
@@ -69,6 +73,7 @@ async def test_orchestrator_runs_all_phases_and_records_sp() -> None:
          patches["ensure_secret_scope"], patches["provision_industry_catalog"], \
          patches["provision_industry_branch"], patches["get_write_conn"], \
          patches["setup_lakets_on_branch"], patches["grant_streaming_sp"], \
+         patches["grant_app_backend_read"], \
          patch.object(ips, "record_resource", side_effect=_rec):
         summary = await ips.provision_industry(
             "spiketest", "setup-1", db=MagicMock(), ws=MagicMock(),
@@ -105,7 +110,7 @@ async def test_orchestrator_skips_realtime_when_disabled() -> None:
          patches["ensure_secret_scope"], patches["provision_industry_catalog"], \
          patches["provision_industry_branch"] as branch_mock, \
          patches["get_write_conn"], patches["setup_lakets_on_branch"], \
-         patches["grant_streaming_sp"]:
+         patches["grant_streaming_sp"], patches["grant_app_backend_read"]:
         summary = await ips.provision_industry(
             "spiketest", "s1", ws=MagicMock(), enable_realtime=False,
         )
