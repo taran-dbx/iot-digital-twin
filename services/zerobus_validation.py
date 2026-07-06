@@ -201,7 +201,13 @@ try:
         }}
         acks.append(stream.ingest_record(rec))
     for a in acks:
-        a.wait_for_ack(timeout_sec=30)
+        # wait_for_ack's signature varies across databricks-zerobus-ingest-sdk
+        # versions — some accept timeout_sec, some take no args. Try the bounded
+        # form, fall back to the no-arg form so we work on whatever the cluster has.
+        try:
+            a.wait_for_ack(timeout_sec=30)
+        except TypeError:
+            a.wait_for_ack()
     stream.close()
     _ok(table=TABLE, produced={num_records}, server_endpoint=SERVER_ENDPOINT)
 except Exception as e:
