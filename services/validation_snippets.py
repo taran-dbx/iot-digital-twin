@@ -273,9 +273,10 @@ try:
     _mw = WorkspaceClient()
     _mq = _queue.Queue()
     def _metrics_storage_options():
+        from databricks.sdk.service.catalog import TableOperation as _TableOp
         tid = _mw.tables.get(METRICS_TABLE_FQN).table_id
         tc = _mw.temporary_table_credentials.generate_temporary_table_credentials(
-            operation="READ_WRITE", table_id=tid)
+            operation=_TableOp.READ_WRITE, table_id=tid)
         c = tc.aws_temp_credentials
         return {{"AWS_ACCESS_KEY_ID": c.access_key_id,
                  "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
@@ -454,9 +455,10 @@ def _metrics_listener_code(
     _mw = WorkspaceClient()
     _mq = _queue.Queue()
     def _metrics_storage_options():
+        from databricks.sdk.service.catalog import TableOperation as _TableOp
         tid = _mw.tables.get(METRICS_TABLE_FQN).table_id
         tc = _mw.temporary_table_credentials.generate_temporary_table_credentials(
-            operation="READ_WRITE", table_id=tid)
+            operation=_TableOp.READ_WRITE, table_id=tid)
         c = tc.aws_temp_credentials
         return {{"AWS_ACCESS_KEY_ID": c.access_key_id,
                  "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
