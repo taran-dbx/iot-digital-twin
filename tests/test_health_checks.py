@@ -147,28 +147,33 @@ class TestCheckCheckpointVolume:
 class TestCheckMetricsRecent:
     async def test_pass_when_rows_present(self):
         rows = [{"n": 42, "latest": "2026-07-06T10:00:00Z"}]
-        res = await hc.check_metrics_recent("iot_pharma", _run_sql_returning(rows))
+        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], _run_sql_returning(rows))
         assert res["status"] == hc.PASS
 
     async def test_skip_when_no_rows_yet(self):
         # Metrics rows only land once a mode streams — an empty table on a
         # not-yet-run pipeline is expected (SKIP), not a failure.
         rows = [{"n": 0, "latest": None}]
-        res = await hc.check_metrics_recent("iot_pharma", _run_sql_returning(rows))
+        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], _run_sql_returning(rows))
         assert res["status"] == hc.SKIP
 
     async def test_skip_when_table_not_created(self):
-        # The external metrics table is created on the first streaming run; a
-        # DBSQL TABLE_OR_VIEW_NOT_FOUND means "not provisioned yet", so SKIP.
+        # The per-mode metrics table is created on the first streaming run; a
+        # DBSQL TABLE_OR_VIEW_NOT_FOUND means "not run yet", so SKIP.
         run_sql = AsyncMock(side_effect=RuntimeError("[TABLE_OR_VIEW_NOT_FOUND] table not found"))
-        res = await hc.check_metrics_recent("iot_pharma", run_sql)
+        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], run_sql)
         assert res["status"] == hc.SKIP
 
     async def test_fail_on_genuine_error(self):
         # A real error (not a missing table) must still FAIL, not be masked.
         run_sql = AsyncMock(side_effect=RuntimeError("PERMISSION_DENIED: cannot read table"))
-        res = await hc.check_metrics_recent("iot_pharma", run_sql)
+        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], run_sql)
         assert res["status"] == hc.FAIL
+
+    async def test_skip_when_no_streaming_modes(self):
+        # zerobus-only pipeline has no Spark streaming metrics → SKIP, not fail.
+        res = await hc.check_metrics_recent("iot_pharma", ["zerobus"], _run_sql_returning([{"n": 0}]))
+        assert res["status"] == hc.SKIP
 
 
 # ===========================================================================

@@ -8,19 +8,22 @@ the ``provisioned_resource`` ledger with a sensible ``teardown_order`` +
 Layout (spec §2.5)::
 
     iot_<industry>/
-    ├── realtime/     sensor_readings    Delta   (CDF-synced historical mirror)
-    ├── microbatch/   sensor_data        Delta   (micro-batch bronze)
-    ├── zerobus/      iot_sensor_data    Delta   (zerobus ingest target)
-    ├── metrics/      streaming_metrics  Delta   EXTERNAL, delta-rs writes
-    └── checkpoints/  stream_checkpoints Volume  (SS checkpoints)
+    ├── realtime/     sensor_readings              Delta   (CDF-synced historical mirror)
+    ├── microbatch/   sensor_data                  Delta   (micro-batch bronze)
+    ├── zerobus/      iot_sensor_data              Delta   (zerobus ingest target)
+    ├── metrics/      streaming_metrics_realtime   Delta   EXTERNAL, delta-rs writes
+    │                 streaming_metrics_microbatch Delta   EXTERNAL, delta-rs writes
+    │                 streaming_metrics_zerobus    Delta   EXTERNAL, delta-rs writes
+    └── checkpoints/  stream_checkpoints           Volume  (SS checkpoints)
 
 Provisioning notes (spike-verified 2026-07-05):
 - This metastore has **no default storage root**, so ``CREATE CATALOG`` must
   supply an explicit ``MANAGED LOCATION`` — ``s3://taran-shared-interop/<catalog>``
   (external location ``taran-shared-interop``, ``us-east-1``).
-- The ``metrics.streaming_metrics`` table is **EXTERNAL** (delta-rs writes via UC
-  temp-table-credentials) → the writer SP needs ``EXTERNAL USE SCHEMA`` on the
-  metrics schema.
+- Each mode gets its own EXTERNAL ``metrics.streaming_metrics_<mode>`` table
+  (delta-rs writes via UC temp-table-credentials) → any writer SP (streaming SP
+  for the streaming query listener, app SP for the app-hosted listener) needs
+  ``EXTERNAL USE SCHEMA`` + ``MODIFY`` on the metrics schema.
 
 This module is **additive** — it does not touch ``app.yaml``, ``backend.py`` live
 wiring, or the legacy ``iot-lakets-demo`` project.
@@ -33,8 +36,8 @@ import re
 from typing import Any
 
 from models.metrics_schema import (
+    ALL_METRIC_MODES,
     METRICS_SCHEMA,
-    METRICS_TABLE,
     metrics_external_table_ddl,
     metrics_table_fqn,
     metrics_table_location,
@@ -199,10 +202,13 @@ async def provision_industry_catalog(
     setup_id: Any | None = None,
     deployment_id: Any | None = None,
 ) -> dict:
-    """Create the canonical ``iot_<industry>`` catalog + schemas + volume +
-    external metrics table (idempotent), recording each in the ledger.
+    """Create the canonical ``iot_<industry>`` catalog + schemas + volume + the
+    three per-mode external metrics tables (idempotent), recording each in the
+    ledger.
 
-    Returns ``{catalog, results, metrics_table, metrics_location}``.
+    Returns ``{catalog, results, metrics_table, metrics_tables, metrics_locations}``
+    — ``metrics_table``/``metrics_tables`` are ``{mode: fqn}`` dicts (kept as two
+    keys for readability at call sites) and ``metrics_locations`` is ``{mode: s3_uri}``.
     """
     ws = ws or _new_ws()
     catalog = catalog_name(industry)
@@ -227,7 +233,8 @@ async def provision_industry_catalog(
                 "catalog": catalog,
                 "results": results,
                 "metrics_table": None,
-                "metrics_location": None,
+                "metrics_tables": None,
+                "metrics_locations": None,
             }
     await _record(
         db, setup_id, deployment_id,
@@ -285,36 +292,43 @@ async def provision_industry_catalog(
         teardown_order=TEARDOWN_ORDER_VOLUME,
     )
 
-    # 4. External metrics Delta table (delta-rs write target).
+    # 4. External metrics Delta tables (delta-rs write targets) — one per mode
+    # so realtime/microbatch/zerobus metrics never share a table.
     wh = resolve_warehouse_id(ws, warehouse_id)
-    metrics_fqn = metrics_table_fqn(catalog)
-    metrics_loc = metrics_table_location(catalog, SHARED_STORAGE_BASE)
-    ddl = metrics_external_table_ddl(catalog, SHARED_STORAGE_BASE)
-    res = await _run_sql(ddl, wh)
-    if res["status"] == "failed":
-        results.append({
-            "resource": f"Metrics table '{metrics_fqn}'",
-            "status": "failed",
-            "error": res.get("error"),
-        })
-    else:
+    metrics_fqns: dict[str, str] = {}
+    metrics_locs: dict[str, str] = {}
+    for mode in ALL_METRIC_MODES:
+        metrics_fqn = metrics_table_fqn(catalog, mode)
+        metrics_loc = metrics_table_location(catalog, SHARED_STORAGE_BASE, mode)
+        ddl = metrics_external_table_ddl(catalog, SHARED_STORAGE_BASE, mode)
+        res = await _run_sql(ddl, wh)
+        if res["status"] == "failed":
+            results.append({
+                "resource": f"Metrics table '{metrics_fqn}'",
+                "status": "failed",
+                "error": res.get("error"),
+            })
+            continue
         results.append({
             "resource": f"Metrics table '{metrics_fqn}'",
             "status": "created" if res["status"] == "ok" else res["status"],
         })
+        metrics_fqns[mode] = metrics_fqn
+        metrics_locs[mode] = metrics_loc
         await _record(
             db, setup_id, deployment_id,
             resource_type="metrics_table", identifier=metrics_fqn,
             parent_ref=f"{catalog}.{METRICS_SCHEMA}",
             teardown_order=TEARDOWN_ORDER_METRICS_TABLE,
-            metadata={"external": True, "location": metrics_loc},
+            metadata={"external": True, "location": metrics_loc, "mode": mode},
         )
 
     return {
         "catalog": catalog,
         "results": results,
-        "metrics_table": metrics_fqn,
-        "metrics_location": metrics_loc,
+        "metrics_table": metrics_fqns,
+        "metrics_tables": metrics_fqns,
+        "metrics_locations": metrics_locs,
     }
 
 
@@ -433,6 +447,22 @@ def _app_read_grant_statements(catalog: str, principal: str) -> list[tuple[str, 
     ]
 
 
+def _app_metrics_write_grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
+    """Metrics-WRITE grants for the app backend SP.
+
+    The per-mode metrics listeners run **as the app SP** (not the streaming SP)
+    on the validation/interactive cluster, so delta-rs's UC temp-table-credentials
+    write path needs ``EXTERNAL USE SCHEMA`` + ``MODIFY`` on the metrics schema
+    for that principal too — mirroring the streaming SP's grant in
+    ``_grant_statements``. Without this the per-mode metrics tables stay empty."""
+    q = f"`{principal}`"
+    fqn = f"{catalog}.{METRICS_SCHEMA}"
+    return [
+        ("app EXTERNAL USE SCHEMA on metrics", f"GRANT EXTERNAL USE SCHEMA ON SCHEMA {fqn} TO {q}"),
+        ("app MODIFY on metrics", f"GRANT MODIFY ON SCHEMA {fqn} TO {q}"),
+    ]
+
+
 async def grant_app_backend_read(
     industry: str,
     *,
@@ -445,7 +475,10 @@ async def grant_app_backend_read(
 ) -> dict:
     """Grant the app backend SP read-only access to ``iot_<industry>`` so its DBSQL
     reads (validation ``dbsql_read``) + Tier-1 health checks can query every table,
-    including the CDF-synced Delta table created later by the managed sync.
+    including the CDF-synced Delta table created later by the managed sync — plus
+    the metrics-WRITE grants (``EXTERNAL USE SCHEMA`` + ``MODIFY`` on the metrics
+    schema) the app-hosted streaming-metrics listener needs to write the per-mode
+    external Delta tables via delta-rs temp credentials.
 
     Records each grant in the ledger. Returns ``{catalog, principal, results}``.
     """
@@ -458,7 +491,11 @@ async def grant_app_backend_read(
                              "error": "app principal unresolved"}]}
     wh = resolve_warehouse_id(ws, warehouse_id)
     results: list[dict] = []
-    for label, sql in _app_read_grant_statements(catalog, principal):
+    grant_statements = (
+        _app_read_grant_statements(catalog, principal)
+        + _app_metrics_write_grant_statements(catalog, principal)
+    )
+    for label, sql in grant_statements:
         res = await _run_sql(sql, wh)
         results.append({"resource": f"GRANT {label} → {principal}", "status": res["status"],
                         **({"error": res["error"]} if res.get("error") else {})})

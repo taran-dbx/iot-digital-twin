@@ -107,14 +107,23 @@ class TestProvisionCatalog:
         assert vkwargs["name"] == "stream_checkpoints"
 
     @pytest.mark.asyncio
-    async def test_external_metrics_table_ddl_executed(self) -> None:
+    async def test_external_metrics_tables_ddl_executed_for_all_modes(self) -> None:
         ws = _make_ws()
         exec_mock = AsyncMock(return_value={})
         with patch.object(ics, "execute_dbsql", new=exec_mock):
             res = await ics.provision_industry_catalog("spiketest", ws=ws)
         ddl_calls = [c.args[0] for c in exec_mock.call_args_list]
-        assert any("streaming_metrics" in s and "LOCATION" in s for s in ddl_calls)
-        assert res["metrics_table"] == "iot_spiketest.metrics.streaming_metrics"
+        for mode in ("realtime", "microbatch", "zerobus"):
+            assert any(
+                f"streaming_metrics_{mode}" in s and "LOCATION" in s for s in ddl_calls
+            ), f"missing DDL for mode {mode}"
+        assert res["metrics_table"] == {
+            "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
+            "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
+            "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
+        }
+        assert res["metrics_tables"] == res["metrics_table"]
+        assert set(res["metrics_locations"]) == {"realtime", "microbatch", "zerobus"}
 
     @pytest.mark.asyncio
     async def test_idempotent_catalog_already_exists(self) -> None:
@@ -143,7 +152,7 @@ class TestProvisionCatalog:
         assert "uc_catalog" in types
         assert "uc_schema" in types
         assert "uc_volume" in types
-        assert "metrics_table" in types
+        assert types.count("metrics_table") == 3
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +207,24 @@ class TestGrants:
         assert "USE CATALOG ON CATALOG iot_spiketest" in sqls
         assert "`app-sp-999`" in sqls
         assert res["principal"] == "app-sp-999"
+
+    @pytest.mark.asyncio
+    async def test_app_backend_gets_metrics_write_grants(self) -> None:
+        # The per-mode metrics listener runs as the app SP on the validation
+        # cluster, so it needs EXTERNAL USE SCHEMA + MODIFY on metrics to write
+        # via delta-rs UC temp-table-credentials (else the tables stay empty).
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            res = await ics.grant_app_backend_read(
+                "spiketest", ws=ws, principal="app-sp-999",
+            )
+        sqls = " ".join(c.args[0] for c in exec_mock.call_args_list)
+        assert "EXTERNAL USE SCHEMA ON SCHEMA iot_spiketest.metrics TO `app-sp-999`" in sqls
+        assert "MODIFY ON SCHEMA iot_spiketest.metrics TO `app-sp-999`" in sqls
+        labels = {r["resource"] for r in res["results"]}
+        assert any("EXTERNAL USE SCHEMA on metrics" in label for label in labels)
+        assert any("MODIFY on metrics" in label for label in labels)
 
     @pytest.mark.asyncio
     async def test_app_backend_read_skips_when_principal_unresolved(self) -> None:

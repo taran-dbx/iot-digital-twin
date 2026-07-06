@@ -92,12 +92,16 @@ async def test_integration_full_provision_and_teardown() -> None:
         names = {r.get("databaseName") or r.get("namespace") for r in schemas["data"]}
         assert {"realtime", "microbatch", "zerobus", "metrics", "checkpoints"} <= names
 
-        # 2. External metrics table exists.
+        # 2. External per-mode metrics tables exist (realtime/microbatch/zerobus).
         mt = await execute_dbsql(
             f"SHOW TABLES IN {CATALOG}.metrics", wh
         )
         tbls = {r.get("tableName") for r in mt["data"]}
-        assert "streaming_metrics" in tbls
+        assert {
+            "streaming_metrics_realtime",
+            "streaming_metrics_microbatch",
+            "streaming_metrics_zerobus",
+        } <= tbls
         metrics_location = summary["metrics_table"]
 
         # 3. Checkpoint volume exists.

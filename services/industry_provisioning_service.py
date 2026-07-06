@@ -58,7 +58,8 @@ async def provision_industry(
     """Provision all resources for one industry pipeline; record them in the ledger.
 
     Returns a summary dict with a ``sections`` list (one per phase) and the key
-    identifiers (``catalog``, ``branch``, ``metrics_table``, ``sp_principal``).
+    identifiers (``catalog``, ``branch``, ``metrics_table`` — a ``{mode: fqn}``
+    dict of the three per-mode metrics tables — ``sp_principal``).
     Raises ``RuntimeError`` on failed pre-flight; otherwise best-effort per phase
     (each phase's granular status is in its section).
     """

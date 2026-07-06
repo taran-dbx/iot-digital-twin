@@ -31,8 +31,21 @@ def _patch_all(*, preflight_pass=True):
             new=AsyncMock(return_value={
                 "catalog": "iot_spiketest",
                 "results": [],
-                "metrics_table": "iot_spiketest.metrics.streaming_metrics",
-                "metrics_location": "s3://x/",
+                "metrics_table": {
+                    "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
+                    "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
+                    "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
+                },
+                "metrics_tables": {
+                    "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
+                    "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
+                    "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
+                },
+                "metrics_locations": {
+                    "realtime": "s3://x/realtime/",
+                    "microbatch": "s3://x/microbatch/",
+                    "zerobus": "s3://x/zerobus/",
+                },
             }),
         ),
         "provision_industry_branch": patch.object(
@@ -87,6 +100,11 @@ async def test_orchestrator_runs_all_phases_and_records_sp() -> None:
         assert expected in phases, f"missing phase {expected}"
 
     assert summary["catalog"] == "iot_spiketest"
+    assert summary["metrics_table"] == {
+        "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
+        "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
+        "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
+    }
     assert summary["branch"] == "spiketest"
     assert summary["sp_principal"] == "app-xyz"
     # SP recorded as a shared resource.

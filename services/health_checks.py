@@ -246,40 +246,60 @@ async def check_checkpoint_volume(catalog: str | None, run_sql: RunSql | None) -
         return _result(CHECKPOINT_VOLUME_CHECK, FAIL, f"volume check failed: {exc}")
 
 
+# Modes that emit Spark structured-streaming query metrics (onQueryProgress);
+# zerobus ingest is not a Spark stream, so it has no streaming_metrics_zerobus rows.
+_STREAMING_METRIC_MODES = ("realtime", "microbatch")
+
+
 async def check_metrics_recent(
-    catalog: str | None, run_sql: RunSql | None, *, max_age_minutes: int | None = None
+    catalog: str | None, enabled_modes: list[str], run_sql: RunSql | None
 ) -> dict:
-    """Verify the external metrics table has rows (freshness when ``max_age`` given)."""
+    """Verify each enabled streaming mode's PER-MODE metrics table has rows.
+
+    Metrics live in a separate ``streaming_metrics_<mode>`` external table per
+    mode. An empty / not-yet-created table on a mode that hasn't streamed is
+    expected (SKIP); rows present is a real PASS; a non-missing-table error FAILs.
+    """
     if run_sql is None:
         return _result(METRICS_TABLE_CHECK, SKIP, "no SQL warehouse configured")
-    fqn = metrics_table_fqn(catalog)
-    try:
-        res = await run_sql(f"SELECT count(*) AS n, max(`timestamp`) AS latest FROM {fqn}")
-        rows = _rows(res)
-        row = rows[0] if rows else {}
-        n = int(row.get("n") or 0)
-        latest = row.get("latest")
-        if n <= 0:
-            # Metrics rows only land once a mode actually streams — an empty table
-            # on a not-yet-run pipeline is expected, not a failure.
-            return _result(
-                METRICS_TABLE_CHECK, SKIP,
-                f"{fqn} has no rows yet (populated once a mode streams)",
+    modes = [m for m in (enabled_modes or []) if m in _STREAMING_METRIC_MODES]
+    if not modes:
+        return _result(METRICS_TABLE_CHECK, SKIP, "no streaming-metrics modes enabled")
+    have: list[str] = []
+    empty: list[str] = []
+    for mode in modes:
+        fqn = metrics_table_fqn(catalog, mode)
+        try:
+            res = await run_sql(
+                f"SELECT count(*) AS n, max(`timestamp`) AS latest FROM {fqn}"
             )
+            rows = _rows(res)
+            row = rows[0] if rows else {}
+            n = int(row.get("n") or 0)
+            if n > 0:
+                have.append(f"{mode}={n} (latest {row.get('latest')})")
+            else:
+                empty.append(mode)
+        except Exception as exc:
+            # Per-mode table is created on the first streaming run; a missing table
+            # is "not run yet" (empty), not a failure.
+            if _is_missing_table(exc):
+                empty.append(mode)
+            else:
+                return _result(
+                    METRICS_TABLE_CHECK, FAIL, f"{fqn} metrics check failed: {exc}"
+                )
+    if have and not empty:
+        return _result(METRICS_TABLE_CHECK, PASS, f"metrics rows: {', '.join(have)}")
+    if have:
         return _result(
-            METRICS_TABLE_CHECK, PASS, f"{fqn}: {n} rows (latest {latest})"
+            METRICS_TABLE_CHECK, PASS,
+            f"metrics rows: {', '.join(have)}; none yet for {', '.join(empty)}",
         )
-    except Exception as exc:
-        # The external metrics table is created on the first streaming run; before
-        # that a missing-table error is "not provisioned", not a failure. The
-        # table is queried via DBSQL, so a missing table surfaces as Spark's
-        # TABLE_OR_VIEW_NOT_FOUND / DELTA_* (not a Postgres relation error).
-        if _is_missing_table(exc):
-            return _result(
-                METRICS_TABLE_CHECK, SKIP,
-                f"{fqn} not created yet (created on first streaming run)",
-            )
-        return _result(METRICS_TABLE_CHECK, FAIL, f"metrics check failed: {exc}")
+    return _result(
+        METRICS_TABLE_CHECK, SKIP,
+        f"no metrics rows yet for {', '.join(empty)} (populated once each mode streams)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +646,7 @@ async def gather_checks(
     checks.append(await check_uc_catalog(catalog, run_sql))
     checks.append(await check_delta_tables(catalog, enabled, run_sql))
     checks.append(await check_checkpoint_volume(catalog, run_sql))
-    checks.append(await check_metrics_recent(catalog, run_sql))
+    checks.append(await check_metrics_recent(catalog, enabled, run_sql))
 
     # --- Lakebase endpoints -------------------------------------------------
     if ws is not None and branch:

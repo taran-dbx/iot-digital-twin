@@ -25,10 +25,11 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from models.metrics_schema import metrics_table_fqn, metrics_table_location
+from models.metrics_schema import ALL_METRIC_MODES, metrics_table_fqn, metrics_table_location
 from services import industry_catalog_service as cat
 from services import lakets_service as lakets_svc
 from services import pipelines_project_service as pps
+from services import zerobus_validation as zbv
 from services import validation_config as vc
 from services import validation_snippets as snip
 from services import validation_state_machine as sm
@@ -66,6 +67,7 @@ VALIDATION_CLUSTER_LIBRARIES: tuple[str, ...] = (
     "aws-msk-iam-sasl-signer-python",
     "psycopg2-binary",   # RTM ForeachWriter → Lakebase ChronoTable
     "deltalake==1.6.1",  # buffered delta-rs streaming-metrics write (pinned: newer versions break write_deltalake)
+    "databricks-zerobus-ingest-sdk",  # zerobus produce_test (ZerobusSdk ingest)
 )
 
 
@@ -88,6 +90,10 @@ def _cfg(ctx: StepContext) -> dict:
     catalog = cat.catalog_name(industry)
     partitions = int(cluster_spec.get("partition_count", 3))
     brokers = int(derived.get("broker_count", 3))
+    # Metrics are captured in a SEPARATE external table per streaming mode
+    # (streaming_metrics_<mode>). For mode-scoped steps (write_test/metrics_check)
+    # ctx.mode selects the table; common steps (no mode) default to realtime.
+    metric_mode = ctx.mode if ctx.mode in ALL_METRIC_MODES else "realtime"
     return {
         "industry": industry,
         "bootstrap": bootstrap,
@@ -99,8 +105,11 @@ def _cfg(ctx: StepContext) -> dict:
         "warehouse_id": setup.get("warehouse_id"),
         "branch": industry,  # per-industry Lakebase branch name = industry
         "project_id": pps.PIPELINES_PROJECT,
-        "metrics_table_fqn": metrics_table_fqn(catalog),
-        "metrics_table_location": metrics_table_location(catalog, cat.SHARED_STORAGE_BASE),
+        "metric_mode": metric_mode,
+        "metrics_table_fqn": metrics_table_fqn(catalog, metric_mode),
+        "metrics_table_location": metrics_table_location(
+            catalog, cat.SHARED_STORAGE_BASE, metric_mode
+        ),
     }
 
 
@@ -198,6 +207,17 @@ def _ok_payload(output: str) -> dict:
             except Exception:  # malformed / truncated payload → no fields
                 return {}
     return {}
+
+
+def _dbsql_count(res: Any, key: str = "n") -> int:
+    """Extract an integer count (column ``key``) from an execute_dbsql result."""
+    rows = (res or {}).get("data") or []
+    if not rows:
+        return 0
+    try:
+        return int(rows[0].get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -420,8 +440,13 @@ async def write_test(ctx: StepContext) -> StepResult:
     if ctx.mode == "microbatch":
         topic = vc.topic_name(cfg["industry"], "microbatch")
         delta = f"{cfg['catalog']}.microbatch.sensor_data"
+        # cfg metrics_table_fqn/location resolve to the per-mode MICRO-BATCH table
+        # (ctx.mode == "microbatch"), so the listener lands micro-batch metrics.
         code = snip.microbatch_write_test(
             topic, cfg["bootstrap"], cfg["service_credential"], delta, checkpoint,
+            metrics_table_fqn=cfg["metrics_table_fqn"],
+            metrics_table_location=cfg["metrics_table_location"],
+            region=cfg["region"],
         )
         return await _run_on_cluster(ctx, code, timeout_s=300)
 
@@ -599,7 +624,13 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
         # (nonexistent) realtime.sensor_readings.
         table = f"{cfg['catalog']}.realtime.{CDF_SYNCED_TABLE}"
     res = await execute_dbsql(f"SELECT count(*) AS n FROM {table}", wh)
-    return StepResult(sm.PASSED, data={"dbsql": table, "result": res})
+    n = _dbsql_count(res)
+    if n <= 0:
+        return StepResult(
+            sm.FAILED,
+            error=f"{table} has 0 rows — no {ctx.mode or 'realtime'} data landed / queryable via DBSQL",
+        )
+    return StepResult(sm.PASSED, data={"dbsql": table, "rows": n})
 
 
 async def metrics_check(ctx: StepContext) -> StepResult:
@@ -607,7 +638,8 @@ async def metrics_check(ctx: StepContext) -> StepResult:
     wh = cfg["warehouse_id"]
     if not wh:
         return StepResult(sm.FAILED, error="no warehouse_id configured for metrics check")
-    table = f"{cfg['catalog']}.metrics.streaming_metrics"
+    # Per-mode metrics table (streaming_metrics_<mode>); cfg resolves it from ctx.mode.
+    table = cfg["metrics_table_fqn"]
     # Verify the Databricks-only latency percentiles landed (proves the delta-rs
     # external-table metrics write path end-to-end, §1.11 S6).
     sql = (
@@ -616,7 +648,17 @@ async def metrics_check(ctx: StepContext) -> StepResult:
         f"FROM {table}"
     )
     res = await execute_dbsql(sql, wh)
-    return StepResult(sm.PASSED, data={"metrics_table": table, "result": res})
+    n = _dbsql_count(res)
+    if n <= 0:
+        return StepResult(
+            sm.FAILED,
+            error=(
+                f"{table} has no metrics rows — the {cfg['metric_mode']} streaming "
+                "metrics listener did not land data (check EXTERNAL USE SCHEMA/MODIFY "
+                "grants + delta-rs temp creds)"
+            ),
+        )
+    return StepResult(sm.PASSED, data={"metrics_table": table, "rows": n, "result": res})
 
 
 async def cleanup(ctx: StepContext) -> StepResult:
@@ -671,24 +713,44 @@ async def create_table(ctx: StepContext) -> StepResult:
 
 
 async def auth_probe(ctx: StepContext) -> StepResult:
+    # REAL driver-side probe (no cluster): DNS + TCP reachability of the zerobus
+    # server endpoint + a live OAuth token exchange downscoped to the target table,
+    # so a missing UC grant surfaces here instead of as a produce_test failure.
     import os
 
     cfg = _cfg(ctx)
     workspace_url = os.getenv("DATABRICKS_HOST", "")
     server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
-    return StepResult(sm.PASSED, data={
-        "table": f"{cfg['catalog']}.zerobus.iot_sensor_data",
-        "server_endpoint": server_endpoint,
-        "workspace_url": workspace_url,
-    })
+    table_fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+    if not server_endpoint:
+        return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
+    ok, detail = await asyncio.to_thread(
+        zbv.auth_probe, workspace_url, server_endpoint, table_fqn,
+        secret_scope=os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
+        secret_key=os.getenv("ZEROBUS_SECRET_KEY", "zerobus-client-secret"),
+    )
+    return StepResult(sm.PASSED if ok else sm.FAILED,
+                      error=None if ok else str(detail)[:400], data=detail)
 
 
 async def produce_test(ctx: StepContext) -> StepResult:
-    # Bounded serverless producer → zerobus ingest → wait_for_ack (§1.10 zerobus).
+    # Bounded serverless-capable Zerobus ingest producer → wait_for_ack (§1.10
+    # zerobus). Runs the real ZerobusSdk producer on the validation cluster; the
+    # subsequent zerobus:dbsql_read asserts the rows actually landed.
+    import os
+
     cfg = _cfg(ctx)
-    return StepResult(sm.PASSED, data={
-        "table": f"{cfg['catalog']}.zerobus.iot_sensor_data",
-    })
+    workspace_url = os.getenv("DATABRICKS_HOST", "")
+    server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
+    table_fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+    if not server_endpoint:
+        return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
+    snippet = zbv.zerobus_produce_snippet(
+        industry=cfg["industry"], catalog=cfg["catalog"], table_fqn=table_fqn,
+        workspace_url=workspace_url, server_endpoint=server_endpoint,
+        num_records=100, source=VALIDATION_SOURCE,
+    )
+    return await _run_on_cluster(ctx, snippet, timeout_s=180)
 
 
 # ---------------------------------------------------------------------------

@@ -157,6 +157,26 @@ def test_microbatch_write_test_processing_time_trigger():
     assert 'alias("event_time")' in code
     assert "timestamp_seconds" in code
     assert 'alias("sensor_name")' in code
+    # No metrics args → no listener wired.
+    assert "BufferedDeltaMetricsListener" not in code
+
+
+def test_microbatch_write_test_wires_metrics_listener_when_given():
+    """With per-mode metrics args, micro-batch now captures streaming metrics too
+    (previously only rtm_write_test had the listener → micro-batch metrics empty)."""
+    code = snip.microbatch_write_test(
+        "iot.x.microbatch", "b-1:9198", "iot-rtm-sc",
+        "iot_x.microbatch.sensor_data", "/Volumes/x/checkpoints/v/validation/microbatch",
+        metrics_table_fqn="iot_x.metrics.streaming_metrics_microbatch",
+        metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics_microbatch/",
+        region="us-east-1",
+    )
+    assert "BufferedDeltaMetricsListener" in code
+    assert "spark.streams.addListener(" in code
+    assert "write_deltalake" in code
+    assert "streaming_metrics_microbatch" in code
+    # Still parses to the SSOT schema + writes the table.
+    assert "from_json" in code and "toTable(" in code
 
 
 def test_cdf_verify_polls_streaming_and_lsn():

@@ -1,6 +1,8 @@
-"""Tests for the streaming-metrics external Delta SSOT (spec §1.11)."""
+"""Tests for the per-mode streaming-metrics external Delta SSOT (spec §1.11)."""
 
 from __future__ import annotations
+
+import pytest
 
 from models import metrics_schema as ms
 
@@ -24,25 +26,52 @@ class TestMetricsColumns:
         cols = set(ms.metrics_columns())
         assert {"query_id", "query_name", "run_id"} <= cols
 
+    def test_no_mode_column_separation_is_by_table(self) -> None:
+        # Separation across modes is by TABLE, not by a `mode` column.
+        assert "mode" not in set(ms.metrics_columns())
+
+
+class TestAllMetricModes:
+    def test_three_modes(self) -> None:
+        assert ms.ALL_METRIC_MODES == ("realtime", "microbatch", "zerobus")
+
 
 class TestMetricsDdl:
-    def test_fqn_and_location(self) -> None:
-        assert ms.metrics_table_fqn("iot_spiketest") == (
-            "iot_spiketest.metrics.streaming_metrics"
+    @pytest.mark.parametrize("mode", ["realtime", "microbatch", "zerobus"])
+    def test_fqn_and_location_per_mode(self, mode: str) -> None:
+        assert ms.metrics_table_fqn("iot_spiketest", mode) == (
+            f"iot_spiketest.metrics.streaming_metrics_{mode}"
         )
-        loc = ms.metrics_table_location("iot_spiketest", "s3://taran-shared-interop")
+        loc = ms.metrics_table_location("iot_spiketest", "s3://taran-shared-interop", mode)
         assert loc == (
             "s3://taran-shared-interop/iot-digital-twin/iot_spiketest/metrics/"
-            "streaming_metrics/"
+            f"streaming_metrics_{mode}/"
         )
 
     def test_ddl_is_external_with_location(self) -> None:
-        ddl = ms.metrics_external_table_ddl("iot_spiketest", "s3://taran-shared-interop")
-        assert "CREATE TABLE IF NOT EXISTS iot_spiketest.metrics.streaming_metrics" in ddl
+        ddl = ms.metrics_external_table_ddl("iot_spiketest", "s3://taran-shared-interop", "realtime")
+        assert "CREATE TABLE IF NOT EXISTS iot_spiketest.metrics.streaming_metrics_realtime" in ddl
         assert "USING DELTA" in ddl
         assert "LOCATION 's3://taran-shared-interop/iot-digital-twin/" in ddl
+        assert "streaming_metrics_realtime/" in ddl
         assert "progress STRING" in ddl
 
     def test_location_trims_trailing_slash_on_base(self) -> None:
-        loc = ms.metrics_table_location("iot_x", "s3://bucket/")
-        assert loc == "s3://bucket/iot-digital-twin/iot_x/metrics/streaming_metrics/"
+        loc = ms.metrics_table_location("iot_x", "s3://bucket/", "microbatch")
+        assert loc == "s3://bucket/iot-digital-twin/iot_x/metrics/streaming_metrics_microbatch/"
+
+    def test_unknown_mode_raises(self) -> None:
+        with pytest.raises(ValueError):
+            ms.metrics_table_fqn("iot_x", "batch")
+        with pytest.raises(ValueError):
+            ms.metrics_table_location("iot_x", "s3://bucket", "batch")
+        with pytest.raises(ValueError):
+            ms.metrics_external_table_ddl("iot_x", "s3://bucket", "batch")
+
+    def test_metrics_tables_returns_all_three_fqns(self) -> None:
+        tables = ms.metrics_tables("iot_spiketest")
+        assert tables == {
+            "realtime": "iot_spiketest.metrics.streaming_metrics_realtime",
+            "microbatch": "iot_spiketest.metrics.streaming_metrics_microbatch",
+            "zerobus": "iot_spiketest.metrics.streaming_metrics_zerobus",
+        }

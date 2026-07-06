@@ -76,8 +76,8 @@ async def test_realtime_write_test_produces_then_consumes(monkeypatch):
     kw = produced["consumer_kw"]
     assert kw["table"] == "sensor_readings"
     assert "/validation/realtime" in kw["checkpoint_path"]
-    assert kw["metrics_table_fqn"] == "iot_pharmaceutical.metrics.streaming_metrics"
-    assert "streaming_metrics/" in kw["metrics_table_location"]
+    assert kw["metrics_table_fqn"] == "iot_pharmaceutical.metrics.streaming_metrics_realtime"
+    assert "streaming_metrics_realtime/" in kw["metrics_table_location"]
 
 
 @pytest.mark.asyncio
@@ -279,6 +279,102 @@ async def test_dbsql_read_microbatch_targets_sensor_data(monkeypatch):
     result = await vs.dbsql_read(_ctx("microbatch"))
     assert result.status == sm.PASSED
     assert ".microbatch.sensor_data" in captured["sql"]
+
+
+@pytest.mark.asyncio
+async def test_dbsql_read_fails_when_zero_rows(monkeypatch):
+    """No-data must FAIL, not pass — the old check returned PASSED regardless."""
+    async def fake_dbsql(sql, wh):
+        return {"data": [{"n": 0}]}
+
+    monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
+    result = await vs.dbsql_read(_ctx("microbatch"))
+    assert result.status == sm.FAILED
+    assert "0 rows" in str(result.error)
+
+
+@pytest.mark.asyncio
+async def test_metrics_check_fails_when_empty(monkeypatch):
+    async def fake_dbsql(sql, wh):
+        return {"data": [{"n": 0, "have_e2e": 0, "have_proc": 0}]}
+
+    monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
+    result = await vs.metrics_check(_ctx("realtime"))
+    assert result.status == sm.FAILED
+    assert "no metrics rows" in str(result.error)
+
+
+@pytest.mark.asyncio
+async def test_metrics_check_reads_per_mode_table_and_passes(monkeypatch):
+    captured = {}
+
+    async def fake_dbsql(sql, wh):
+        captured["sql"] = sql
+        return {"data": [{"n": 7, "have_e2e": 7, "have_proc": 7}]}
+
+    monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
+    result = await vs.metrics_check(_ctx("microbatch"))
+    assert result.status == sm.PASSED
+    assert result.data["rows"] == 7
+    assert "streaming_metrics_microbatch" in captured["sql"]
+
+
+@pytest.mark.asyncio
+async def test_write_test_microbatch_passes_metrics_params(monkeypatch):
+    captured = {}
+
+    async def fake_run(ctx, code, *, timeout_s=300):
+        return StepResult(sm.PASSED, data={})
+
+    def fake_mb(topic, bootstrap, cred, delta, checkpoint, **kw):
+        captured.update(kw)
+        return "MB"
+
+    monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
+    monkeypatch.setattr(vs.snip, "microbatch_write_test", fake_mb)
+    result = await vs.write_test(_ctx("microbatch"))
+    assert result.status == sm.PASSED
+    # Micro-batch metrics now captured to the per-mode microbatch table.
+    assert captured["metrics_table_fqn"] == "iot_pharmaceutical.metrics.streaming_metrics_microbatch"
+    assert "streaming_metrics_microbatch/" in captured["metrics_table_location"]
+
+
+@pytest.mark.asyncio
+async def test_zerobus_produce_test_runs_real_snippet(monkeypatch):
+    captured = {}
+
+    async def fake_run(ctx, code, *, timeout_s=300):
+        captured["code"] = code
+        return StepResult(sm.PASSED, data={})
+
+    monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
+    monkeypatch.setattr(vs.zbv, "zerobus_produce_snippet", lambda **kw: f"ZB::{kw['table_fqn']}")
+    monkeypatch.setenv("DATABRICKS_HOST", "https://x.databricks.com")
+    monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "x.zerobus.us-east-1.cloud.databricks.com")
+    result = await vs.produce_test(_ctx("zerobus"))
+    assert result.status == sm.PASSED
+    assert captured["code"].startswith("ZB::iot_pharmaceutical.zerobus.iot_sensor_data")
+
+
+@pytest.mark.asyncio
+async def test_zerobus_produce_test_fails_without_endpoint(monkeypatch):
+    monkeypatch.delenv("ZEROBUS_SERVER_ENDPOINT", raising=False)
+    result = await vs.produce_test(_ctx("zerobus"))
+    assert result.status == sm.FAILED
+    assert "ZEROBUS_SERVER_ENDPOINT" in str(result.error)
+
+
+@pytest.mark.asyncio
+async def test_zerobus_auth_probe_delegates_to_module(monkeypatch):
+    monkeypatch.setenv("DATABRICKS_HOST", "https://x.databricks.com")
+    monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "x.zerobus.us-east-1.cloud.databricks.com")
+    monkeypatch.setattr(vs.zbv, "auth_probe", lambda *a, **k: (True, {"ok": True}))
+    result = await vs.auth_probe(_ctx("zerobus"))
+    assert result.status == sm.PASSED
+
+    monkeypatch.setattr(vs.zbv, "auth_probe", lambda *a, **k: (False, {"token_error": "401"}))
+    result = await vs.auth_probe(_ctx("zerobus"))
+    assert result.status == sm.FAILED
 
 
 @pytest.mark.asyncio

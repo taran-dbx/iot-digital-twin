@@ -55,7 +55,9 @@ async def producer_start_endpoint(pipeline_id: str, request: Request, state: App
                 resources = json.loads(row["resources"] or "{}") if isinstance(row["resources"], str) else (row["resources"] or {})
                 uc_catalog = resources.get("uc_catalog")
                 if uc_catalog:
-                    base_parameters["metrics_table"] = f"{uc_catalog}.metrics.streaming_metrics"
+                    # Metrics are per-mode now (streaming_metrics_<mode>); the legacy
+                    # per-pipeline producer is realtime-shaped, so point at that table.
+                    base_parameters["metrics_table"] = f"{uc_catalog}.metrics.streaming_metrics_realtime"
         except Exception as exc:
             logger.warning("Could not resolve metrics table for pipeline %s: %s", pipeline_id, exc)
 

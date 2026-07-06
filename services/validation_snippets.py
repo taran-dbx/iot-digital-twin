@@ -411,12 +411,92 @@ except Exception as e:
 '''
 
 
+def _metrics_listener_code(
+    metrics_table_fqn: str, metrics_table_location: str, region: str
+) -> str:
+    """Return the buffered delta-rs streaming-metrics listener block (P5a, §1.11).
+
+    Mirrors the inline listener in :func:`rtm_write_test`: ``onQueryProgress``
+    ONLY enqueues; a daemon thread flushes batches via delta-rs ``write_deltalake``
+    so the callback never contends with the query.  Include this inside a
+    snippet's ``try`` block (4-space indent) BEFORE ``.start()``; it ends by
+    calling ``spark.streams.addListener(...)``.  Returned text is fully resolved
+    (no remaining ``{{}}`` placeholders) so callers must CONCATENATE it — never
+    embed it in another f-string.
+    """
+    return f'''
+    import json as _json, queue as _queue, threading as _threading
+    import pandas as _pd
+    from datetime import datetime, timezone
+    from deltalake import write_deltalake
+    from databricks.sdk import WorkspaceClient
+    from pyspark.sql.streaming import StreamingQueryListener
+    METRICS_TABLE_FQN = {metrics_table_fqn!r}
+    METRICS_TABLE_LOCATION = {metrics_table_location!r}
+    _mw = WorkspaceClient()
+    _mq = _queue.Queue()
+    def _metrics_storage_options():
+        tid = _mw.tables.get(METRICS_TABLE_FQN).table_id
+        tc = _mw.temporary_table_credentials.generate_temporary_table_credentials(
+            operation="READ_WRITE", table_id=tid)
+        c = tc.aws_temp_credentials
+        return {{"AWS_ACCESS_KEY_ID": c.access_key_id,
+                 "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
+                 "AWS_SESSION_TOKEN": c.session_token,
+                 "AWS_REGION": {region!r}, "AWS_S3_ALLOW_UNSAFE_RENAME": "true"}}
+    def _metrics_record(pj):
+        p = _json.loads(pj); dur = p.get("durationMs", {{}}) or {{}}
+        e2e = p.get("e2eLatencyMs", {{}}) or {{}}
+        proc = p.get("processingLatencyMs", {{}}) or {{}}
+        qd = p.get("sourceQueuingLatencyMs", {{}}) or {{}}
+        return {{"query_id": str(p.get("id", "")), "query_name": p.get("name") or "",
+                 "run_id": str(p.get("runId", "")), "batch_id": int(p.get("batchId", 0)),
+                 "timestamp": datetime.now(timezone.utc),
+                 "num_input_rows": int(p.get("numInputRows", 0)),
+                 "input_rps": float(p.get("inputRowsPerSecond", 0.0) or 0.0),
+                 "processed_rps": float(p.get("processedRowsPerSecond", 0.0) or 0.0),
+                 "trigger_ms": float(dur.get("triggerExecution", 0.0) or 0.0),
+                 "e2e_p50": e2e.get("p50"), "e2e_p99": e2e.get("p99"),
+                 "processing_p50": proc.get("p50"), "processing_p99": proc.get("p99"),
+                 "queuing_p50": qd.get("p50"), "queuing_p99": qd.get("p99"),
+                 "progress": pj}}
+    def _metrics_flush_loop():
+        while True:
+            batch = [_mq.get()]
+            while True:
+                try:
+                    batch.append(_mq.get_nowait())
+                except _queue.Empty:
+                    break
+            try:
+                write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(batch),
+                                mode="append", storage_options=_metrics_storage_options())
+            except Exception as _e:
+                print("[metrics] delta-rs flush failed:", type(_e).__name__, _e)
+    _threading.Thread(target=_metrics_flush_loop, daemon=True).start()
+    class BufferedDeltaMetricsListener(StreamingQueryListener):
+        def onQueryStarted(self, event):
+            pass
+        def onQueryProgress(self, event):
+            try:
+                _mq.put(_metrics_record(event.progress.json()))
+            except Exception as _e:
+                print("[metrics] enqueue failed:", type(_e).__name__, _e)
+        def onQueryTerminated(self, event):
+            pass
+    spark.streams.addListener(BufferedDeltaMetricsListener())
+'''
+
+
 def microbatch_write_test(
     topic: str,
     bootstrap_public: str,
     service_credential: str,
     delta_table: str,
     checkpoint_path: str,
+    metrics_table_fqn: str | None = None,
+    metrics_table_location: str | None = None,
+    region: str = "us-east-1",
     run_seconds: int = 30,
 ) -> str:
     """Bounded micro-batch Kafka→Delta write test (spec §1.10).
@@ -425,17 +505,23 @@ def microbatch_write_test(
     validation checkpoint, writes to the UC Delta table.
 
     Parses the Kafka JSON to the **SSOT schema** (the same columns the deployed
-    micro-batch consumer writes: sensor_name, industry, value, unit, sensor_type,
-    event_time, min/max/nominal_value, fault_active, metadata) — writing a raw
-    string instead collides with the table's real schema (DELTA_METADATA_MISMATCH)
-    both when the table already exists (deployed) and by poisoning a fresh table's
-    schema for the production consumer.
+    micro-batch consumer writes) — a raw-string write collides with the table's
+    real schema (DELTA_METADATA_MISMATCH).  When ``metrics_table_fqn`` +
+    ``metrics_table_location`` are given, the buffered delta-rs metrics listener
+    is wired in so micro-batch streaming metrics land in the per-mode
+    ``streaming_metrics_microbatch`` table (realtime already had this; micro-batch
+    previously captured NO metrics).
     """
-    return _PREAMBLE + f'''
+    listener = ""
+    if metrics_table_fqn and metrics_table_location:
+        listener = _metrics_listener_code(metrics_table_fqn, metrics_table_location, region)
+    header = _PREAMBLE + '''
 try:
     from pyspark.sql import functions as F
     from pyspark.sql.types import (StructType, StringType, DoubleType,
                                    BooleanType, MapType)
+'''
+    body = f'''
     q = (spark.readStream.format("kafka")
          .option("kafka.bootstrap.servers", {bootstrap_public!r})
          .option("subscribe", {topic!r})
@@ -464,6 +550,7 @@ try:
                   F.col("d.metadata").alias("metadata"),
               ))
     stream = (parsed.writeStream
+              .outputMode("append")
               .option("checkpointLocation", {checkpoint_path!r})
               .trigger(processingTime="10 seconds")
               .toTable({delta_table!r}))
@@ -472,6 +559,7 @@ try:
 except Exception as e:
     _fail(traceback.format_exc())
 '''
+    return header + listener + body
 
 
 def cdf_verify(
