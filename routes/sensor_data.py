@@ -19,6 +19,7 @@ from services.dbsql_service import (
     execute_dbsql,
     get_pipeline_catalog,
 )
+from services import validation_steps as _v_steps
 
 logger = logging.getLogger("iot_digital_twin.routes.sensor_data")
 router = APIRouter()
@@ -1230,56 +1231,154 @@ async def get_zerobus_metrics(
     }
 
 
+# Per-mode DBSQL table (schema-qualified, relative to the pipeline's UC
+# catalog). Mirrors the layout documented in
+# ``services/industry_catalog_service.py`` and the table selection already
+# proven out by ``services.validation_steps.dbsql_read``:
+#
+#   - realtime lands in the Lakebase ChronoTable, not a UC Delta table — it
+#     only reaches UC through the managed CDF sync, which writes a Delta
+#     table named ``lb_<shadow>_history`` (Lakebase CDF naming convention) in
+#     the sync's destination ``realtime`` schema. So DBSQL reads the SYNCED
+#     table (``CDF_SYNCED_TABLE``), not a nonexistent ``realtime.sensor_readings``.
+#   - microbatch / zerobus write straight to their own per-mode Delta table.
+_DBSQL_MODE_TABLES: dict[str, str] = {
+    "realtime": f"realtime.{_v_steps.CDF_SYNCED_TABLE}",
+    "microbatch": "microbatch.sensor_data",
+    "zerobus": "zerobus.iot_sensor_data",
+}
+
+
+def _is_missing_table_error(exc: Exception) -> bool:
+    """True when a DBSQL query failed because the target table doesn't exist yet.
+
+    A per-mode table that hasn't been created/populated yet (pipeline never
+    deployed, or the mode's Delta table hasn't landed its first batch) means
+    "no data yet", not a server fault — the caller degrades to an empty
+    series instead of a 500.
+    """
+    msg = str(exc).lower()
+    return (
+        "table_or_view_not_found" in msg
+        or "table or view not found" in msg
+        or "schema_not_found" in msg
+        or "catalog_not_found" in msg
+        or ("does not exist" in msg and ("table" in msg or "view" in msg or "schema" in msg))
+    )
+
+
+async def _resolve_dbsql_mode(
+    state: AppState, pipeline_id: str, mode: str | None,
+) -> str:
+    """Resolve the streaming mode (realtime/microbatch/zerobus) for a dashboard query.
+
+    Prefers the explicit ``mode`` query param (validated against the known
+    set). Falls back to inferring it from the pipeline's
+    ``source_type``/``source_config`` via
+    ``services.industry_service._infer_mode`` (the same inference the
+    curated-industry catalog uses to reconcile pre-convention pipeline rows).
+    Defaults to ``microbatch`` — the mode with no Lakebase/CDF prerequisite —
+    when nothing can be determined.
+    """
+    from services import industry_service as _ind_svc
+
+    normalized = (mode or "").strip().lower()
+    if normalized in _DBSQL_MODE_TABLES:
+        return normalized
+
+    if state.db_available and state.db:
+        try:
+            row = await state.db.fetchrow(
+                "SELECT source_type, source_config FROM pipelines WHERE id = $1::uuid",
+                pipeline_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "dbsql-timeseries: mode inference lookup failed for pipeline %s: %s",
+                pipeline_id, exc,
+            )
+            row = None
+        if row:
+            inferred = _ind_svc._infer_mode(dict(row))
+            if inferred in _DBSQL_MODE_TABLES:
+                return inferred
+    return "microbatch"
+
+
 @router.get("/api/pipeline/{pipeline_id}/dbsql-timeseries")
 async def get_dbsql_timeseries(
     pipeline_id: str,
+    request: Request,
     minutes: int = Query(1440, ge=1, le=10080, description="Lookback window in minutes"),
+    mode: str | None = Query(
+        None, description="Streaming mode: realtime, microbatch, or zerobus"
+    ),
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
-    """Query time-series sensor data from pipeline's UC catalog via DBSQL."""
-    catalog = await get_pipeline_catalog(state.db, state.db_available, pipeline_id, user_email)
+    """Query time-series sensor data from the pipeline's UC catalog via DBSQL.
+
+    Table selection is mode-aware — see ``_DBSQL_MODE_TABLES``. When ``mode``
+    isn't supplied it's inferred from the pipeline row (``_resolve_dbsql_mode``).
+    """
+    from services import app_permissions
+
+    is_admin = app_permissions.is_admin(request)
+    catalog = await get_pipeline_catalog(
+        state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
+    )
     if not catalog:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
     if not validate_catalog(catalog):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
 
-    table = f"{catalog}.raw.sensor_data"
+    resolved_mode = await _resolve_dbsql_mode(state, pipeline_id, mode)
+    table = f"{catalog}.{_DBSQL_MODE_TABLES[resolved_mode]}"
+
     warehouse_id = await resolve_warehouse_id(state.db, state.db_available, user_email)
     if not warehouse_id:
         return JSONResponse(status_code=400, content={"error": "No SQL warehouse configured"})
 
     # Choose aggregation interval based on lookback range
-    if minutes <= 60:
-        interval = "MINUTE"
-    elif minutes <= 1440:
-        interval = "HOUR"
-    else:
-        interval = "HOUR"
+    interval = "MINUTE" if minutes <= 60 else "HOUR"
+
+    empty_payload = {
+        "source": "dbsql",
+        "mode": resolved_mode,
+        "table": table,
+        "resolution": interval.lower(),
+        "minutes": minutes,
+        "count": 0,
+        "rows": [],
+    }
 
     try:
         sql = f"""
-            SELECT DATE_TRUNC('{interval}', timestamp) AS time,
+            SELECT DATE_TRUNC('{interval}', event_time) AS time,
                    sensor_name, sensor_type, industry,
                    AVG(value) AS value,
                    MIN(value) AS min_value,
                    MAX(value) AS max_value,
                    COUNT(*) AS sample_count
             FROM {table}
-            WHERE timestamp >= TIMESTAMPADD(MINUTE, -{minutes}, CURRENT_TIMESTAMP())
+            WHERE event_time >= TIMESTAMPADD(MINUTE, -{minutes}, CURRENT_TIMESTAMP())
             GROUP BY 1, 2, 3, 4
             ORDER BY time ASC
             LIMIT 5000
         """
         result = await execute_dbsql(sql, warehouse_id)
         return {
-            "source": "dbsql",
-            "resolution": interval.lower(),
-            "minutes": minutes,
+            **empty_payload,
             "count": result["row_count"],
             "rows": result["data"],
         }
 
     except Exception as exc:
+        if _is_missing_table_error(exc):
+            logger.info(
+                "DBSQL timeseries: %s not provisioned/populated yet for pipeline %s — returning empty",
+                table, pipeline_id,
+            )
+            return empty_payload
         logger.warning("DBSQL timeseries query failed for pipeline %s: %s", pipeline_id, exc)
         return JSONResponse(status_code=500, content={"error": str(exc)})
