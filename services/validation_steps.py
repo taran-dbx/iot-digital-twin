@@ -507,9 +507,29 @@ async def cdf_manual(ctx: StepContext) -> StepResult:
 
 
 async def cdf_verify(ctx: StepContext) -> StepResult:
-    # Key on THIS pipeline's shadow table (lakets_cdf._shadow_sensor_readings),
-    # not any streaming table (§1.10.3).
-    return await _run_on_cluster(ctx, snip.cdf_verify(RTM_TABLE), timeout_s=180)
+    # CDF sync status lives in the branch's Lakebase catalog (wal2delta.tables) —
+    # NOT in Spark/UC — so verify it on the branch via psycopg, reusing the Tier-1
+    # check (two-snapshot STREAMING + advancing-committed_lsn poll keyed on THIS
+    # pipeline's shadow lakets_cdf._shadow_sensor_readings, §1.10.3). Running it on
+    # the cluster via spark.sql can't work: wal2delta.tables is a Postgres table.
+    from services import health_checks as hc
+
+    cfg = _cfg(ctx)
+    conn = None
+    try:
+        conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
+        result = await hc.check_cdf_sync(conn, table=RTM_TABLE)
+    except Exception as exc:
+        return StepResult(sm.FAILED, error=f"cdf verify failed: {str(exc)[:300]}")
+    finally:
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception:  # pragma: no cover - best-effort
+                pass
+    if result.get("status") == hc.PASS:
+        return StepResult(sm.PASSED, data={"detail": result.get("detail")})
+    return StepResult(sm.FAILED, error=result.get("detail") or "CDF not STREAMING/advancing")
 
 
 async def _count_validation_rows(conn: Any) -> int:

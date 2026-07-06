@@ -378,7 +378,14 @@ async def check_chronotable(conn: Any, *, table: str = CHRONOTABLE) -> dict:
 # ---------------------------------------------------------------------------
 # Tier 1 — CDF sync (wal2delta.tables shadow row STREAMING + advancing lsn)
 # ---------------------------------------------------------------------------
-_WAL2DELTA_SQL = "SELECT table_name, status, committed_lsn FROM wal2delta.tables"
+# wal2delta.tables identifies each synced table by its Postgres OID (table_oid),
+# not a name column — join pg_class/pg_namespace to recover the schema.table name.
+_WAL2DELTA_SQL = (
+    "SELECT (n.nspname || '.' || c.relname) AS table_name, t.status, t.committed_lsn "
+    "FROM wal2delta.tables t "
+    "JOIN pg_class c ON c.oid = t.table_oid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace"
+)
 
 
 def _shadow_match(table_name: Any, shadow: str, qualified: str) -> bool:

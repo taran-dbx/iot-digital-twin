@@ -250,19 +250,57 @@ async def test_cdf_manual_parks_even_if_shadow_prep_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cdf_verify_passes_specific_shadow_table(monkeypatch):
-    captured = {}
+async def test_cdf_verify_checks_lakebase_not_cluster(monkeypatch):
+    """cdf_verify must query CDF status on the branch Lakebase (wal2delta.tables
+    lives in Postgres, not Spark) via the Tier-1 check keyed on THIS shadow — a
+    spark.sql query on the cluster can never see wal2delta.tables."""
+    import services.health_checks as hc
 
-    async def fake_run(ctx, code, *, timeout_s=300):
-        captured["code"] = code
-        return StepResult(sm.PASSED, data={})
+    called = {}
 
-    monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
-    monkeypatch.setattr(vs.snip, "cdf_verify", lambda table, **k: f"CDF::{table}")
+    class FakeConn:
+        async def close(self):
+            called["closed"] = True
+
+    async def fake_conn(branch, *, ws=None):
+        called["branch"] = branch
+        return FakeConn()
+
+    async def fake_check(conn, *, table="sensor_readings", **kw):
+        called["table"] = table
+        return {"name": "cdf_sync", "status": hc.PASS, "detail": "STREAMING + advancing"}
+
+    monkeypatch.setattr(vs.pps, "get_write_conn", fake_conn)
+    monkeypatch.setattr(hc, "check_cdf_sync", fake_check)
 
     result = await vs.cdf_verify(_ctx("realtime"))
     assert result.status == sm.PASSED
-    assert captured["code"] == "CDF::sensor_readings"
+    assert called["branch"] == "pharmaceutical"
+    assert called["table"] == "sensor_readings"
+    assert called.get("closed") is True
+
+
+@pytest.mark.asyncio
+async def test_cdf_verify_fails_when_not_streaming(monkeypatch):
+    import services.health_checks as hc
+
+    class FakeConn:
+        async def close(self):
+            pass
+
+    async def fake_conn(branch, *, ws=None):
+        return FakeConn()
+
+    async def fake_check(conn, *, table="sensor_readings", **kw):
+        return {"name": "cdf_sync", "status": hc.FAIL,
+                "detail": "lakets_cdf._shadow_sensor_readings not STREAMING — enable managed sync"}
+
+    monkeypatch.setattr(vs.pps, "get_write_conn", fake_conn)
+    monkeypatch.setattr(hc, "check_cdf_sync", fake_check)
+
+    result = await vs.cdf_verify(_ctx("realtime"))
+    assert result.status == sm.FAILED
+    assert "STREAMING" in str(result.error)
 
 
 # ---------------------------------------------------------------------------
