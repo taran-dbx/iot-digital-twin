@@ -424,13 +424,20 @@ async def check_cdf_sync(
                 f"{qualified} not found in wal2delta.tables — enable managed Lakebase CDF sync",
             )
         streaming = [t for t, (s, _) in second.items() if str(s).upper() == "STREAMING"]
+        if not streaming:
+            statuses = {t: s for t, (s, _) in second.items()}
+            return _result(
+                CDF_SYNC_CHECK, FAIL,
+                f"{qualified} present but not STREAMING (status={statuses}) — "
+                "sync is starting or needs write activity on the source table",
+            )
+        # STREAMING means the managed Lakebase→Delta sync is live for this shadow.
+        # committed_lsn only advances while NEW writes flow, so an idle-but-healthy
+        # sync (no realtime traffic during the check window) is still a PASS — we
+        # note whether it advanced rather than failing on an idle sync.
         advanced = [t for t in streaming if first.get(t, (None, None))[1] != second[t][1]]
-        if streaming and advanced:
-            return _result(CDF_SYNC_CHECK, PASS, f"{qualified} STREAMING + advancing")
-        return _result(
-            CDF_SYNC_CHECK, FAIL,
-            f"{qualified} not STREAMING/advancing (streaming={streaming}, advanced={advanced})",
-        )
+        note = "STREAMING + advancing" if advanced else "STREAMING (idle — no new writes during check)"
+        return _result(CDF_SYNC_CHECK, PASS, f"{qualified} {note}")
     except Exception as exc:
         if _is_missing_relation(exc):
             return _result(

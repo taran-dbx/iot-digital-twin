@@ -318,9 +318,20 @@ class TestCheckCdfSync:
         assert res["status"] == hc.FAIL
         assert "shadow" in res["detail"].lower()
 
-    async def test_fail_when_streaming_but_not_advancing(self):
+    async def test_pass_when_streaming_even_if_idle(self):
+        # STREAMING means the managed sync is live; committed_lsn only advances
+        # while new writes flow, so an idle-but-healthy sync must still PASS.
         row = {"table_name": "_shadow_sensor_readings",
                "status": "STREAMING", "committed_lsn": "0/100"}
+        res = await hc.check_cdf_sync(_cdf_conn([[dict(row)], [dict(row)]]),
+                                      sleeper=AsyncMock())
+        assert res["status"] == hc.PASS
+        assert "idle" in res["detail"].lower()
+
+    async def test_fail_when_present_but_not_streaming(self):
+        # Present in wal2delta but SKIPPED/other → not live → fail.
+        row = {"table_name": "lakets_cdf._shadow_sensor_readings",
+               "status": "SKIPPED", "committed_lsn": None}
         res = await hc.check_cdf_sync(_cdf_conn([[dict(row)], [dict(row)]]),
                                       sleeper=AsyncMock())
         assert res["status"] == hc.FAIL
