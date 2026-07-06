@@ -281,7 +281,9 @@ try:
                  "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
                  "AWS_SESSION_TOKEN": c.session_token,
                  "AWS_REGION": {region!r}, "AWS_S3_ALLOW_UNSAFE_RENAME": "true"}}
-    def _metrics_record(pj):
+    def _metrics_record(prog):
+        _pjx = getattr(prog, "json", None)
+        pj = _pjx() if callable(_pjx) else (_pjx if isinstance(_pjx, str) else json.dumps(prog))
         p = json.loads(pj); dur = p.get("durationMs", {{}}) or {{}}
         e2e = p.get("e2eLatencyMs", {{}}) or {{}}
         proc = p.get("processingLatencyMs", {{}}) or {{}}
@@ -316,7 +318,7 @@ try:
             pass
         def onQueryProgress(self, event):
             try:
-                _mq.put(_metrics_record(event.progress.json()))
+                _mq.put(_metrics_record(event.progress))
             except Exception as _e:
                 print("[metrics] enqueue failed:", type(_e).__name__, _e)
         def onQueryTerminated(self, event):
@@ -413,7 +415,7 @@ try:
     try:
         _progs = list(getattr(q, "recentProgress", []) or [])
         _nprog = len(_progs)
-        _rows = [_metrics_record(p.json()) for p in _progs]
+        _rows = [_metrics_record(p) for p in _progs]
         if _rows:
             write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(_rows),
                             mode="append", storage_options=_metrics_storage_options())
@@ -460,7 +462,9 @@ def _metrics_listener_code(
                  "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
                  "AWS_SESSION_TOKEN": c.session_token,
                  "AWS_REGION": {region!r}, "AWS_S3_ALLOW_UNSAFE_RENAME": "true"}}
-    def _metrics_record(pj):
+    def _metrics_record(prog):
+        _pjx = getattr(prog, "json", None)
+        pj = _pjx() if callable(_pjx) else (_pjx if isinstance(_pjx, str) else _json.dumps(prog))
         p = _json.loads(pj); dur = p.get("durationMs", {{}}) or {{}}
         e2e = p.get("e2eLatencyMs", {{}}) or {{}}
         proc = p.get("processingLatencyMs", {{}}) or {{}}
@@ -495,7 +499,7 @@ def _metrics_listener_code(
             pass
         def onQueryProgress(self, event):
             try:
-                _mq.put(_metrics_record(event.progress.json()))
+                _mq.put(_metrics_record(event.progress))
             except Exception as _e:
                 print("[metrics] enqueue failed:", type(_e).__name__, _e)
         def onQueryTerminated(self, event):
@@ -579,7 +583,7 @@ try:
         try:
             _progs = list(getattr(stream, "recentProgress", []) or [])
             _nprog = len(_progs)
-            _rows = [_metrics_record(p.json()) for p in _progs]
+            _rows = [_metrics_record(p) for p in _progs]
             if _rows:
                 write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(_rows),
                                 mode="append", storage_options=_metrics_storage_options())
