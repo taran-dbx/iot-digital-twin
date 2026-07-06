@@ -233,3 +233,146 @@ async def test_can_deploy_reflects_gate(repo):
     gate2 = await vs.can_deploy(None, "pharmaceutical")
     assert gate2["can_deploy"] is False
     assert "provision_cluster" in gate2["outstanding"]
+
+
+# ---------------------------------------------------------------------------
+# get_state enrichment — cluster_state / current_step / phase / updated_at
+# (spec §1.12 — live progress for the validate/state poll)
+# ---------------------------------------------------------------------------
+class _FakeClusterState:
+    """Stand-in for the SDK ``ClusterState`` enum (has a ``.value``)."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+class _FakeClusterInfo:
+    def __init__(self, state):
+        self.state = state
+
+
+class _FakeClusters:
+    """Records the cluster_id asked for; returns a canned state (or raises)."""
+
+    def __init__(self, *, state_value=None, raises=False):
+        self._state_value = state_value
+        self._raises = raises
+        self.asked = None
+
+    def get(self, cluster_id=None):
+        self.asked = cluster_id
+        if self._raises:
+            raise RuntimeError("cluster gone")
+        return _FakeClusterInfo(_FakeClusterState(self._state_value))
+
+
+class _FakeWs:
+    def __init__(self, clusters):
+        self.clusters = clusters
+
+
+def _started_setup(**extra):
+    """A setup whose validation_state has a real (mid-run) sequence."""
+    state = sm.initial_state(["microbatch"])
+    state = sm.set_step(state, "provision_cluster", sm.PASSED, updated_at="2026-07-06T00:00:00+00:00")
+    state = sm.set_step(state, "source_connectivity", sm.RUNNING, updated_at="2026-07-06T00:01:00+00:00")
+    state["cluster_id"] = "0705-abc"
+    return {
+        "id": "setup-1",
+        "industry": "pharmaceutical",
+        "enabled_modes": ["microbatch"],
+        "validation_state": state,
+        **extra,
+    }
+
+
+def _repo_with(monkeypatch, setup):
+    fake = FakeRepo(setup)
+    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry",
+                        fake.get_setup_by_industry)
+    monkeypatch.setattr(vs.pipeline_setup_repo, "update_setup", fake.update_setup)
+    return fake
+
+
+async def test_get_state_surfaces_cluster_state(monkeypatch):
+    _repo_with(monkeypatch, _started_setup())
+    clusters = _FakeClusters(state_value="RUNNING")
+    out = await vs.get_state(None, "pharmaceutical", ws=_FakeWs(clusters))
+    assert clusters.asked == "0705-abc"
+    assert out["cluster_state"] == "RUNNING"
+    assert out["cluster_id"] == "0705-abc"
+
+
+async def test_get_state_current_step_and_phase(monkeypatch):
+    _repo_with(monkeypatch, _started_setup())
+    out = await vs.get_state(None, "pharmaceutical",
+                             ws=_FakeWs(_FakeClusters(state_value="RUNNING")))
+    # source_connectivity is the running (first non-passed) step.
+    assert out["current_step"] == "source_connectivity"
+    # Cluster RUNNING + past provision_cluster → validating.
+    assert out["phase"] == "validating"
+
+
+async def test_get_state_phase_provisioning_when_cluster_pending(monkeypatch):
+    setup = _started_setup()
+    # Roll back to the provision_cluster step still running.
+    state = sm.initial_state(["microbatch"])
+    state = sm.set_step(state, "provision_cluster", sm.RUNNING)
+    state["cluster_id"] = "0705-abc"
+    setup["validation_state"] = state
+    _repo_with(monkeypatch, setup)
+    out = await vs.get_state(None, "pharmaceutical",
+                             ws=_FakeWs(_FakeClusters(state_value="PENDING")))
+    assert out["phase"] == "provisioning_cluster"
+    assert out["cluster_state"] == "PENDING"
+
+
+async def test_get_state_preserves_per_step_updated_at(monkeypatch):
+    _repo_with(monkeypatch, _started_setup())
+    out = await vs.get_state(None, "pharmaceutical",
+                             ws=_FakeWs(_FakeClusters(state_value="RUNNING")))
+    steps = out["steps"]
+    assert steps["provision_cluster"]["updated_at"] == "2026-07-06T00:00:00+00:00"
+    assert steps["source_connectivity"]["updated_at"] == "2026-07-06T00:01:00+00:00"
+    # Existing fields kept intact (backwards-compatible additive shape).
+    assert out["sequence"] == sm.build_sequence(["microbatch"])
+    assert "run_ids" in out
+
+
+async def test_get_state_null_cluster_state_when_no_cluster(monkeypatch):
+    setup = _started_setup()
+    setup["validation_state"]["cluster_id"] = None
+    _repo_with(monkeypatch, setup)
+    clusters = _FakeClusters(state_value="RUNNING")
+    out = await vs.get_state(None, "pharmaceutical", ws=_FakeWs(clusters))
+    assert out["cluster_state"] is None
+    assert out["cluster_id"] is None
+    assert clusters.asked is None  # no lookup attempted
+
+
+async def test_get_state_unknown_when_lookup_fails(monkeypatch):
+    _repo_with(monkeypatch, _started_setup())
+    out = await vs.get_state(None, "pharmaceutical",
+                             ws=_FakeWs(_FakeClusters(raises=True)))
+    assert out["cluster_state"] == "UNKNOWN"
+
+
+async def test_get_state_default_workspace_client_lookup_is_graceful(monkeypatch):
+    # No ws injected → default client path; a failing client yields UNKNOWN,
+    # never errors the endpoint.
+    _repo_with(monkeypatch, _started_setup())
+    monkeypatch.setattr(vs, "_workspace_client",
+                        lambda: _FakeWs(_FakeClusters(raises=True)))
+    out = await vs.get_state(None, "pharmaceutical")
+    assert out["cluster_state"] == "UNKNOWN"
+
+
+async def test_get_state_none_when_no_state(monkeypatch):
+    _repo_with(monkeypatch, {"id": "s", "industry": "pharmaceutical",
+                             "enabled_modes": ["microbatch"], "validation_state": {}})
+    assert await vs.get_state(None, "pharmaceutical") is None
+
+
+async def test_get_state_none_when_no_setup(monkeypatch):
+    _repo_with(monkeypatch, {"id": "s", "industry": "other", "validation_state": {}})
+    assert await vs.get_state(None, "pharmaceutical") is None

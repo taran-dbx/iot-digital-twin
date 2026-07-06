@@ -315,3 +315,93 @@ def test_multi_mode_gate_status_aggregates_enabled_modes():
     # Outstanding is the de-duplicated union across enabled modes.
     assert "zerobus:create_table" in agg["outstanding"]
     assert agg["outstanding"].count("zerobus:create_table") == 1
+
+
+# ---------------------------------------------------------------------------
+# UI progress derivation — current_step + derive_phase (spec §1.12)
+# ---------------------------------------------------------------------------
+def test_current_step_returns_first_non_passed():
+    state = sm.initial_state(["microbatch"])
+    # Nothing run yet → the first step in the sequence.
+    assert sm.current_step(state) == "provision_cluster"
+    # Pass the first two common steps → advances to the third.
+    state = sm.set_step(state, "provision_cluster", sm.PASSED)
+    state = sm.set_step(state, "source_connectivity", sm.PASSED)
+    assert sm.current_step(state) == "topics_created"
+
+
+def test_current_step_surfaces_running_and_waiting_admin():
+    state = sm.initial_state(["realtime"])
+    state = sm.set_step(state, "provision_cluster", sm.RUNNING)
+    assert sm.current_step(state) == "provision_cluster"
+    # Park the realtime cdf_manual step with everything before it green.
+    for k in ["provision_cluster", "source_connectivity", "topics_created",
+              "schema_conformance", "realtime:partitions_precreate",
+              "realtime:write_test"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
+    # next_runnable_step returns None (park is not runnable) but current_step
+    # still surfaces the parked step so the UI can highlight it.
+    assert sm.next_runnable_step(state) is None
+    assert sm.current_step(state) == "realtime:cdf_manual"
+
+
+def test_current_step_none_when_all_passed():
+    state = sm.initial_state(["microbatch"])
+    for k in state["sequence"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    assert sm.current_step(state) is None
+
+
+def test_derive_phase_provisioning_before_and_during_cluster():
+    state = sm.initial_state(["microbatch"])
+    # Idle before any run → still "provisioning" (about to bring up the cluster).
+    assert sm.derive_phase(state) == sm.PHASE_PROVISIONING
+    # provision_cluster running, cluster PENDING → provisioning.
+    state = sm.set_step(state, "provision_cluster", sm.RUNNING)
+    assert sm.derive_phase(state, cluster_state="PENDING") == sm.PHASE_PROVISIONING
+
+
+def test_derive_phase_provisioning_from_cluster_state_only():
+    # Cluster still coming up mid-lane (e.g. RESIZING) → provisioning phase even
+    # though the current step is not provision_cluster.
+    state = sm.initial_state(["microbatch"])
+    for k in ["provision_cluster", "source_connectivity", "topics_created",
+              "schema_conformance"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    state = sm.set_step(state, "microbatch:write_test", sm.RUNNING)
+    assert sm.derive_phase(state, cluster_state="RESTARTING") == sm.PHASE_PROVISIONING
+
+
+def test_derive_phase_validating_when_cluster_running():
+    state = sm.initial_state(["microbatch"])
+    for k in ["provision_cluster", "source_connectivity", "topics_created",
+              "schema_conformance"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    state = sm.set_step(state, "microbatch:write_test", sm.RUNNING)
+    assert sm.derive_phase(state, cluster_state="RUNNING") == sm.PHASE_VALIDATING
+
+
+def test_derive_phase_waiting_admin():
+    state = sm.initial_state(["realtime"])
+    for k in ["provision_cluster", "source_connectivity", "topics_created",
+              "schema_conformance", "realtime:partitions_precreate",
+              "realtime:write_test"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
+    assert sm.derive_phase(state, cluster_state="RUNNING") == sm.PHASE_WAITING_ADMIN
+
+
+def test_derive_phase_failed_wins():
+    state = sm.initial_state(["microbatch"])
+    state = sm.set_step(state, "provision_cluster", sm.PASSED)
+    state = sm.set_step(state, "source_connectivity", sm.FAILED, error="boom")
+    # Failure outranks provisioning / validating.
+    assert sm.derive_phase(state, cluster_state="RUNNING") == sm.PHASE_FAILED
+
+
+def test_derive_phase_passed_when_gate_open():
+    state = sm.initial_state(["microbatch"])
+    for k in state["sequence"]:
+        state = sm.set_step(state, k, sm.PASSED)
+    assert sm.derive_phase(state, cluster_state="TERMINATED") == sm.PHASE_PASSED

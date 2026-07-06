@@ -48,6 +48,10 @@ __all__ = [
     "step_key", "bare_step", "mode_of", "is_terminal",
     "build_sequence", "initial_state", "get_step", "set_step",
     "mark_running", "next_runnable_step", "retry_from", "mark_cdf_enabled",
+    "current_step", "derive_phase",
+    "PROVISION_CLUSTER_STEP", "PROVISIONING_CLUSTER_STATES",
+    "PHASE_PROVISIONING", "PHASE_VALIDATING", "PHASE_WAITING_ADMIN",
+    "PHASE_PASSED", "PHASE_FAILED",
     "validation_step_keys", "outstanding_steps", "is_gate_open",
     "data_purged", "gate_status",
     "mode_required_keys", "mode_outstanding_steps", "is_mode_gate_open",
@@ -108,6 +112,24 @@ WAITING_ADMIN_STEPS: frozenset[str] = frozenset({"cdf_manual"})
 
 # The data-purge step (its success proves test data was cleaned up — §1.13).
 CLEANUP_STEP = "cleanup"
+
+# The first common step — provisions the interactive validation cluster.  Used
+# to derive the ``provisioning_cluster`` UI phase.
+PROVISION_CLUSTER_STEP = "provision_cluster"
+
+# Databricks Clusters-API states that mean the cluster is still coming up (not
+# yet usable) — the UI treats these as the ``provisioning_cluster`` phase.
+PROVISIONING_CLUSTER_STATES: frozenset[str] = frozenset(
+    {"PENDING", "RESTARTING", "RESIZING"}
+)
+
+# Coarse UI phases surfaced by :func:`derive_phase` (spec §1.12; used by the
+# ``validate/state`` poll so a running validation never "looks frozen").
+PHASE_PROVISIONING = "provisioning_cluster"
+PHASE_VALIDATING = "validating"
+PHASE_WAITING_ADMIN = "waiting_admin"
+PHASE_PASSED = "passed"
+PHASE_FAILED = "failed"
 
 SEP = ":"
 
@@ -240,6 +262,55 @@ def mark_cdf_enabled(state: dict, mode: str = "realtime") -> dict:
     if key not in state.get("steps", {}):
         raise KeyError(f"no cdf_manual step for mode {mode!r}")
     return set_step(state, key, PASSED)
+
+
+# --- UI progress derivation (spec §1.12) -----------------------------------
+def current_step(state: dict) -> str | None:
+    """Return the step the run is *currently on*, or ``None`` when complete.
+
+    Walks the sequence and returns the first step that is not yet ``passed`` —
+    the ``running`` step during a live run, the ``waiting_admin`` step when
+    parked on a manual action, the ``failed`` step when halted, or the next
+    ``pending`` step when idle between runs.  Unlike :func:`next_runnable_step`
+    this also surfaces a ``waiting_admin`` park (which is *not* runnable) so the
+    UI can highlight what it is waiting for.  Returns ``None`` when every step
+    has passed.
+    """
+    steps = state.get("steps", {})
+    for key in state.get("sequence", []):
+        if (steps.get(key) or {}).get("status", PENDING) != PASSED:
+            return key
+    return None
+
+
+def derive_phase(state: dict, *, cluster_state: str | None = None) -> str:
+    """Return a coarse UI phase for the whole run.
+
+    One of :data:`PHASE_PROVISIONING` / :data:`PHASE_VALIDATING` /
+    :data:`PHASE_WAITING_ADMIN` / :data:`PHASE_PASSED` / :data:`PHASE_FAILED`,
+    derived from the per-step statuses, the current step, and the live
+    ``cluster_state`` (from the Clusters API).  Precedence: a failed step wins
+    (``failed``); then an open deploy gate (``passed``); then a manual park
+    (``waiting_admin``); then cluster bring-up (``provisioning_cluster``) — while
+    the run is on ``provision_cluster`` or the cluster is still coming up; else
+    ``validating``.
+    """
+    steps = state.get("steps", {})
+    if any((steps.get(k) or {}).get("status") == FAILED
+           for k in validation_step_keys(state)):
+        return PHASE_FAILED
+    if is_gate_open(state):
+        return PHASE_PASSED
+
+    cur = current_step(state)
+    cur_status = (steps.get(cur) or {}).get("status") if cur else None
+    if cur_status == WAITING_ADMIN:
+        return PHASE_WAITING_ADMIN
+    if cur is not None and bare_step(cur) == PROVISION_CLUSTER_STEP:
+        return PHASE_PROVISIONING
+    if cluster_state in PROVISIONING_CLUSTER_STATES:
+        return PHASE_PROVISIONING
+    return PHASE_VALIDATING
 
 
 # --- Deploy gate (spec §1.12) ----------------------------------------------

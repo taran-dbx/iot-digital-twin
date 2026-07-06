@@ -26,6 +26,7 @@ exercised only by the skippable integration test.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 from dataclasses import dataclass, field
@@ -242,12 +243,81 @@ async def resume_validation(
     return await run_machine(db, setup, executors=executors, ws=ws)
 
 
-async def get_state(db: Any, industry: str) -> dict | None:
-    """Return the persisted ``validation_state`` for an industry (or ``None``)."""
+def _workspace_client() -> Any:
+    """Return a fresh Databricks ``WorkspaceClient`` (indirected for tests)."""
+    from databricks.sdk import WorkspaceClient
+
+    return WorkspaceClient()
+
+
+async def _lookup_cluster_state(cluster_id: str | None, *, ws: Any | None = None) -> str | None:
+    """Return the live Clusters-API state string for ``cluster_id``.
+
+    ``None`` when there is no cluster yet; ``"UNKNOWN"`` when the lookup fails
+    (missing cluster / auth / SDK error) so enriching the state never errors the
+    ``validate/state`` poll (spec §1.12).  The returned string is the raw SDK
+    ``ClusterState`` value (``PENDING`` / ``RUNNING`` / ``TERMINATED`` / …).
+    """
+    if not cluster_id:
+        return None
+    try:
+        client = ws or _workspace_client()
+        info = await asyncio.to_thread(client.clusters.get, cluster_id=cluster_id)
+        raw = getattr(info, "state", None)
+        # SDK returns a ClusterState enum (``.value``); tolerate a bare string.
+        value = getattr(raw, "value", None)
+        if value:
+            return value
+        if isinstance(raw, str) and raw:
+            return raw
+        return "UNKNOWN"
+    except Exception as exc:  # any lookup failure → graceful UNKNOWN, never raise
+        logger.warning("cluster-state lookup for %s failed: %s", cluster_id, exc)
+        return "UNKNOWN"
+
+
+async def _enrich_state(state: dict, *, ws: Any | None = None) -> dict:
+    """Return a copy of ``state`` with live progress fields for the UI poll.
+
+    Adds (additive, backwards-compatible):
+
+    - ``cluster_state`` — live Clusters-API state of the validation cluster
+      (``None`` if no cluster yet, ``"UNKNOWN"`` on lookup failure).
+    - ``cluster_id``    — the interactive cluster id (already persisted; echoed
+      for convenience / when the map has yet to set it).
+    - ``current_step``  — the step the run is on (running / waiting_admin / next).
+    - ``phase``         — coarse phase (provisioning_cluster / validating /
+      waiting_admin / passed / failed).
+
+    Per-step ``updated_at`` timestamps are already persisted in ``steps`` and are
+    returned untouched so the UI can show elapsed / per-step timing.
+    """
+    cluster_id = state.get("cluster_id")
+    cluster_state = await _lookup_cluster_state(cluster_id, ws=ws)
+    enriched = copy.deepcopy(state)
+    enriched["cluster_id"] = cluster_id
+    enriched["cluster_state"] = cluster_state
+    enriched["current_step"] = sm.current_step(state)
+    enriched["phase"] = sm.derive_phase(state, cluster_state=cluster_state)
+    return enriched
+
+
+async def get_state(db: Any, industry: str, *, ws: Any | None = None) -> dict | None:
+    """Return the persisted ``validation_state``, enriched for the UI poll.
+
+    Returns ``None`` when the setup or its validation state is absent.  When a
+    run exists the state is enriched with live progress fields (``cluster_state``,
+    ``cluster_id``, ``current_step``, ``phase``) so the frontend poll can show
+    whether the cluster is provisioning / running and per-step progress instead
+    of a run that "looks frozen".
+    """
     setup = await pipeline_setup_repo.get_setup_by_industry(db, industry)
     if setup is None:
         return None
-    return setup.get("validation_state") or None
+    state = setup.get("validation_state") or None
+    if not state:
+        return None
+    return await _enrich_state(state, ws=ws)
 
 
 async def retry_step(
