@@ -37,8 +37,10 @@ from core.state import AppState, get_app_state
 from services import (
     app_permissions,
     deployment_repo,
+    deployment_service,
     industry_provisioning_service,
     pipeline_setup_repo,
+    pipeline_view,
     resource_ledger,
     teardown_service,
 )
@@ -70,6 +72,33 @@ def _require_db(state: AppState) -> Any:
             detail="app-backend metadata database is unavailable",
         )
     return db
+
+
+# ---------------------------------------------------------------------------
+# Live job-running lookup (Jobs API) — resolves REAL running state per job so
+# ``status`` is never a fabricated "idle/running".  Best-effort: a missing
+# WorkspaceClient (tests / no creds) or a Jobs-API error degrades a deployed
+# mode to "stopped" (not running) rather than 500-ing the whole list.
+# ---------------------------------------------------------------------------
+def _job_running_lookup(deployments: list[dict]) -> dict[str, bool]:
+    """Return ``{job_id: is_running}`` for every deployed mode across ``deployments``."""
+    job_ids = pipeline_view.collect_job_ids(deployments)
+    if not job_ids:
+        return {}
+    try:
+        w = deployment_service._new_ws()
+    except Exception as exc:  # pragma: no cover - no creds in tests
+        logger.warning("Jobs API client unavailable; modes report not-running: %s", exc)
+        return {}
+    lookup: dict[str, bool] = {}
+    for job_id in job_ids:
+        try:
+            status = deployment_service.pipeline_status(job_id, w=w)
+            lookup[str(job_id)] = status.get("state") == "RUNNING"
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.warning("pipeline_status(%s) failed; treating as not-running: %s", job_id, exc)
+            lookup[str(job_id)] = False
+    return lookup
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +177,14 @@ async def create_or_update_setup(
 ):
     """Create or update the single ``pipeline_setup`` for an industry (draft).
 
-    Enforces one-setup-per-industry: if a setup already exists for ``industry``
-    it is updated in place; otherwise a new draft row is created.
+    Enforces one-setup-per-industry (the DB has ``UNIQUE(industry)``): if a setup
+    already exists for ``industry`` it is UPDATED in place; otherwise a new draft
+    row is created.
+
+    A caller that explicitly intends to create a *brand-new* pipeline for an
+    already-configured industry (body/query ``create_only`` / ``intent=create``)
+    is rejected with **409** and pointed at the existing ``setup_id`` — so a
+    second pipeline is never silently created for the same industry.
     """
     _require_admin(request)
     db = _require_db(state)
@@ -158,6 +193,11 @@ async def create_or_update_setup(
         body = await request.json()
     except Exception:
         body = {}
+
+    create_only = bool(body.get("create_only")) or (
+        body.get("intent") == "create"
+        or request.query_params.get("intent") == "create"
+    )
 
     fields = {
         "flavor": body.get("flavor"),
@@ -170,6 +210,15 @@ async def create_or_update_setup(
 
     existing = await pipeline_setup_repo.get_setup_by_industry(db, industry)
     if existing is not None:
+        if create_only:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": f"a pipeline setup already exists for industry '{industry}'",
+                    "setup_id": existing["id"],
+                    "industry": industry,
+                },
+            )
         update_fields = {k: v for k, v in fields.items() if v is not None}
         setup = await pipeline_setup_repo.update_setup(
             db, existing["id"], **update_fields
@@ -185,6 +234,36 @@ async def create_or_update_setup(
         **fields,
     )
     return {"created": True, "setup": setup}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/industries/{industry}/setup — existing setup or 404
+# ---------------------------------------------------------------------------
+@router.get("/api/admin/industries/{industry}/setup")
+async def get_setup_for_industry(
+    industry: str, request: Request, state: AppState = Depends(get_app_state)
+):
+    """Return the industry's single ``pipeline_setup`` (with its contract view), or 404.
+
+    Lets the frontend detect that an industry is already configured (one-per-
+    industry) before offering a "create" path.
+    """
+    _require_admin(request)
+    db = _require_db(state)
+
+    setup = await pipeline_setup_repo.get_setup_by_industry(db, industry)
+    if setup is None:
+        raise HTTPException(
+            status_code=404, detail=f"no pipeline setup for industry '{industry}'"
+        )
+
+    deployments = await deployment_repo.list_deployments(db, setup["id"])
+    running = _job_running_lookup(deployments)
+    return {
+        "setup": setup,
+        "deployments": deployments,
+        "pipeline": pipeline_view.build_pipeline_view(setup, deployments, running),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -239,20 +318,39 @@ async def provision_industry_endpoint(
 # ---------------------------------------------------------------------------
 @router.get("/api/admin/pipelines")
 async def list_pipelines(request: Request, state: AppState = Depends(get_app_state)):
-    """Return every setup with its deployments and a rolled-up health summary."""
+    """Return every setup with its per-mode status/health/startability contract.
+
+    Each pipeline object carries the frontend contract
+    (``{setup_id, industry, status, health, modes:[{mode,status,health,startable}],
+    startable, ready}``) plus the raw ``setup`` / ``deployments`` / ledger
+    ``resource_health`` for admin detail.  ``status`` / ``health`` are DERIVED
+    from real rows + live Jobs-API run state — never fabricated.
+    """
     _require_admin(request)
     db = _require_db(state)
 
     setups = await pipeline_setup_repo.list_setups(db)
-    items = []
+
+    # Resolve live job-running state once for all deployments in the sweep.
+    all_deployments: dict[str, list[dict]] = {}
+    combined: list[dict] = []
     for setup in setups:
         deployments = await deployment_repo.list_deployments(db, setup["id"])
+        all_deployments[setup["id"]] = deployments
+        combined.extend(deployments)
+    running = _job_running_lookup(combined)
+
+    items = []
+    for setup in setups:
+        deployments = all_deployments[setup["id"]]
         resources = await resource_ledger.list_resources(db, setup["id"])
+        view = pipeline_view.build_pipeline_view(setup, deployments, running)
         items.append(
             {
+                **view,
                 "setup": setup,
                 "deployments": deployments,
-                "health": _rollup_health(setup, deployments, resources),
+                "resource_health": _rollup_health(setup, deployments, resources),
             }
         )
     return {"pipelines": items}
@@ -281,11 +379,14 @@ async def pipeline_health(
 
     deployments = await deployment_repo.list_deployments(db, setup_id)
     resources = await resource_ledger.list_resources(db, setup_id)
+    running = _job_running_lookup(deployments)
 
+    view = pipeline_view.build_pipeline_view(setup, deployments, running)
     return {
+        **view,
         "setup": setup,
         "deployments": deployments,
-        "health": _rollup_health(setup, deployments, resources),
+        "resource_health": _rollup_health(setup, deployments, resources),
         "resources": _group_resource_health(resources),
     }
 

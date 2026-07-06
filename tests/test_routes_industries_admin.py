@@ -128,6 +128,60 @@ class TestCreateOrUpdateSetup:
         assert args[1] == "s1"
         assert kwargs == {"flavor": "classic"}
 
+    async def test_create_only_on_existing_industry_rejected_409(self) -> None:
+        existing = {"id": "s1", "industry": "pharmaceutical"}
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+            AsyncMock(return_value=existing),
+        ), patch(
+            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()
+        ) as create_mock, patch(
+            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
+        ) as update_mock:
+            async with _client(_state()) as c:
+                resp = await c.post(
+                    "/api/admin/industries/pharmaceutical/setup",
+                    json={"create_only": True, "flavor": "classic"},
+                )
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["setup_id"] == "s1"
+        # neither a second create nor an in-place update happens
+        create_mock.assert_not_awaited()
+        update_mock.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/industries/{industry}/setup
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+class TestGetSetupForIndustry:
+    async def test_404_when_no_setup(self) -> None:
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+            AsyncMock(return_value=None),
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/industries/pharmaceutical/setup")
+        assert resp.status_code == 404
+
+    async def test_returns_existing_setup_with_contract(self) -> None:
+        setup = {"id": "s1", "industry": "pharmaceutical", "status": "draft",
+                 "enabled_modes": ["realtime"]}
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+            AsyncMock(return_value=setup),
+        ), patch(
+            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/industries/pharmaceutical/setup")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["setup"]["id"] == "s1"
+        assert body["pipeline"]["setup_id"] == "s1"
+        assert body["pipeline"]["status"] == "draft"
+
 
 # ---------------------------------------------------------------------------
 # POST /api/admin/industries/{industry}/provision
@@ -187,10 +241,12 @@ class TestProvision:
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 class TestListPipelines:
-    async def test_lists_with_health_rollup(self) -> None:
+    async def test_lists_with_contract_and_resource_health(self) -> None:
         setups = [{"id": "s1", "industry": "pharmaceutical", "status": "deployed",
                    "enabled_modes": ["realtime"]}]
-        deployments = [{"id": "d1", "mode": "realtime", "status": "running"}]
+        # Deployed realtime but CDF not done -> unhealthy + not startable + stopped.
+        deployments = [{"id": "d1", "mode": "realtime", "status": "deployed",
+                        "job_id": "j1"}]
         resources = [
             {"id": "r1", "resource_type": "uc_catalog", "status": "active"},
             {"id": "r2", "resource_type": "job", "status": "active"},
@@ -202,16 +258,46 @@ class TestListPipelines:
             AsyncMock(return_value=deployments),
         ), patch(
             f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)
+        ), patch(
+            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": False})
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines")
         assert resp.status_code == 200
         items = resp.json()["pipelines"]
         assert len(items) == 1
-        health = items[0]["health"]
-        assert health["overall"] == "healthy"
-        assert health["resources_healthy"] == 2
-        assert health["jobs_running"] == 1
+        pipe = items[0]
+        # contract fields
+        assert pipe["setup_id"] == "s1"
+        assert pipe["industry"] == "pharmaceutical"
+        assert pipe["status"] == "stopped"
+        assert pipe["health"] == "unhealthy"
+        assert pipe["startable"] is False
+        assert pipe["ready"] is False
+        assert pipe["modes"][0] == {
+            "mode": "realtime", "status": "stopped",
+            "health": "unhealthy", "startable": False,
+        }
+        # resource ledger rollup preserved under resource_health
+        assert pipe["resource_health"]["overall"] == "healthy"
+        assert pipe["resource_health"]["jobs_running"] == 1
+
+    async def test_draft_pipeline_when_no_deployments(self) -> None:
+        setups = [{"id": "s1", "industry": "pharmaceutical", "status": "draft",
+                   "enabled_modes": ["realtime"]}]
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)
+        ), patch(
+            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
+        ), patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/pipelines")
+        pipe = resp.json()["pipelines"][0]
+        assert pipe["status"] == "draft"
+        assert pipe["health"] == "draft"
+        assert pipe["startable"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +333,10 @@ class TestPipelineHealth:
                 resp = await c.get("/api/admin/pipelines/s1/health")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["health"]["overall"] == "degraded"
+        # per-mode contract + ledger rollup under resource_health
+        assert body["setup_id"] == "s1"
+        assert body["status"] == "draft"  # no deployment rows
+        assert body["resource_health"]["overall"] == "degraded"
         assert body["resources"]["uc_catalog"][0]["health"] == "healthy"
         assert body["resources"]["job"][0]["health"] == "degraded"
 
