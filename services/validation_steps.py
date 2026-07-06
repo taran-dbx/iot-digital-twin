@@ -146,6 +146,19 @@ def _get_or_create_context(ws: Any, cluster_id: str) -> str:
         cluster_id=cluster_id, language=CmdLanguage.PYTHON
     ).result()
     _CONTEXT_CACHE[cluster_id] = ctx.id
+    # A fresh context gets its OWN ephemeral venv, so (re)install the validation
+    # libraries into it. Critically this self-heals a context created AFTER an app
+    # redeploy — which clears this in-memory cache — so retrying a step on an
+    # existing cluster no longer fails "ModuleNotFoundError: kafka". Idempotent
+    # (pip -q); best-effort so a hiccup here never blocks context creation.
+    try:
+        ws.command_execution.execute(
+            cluster_id=cluster_id, context_id=ctx.id,
+            language=CmdLanguage.PYTHON,
+            command=_pip_install_code(VALIDATION_CLUSTER_LIBRARIES),
+        ).result(timeout=timedelta(seconds=_LIB_WAIT_S))
+    except Exception as exc:  # pragma: no cover - best-effort self-heal
+        logger.warning("fresh-context lib reinstall for %s failed: %s", cluster_id, exc)
     return ctx.id
 
 
@@ -434,6 +447,21 @@ async def partitions_precreate(ctx: StepContext) -> StepResult:
     })
 
 
+async def _run_write_test(ctx: StepContext, code: str) -> StepResult:
+    """Run a write-test snippet and LOG the metrics-flush diagnostic from its OK
+    payload (metrics_written / recent_progress / metrics_flush_error) so a silent
+    delta-rs metrics-write failure surfaces in the app logs instead of only as an
+    empty table caught later by metrics_check."""
+    result = await _run_on_cluster(ctx, code, timeout_s=300)
+    p = _ok_payload((result.data or {}).get("output", ""))
+    logger.info(
+        "write_test[%s] status=%s metrics_written=%s recent_progress=%s flush_error=%s",
+        ctx.mode, result.status, p.get("metrics_written"),
+        p.get("recent_progress"), p.get("metrics_flush_error"),
+    )
+    return result
+
+
 async def write_test(ctx: StepContext) -> StepResult:
     cfg = _cfg(ctx)
     checkpoint = _checkpoint(cfg["catalog"], ctx.mode or "realtime")
@@ -448,7 +476,7 @@ async def write_test(ctx: StepContext) -> StepResult:
             metrics_table_location=cfg["metrics_table_location"],
             region=cfg["region"],
         )
-        return await _run_on_cluster(ctx, code, timeout_s=300)
+        return await _run_write_test(ctx, code)
 
     # Real-time lane: TRULY land + measure data (Phase-7 fix).
     #   1. produce ~100 sample messages onto the topic (no producer runs during
@@ -491,7 +519,7 @@ async def write_test(ctx: StepContext) -> StepResult:
         region=cfg["region"], source=VALIDATION_SOURCE,
         min_event_epoch=min_event_epoch,
     )
-    return await _run_on_cluster(ctx, code, timeout_s=300)
+    return await _run_write_test(ctx, code)
 
 
 def _resolve_lakebase_write_conn(ctx: StepContext, branch: str) -> tuple[str, str, str]:
