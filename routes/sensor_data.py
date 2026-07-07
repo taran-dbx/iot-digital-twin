@@ -1434,6 +1434,7 @@ async def get_dbsql_timeseries(
         "resolution": interval.lower(),
         "minutes": minutes,
         "count": 0,
+        "total_rows": None,
         "rows": [],
     }
 
@@ -1452,9 +1453,19 @@ async def get_dbsql_timeseries(
             LIMIT 5000
         """
         result = await execute_dbsql(sql, warehouse_id)
+        # Cold-tier total row count for the COLD ROWS tile (Delta COUNT(*) is
+        # stats-optimized/near-instant). Refreshed on each manual DBSQL refresh.
+        total_rows: int | None = None
+        try:
+            cnt = await execute_dbsql(f"SELECT COUNT(*) AS n FROM {table}", warehouse_id)
+            if cnt["data"]:
+                total_rows = int(cnt["data"][0].get("n") or 0)
+        except Exception:  # never fail the timeseries on the count
+            total_rows = None
         return {
             **empty_payload,
             "count": result["row_count"],
+            "total_rows": total_rows,
             "rows": result["data"],
         }
 
