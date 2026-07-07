@@ -41,6 +41,7 @@ from services import (
     deployment_service,
     health_checks,
     industry_provisioning_service,
+    pipeline_freshness,
     pipeline_setup_repo,
     pipeline_view,
     pipelines_project_service,
@@ -84,11 +85,12 @@ def _require_db(state: AppState) -> Any:
 # mode to "stopped" (not running) rather than 500-ing the whole list.
 # ---------------------------------------------------------------------------
 def _job_running_lookup(deployments: list[dict]) -> dict[str, dict]:
-    """Return ``{job_id: {running, degraded, detail, tasks}}`` for every deployed mode.
+    """Return ``{job_id: {running, degraded, starting, detail, tasks}}`` per deployed mode.
 
     Per-mode runtime derived from the Jobs API: ``running`` (run life-cycle RUNNING),
-    ``degraded`` (run up but a task crashed — e.g. producer died so data isn't
-    flowing), a human ``detail``, and the per-task states for the UI.
+    ``starting`` (run coming up — PENDING/STARTING, not yet RUNNING), ``degraded``
+    (run up but a task crashed — e.g. producer died so data isn't flowing), a human
+    ``detail``, and the per-task states for the UI.
     """
     job_ids = pipeline_view.collect_job_ids(deployments)
     if not job_ids:
@@ -104,14 +106,37 @@ def _job_running_lookup(deployments: list[dict]) -> dict[str, dict]:
             status = deployment_service.pipeline_status(job_id, w=w)
             lookup[str(job_id)] = {
                 "running": status.get("state") == "RUNNING",
+                "starting": status.get("state") == "STARTING",
                 "degraded": bool(status.get("degraded")),
                 "detail": status.get("detail"),
                 "tasks": status.get("tasks") or [],
             }
         except Exception as exc:  # pragma: no cover - best-effort
             logger.warning("pipeline_status(%s) failed; treating as not-running: %s", job_id, exc)
-            lookup[str(job_id)] = {"running": False, "degraded": False, "detail": None, "tasks": []}
+            lookup[str(job_id)] = {
+                "running": False, "starting": False, "degraded": False,
+                "detail": None, "tasks": [],
+            }
     return lookup
+
+
+# ---------------------------------------------------------------------------
+# Live data-freshness lookup ("is data flowing?") — gates a RUNNING job's mode
+# to ``running`` only when recent rows are landing in its sink, else ``starting``
+# (warming up).  Best-effort: any Lakebase/DBSQL error yields "not flowing" so
+# the mode degrades to ``starting`` rather than 500-ing the list.
+# ---------------------------------------------------------------------------
+async def _flowing_lookup(
+    state: AppState, setup: dict, deployments: list[dict], running: dict[str, dict]
+) -> dict[str, bool]:
+    """Return ``{mode: flowing}`` for the pipeline's deployed, RUNNING modes."""
+    try:
+        return await pipeline_freshness.flowing_lookup(
+            state, setup, deployments, running
+        )
+    except Exception as exc:  # pragma: no cover - flowing_lookup is self-guarding
+        logger.warning("freshness lookup failed; modes report not-flowing: %s", exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -330,10 +355,13 @@ async def get_setup_for_industry(
 
     deployments = await deployment_repo.list_deployments(db, setup["id"])
     running = _job_running_lookup(deployments)
+    flowing = await _flowing_lookup(state, setup, deployments, running)
     return {
         "setup": setup,
         "deployments": deployments,
-        "pipeline": pipeline_view.build_pipeline_view(setup, deployments, running),
+        "pipeline": pipeline_view.build_pipeline_view(
+            setup, deployments, running, flowing
+        ),
     }
 
 
@@ -415,7 +443,8 @@ async def list_pipelines(request: Request, state: AppState = Depends(get_app_sta
     for setup in setups:
         deployments = all_deployments[setup["id"]]
         resources = await resource_ledger.list_resources(db, setup["id"])
-        view = pipeline_view.build_pipeline_view(setup, deployments, running)
+        flowing = await _flowing_lookup(state, setup, deployments, running)
+        view = pipeline_view.build_pipeline_view(setup, deployments, running, flowing)
         items.append(
             {
                 **view,
@@ -460,8 +489,9 @@ async def pipeline_health(
     deployments = await deployment_repo.list_deployments(db, setup_id)
     resources = await resource_ledger.list_resources(db, setup_id)
     running = _job_running_lookup(deployments)
+    flowing = await _flowing_lookup(state, setup, deployments, running)
 
-    view = pipeline_view.build_pipeline_view(setup, deployments, running)
+    view = pipeline_view.build_pipeline_view(setup, deployments, running, flowing)
     response = {
         **view,
         "setup": setup,

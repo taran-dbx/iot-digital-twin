@@ -45,11 +45,16 @@ from services import validation_state_machine as sm
 
 # --- Per-mode RUNTIME status -------------------------------------------------
 # ``draft``    — the mode is not deployed (no job).
-# ``running``  — deployed, its job run is RUNNING and all tasks are healthy.
+# ``starting`` — deployed but "warming up": EITHER the run is not yet RUNNING
+#                (PENDING/STARTING) OR the run is RUNNING but data is not yet
+#                flowing (no fresh rows in the sink). A strict readiness gate.
+# ``running``  — deployed, run RUNNING, all tasks healthy, AND data is flowing
+#                (recent rows in the mode's sink within the freshness window).
 # ``degraded`` — deployed, the run is up but a task crashed (e.g. the producer
 #                died, so data isn't actually flowing). RUNNING alone hides this.
-# ``stopped``  — deployed but not actively running.
+# ``stopped``  — deployed but not actively running (paused/idle).
 STATUS_DRAFT = "draft"
+STATUS_STARTING = "starting"
 STATUS_RUNNING = "running"
 STATUS_DEGRADED = "degraded"
 STATUS_STOPPED = "stopped"
@@ -120,30 +125,45 @@ def gate_open(setup: Mapping | None, mode: str) -> bool:
         return False
 
 
-def _runtime(job_state: Any) -> tuple[bool, bool, str | None]:
-    """Normalize a job-runtime value into ``(running, degraded, detail)``.
+def _runtime(job_state: Any) -> tuple[bool, bool, bool, str | None]:
+    """Normalize a job-runtime value into ``(running, degraded, starting, detail)``.
 
     Accepts either a plain ``bool`` (back-compat: ``True`` == running) or the
-    richer ``{running, degraded, detail}`` mapping the Jobs-API lookup now returns.
+    richer ``{running, degraded, starting, detail}`` mapping the Jobs-API lookup
+    now returns. ``starting`` marks a run whose coarse life-cycle is
+    PENDING/STARTING (not yet RUNNING).
     """
     if isinstance(job_state, Mapping):
-        return bool(job_state.get("running")), bool(job_state.get("degraded")), job_state.get("detail")
-    return bool(job_state), False, None
+        return (
+            bool(job_state.get("running")),
+            bool(job_state.get("degraded")),
+            bool(job_state.get("starting")),
+            job_state.get("detail"),
+        )
+    return bool(job_state), False, False, None
 
 
-def mode_status(deployment: Mapping | None, job_state: Any) -> str:
-    """Return ``draft`` / ``running`` / ``degraded`` / ``stopped`` for a mode.
+def mode_status(deployment: Mapping | None, job_state: Any, flowing: bool = False) -> str:
+    """Return ``draft`` / ``starting`` / ``running`` / ``degraded`` / ``stopped``.
 
-    ``draft`` (not deployed) is the default. A deployed mode whose run is up but
-    has a crashed task is ``degraded`` — never ``running`` — so the UI can't imply
-    data is flowing when it isn't.
+    ``draft`` (not deployed) is the default. A strict readiness gate:
+
+    * a crashed task → ``degraded`` (checked first; RUNNING alone hides it);
+    * a run still coming up (PENDING/STARTING) → ``starting``;
+    * a run RUNNING but with no fresh data in the sink → ``starting`` (warming up);
+    * a run RUNNING **and** data flowing → ``running``;
+    * deployed but the run is down (paused/idle) → ``stopped``.
     """
     if not is_deployed(deployment):
         return STATUS_DRAFT
-    running, degraded, _ = _runtime(job_state)
+    running, degraded, starting, _ = _runtime(job_state)
     if degraded:
         return STATUS_DEGRADED
-    return STATUS_RUNNING if running else STATUS_STOPPED
+    if starting:
+        return STATUS_STARTING
+    if running:
+        return STATUS_RUNNING if flowing else STATUS_STARTING
+    return STATUS_STOPPED
 
 
 def mode_startable(setup: Mapping | None, deployment: Mapping | None, mode: str) -> bool:
@@ -169,34 +189,45 @@ def build_mode_view(
     deployment: Mapping | None,
     mode: str,
     job_state: Any,
+    flowing: bool = False,
 ) -> dict:
-    """Return the per-mode contract ``{mode, status, health, startable, runtime_detail, tasks}``.
+    """Return the per-mode contract for the admin pipeline view.
 
+    ``{mode, status, health, startable, runtime_detail, tasks, deployed, flowing}``.
+    ``flowing`` is the resolved data-freshness signal (recent rows in the mode's
+    sink), computed in the route layer and threaded in so this module stays pure.
     ``runtime_detail`` names why a mode is ``degraded`` (e.g. the crashed task);
     ``tasks`` carries the per-task live states for the admin pipeline view.
     """
-    _running, _degraded, detail = _runtime(job_state)
+    _running, _degraded, _starting, detail = _runtime(job_state)
     tasks = list(job_state.get("tasks")) if isinstance(job_state, Mapping) and job_state.get("tasks") else []
+    deployed = is_deployed(deployment)
     return {
         "mode": mode,
-        "status": mode_status(deployment, job_state),
+        "status": mode_status(deployment, job_state, flowing),
         "health": mode_health(setup, deployment, mode),
         "startable": mode_startable(setup, deployment, mode),
         "runtime_detail": detail,
         "tasks": tasks,
+        "deployed": deployed,
+        "flowing": bool(flowing) if deployed else False,
     }
 
 
 # --- Rollups -----------------------------------------------------------------
 def rollup_status(mode_views: list[dict]) -> str:
     """Pipeline status rollup, worst-state-wins so one green mode can't mask a
-    broken one: ``degraded`` if any deployed mode is degraded, else ``running`` if
-    any runs, else ``stopped`` if any is deployed-but-stopped, else ``draft``."""
+    broken one. Ordering ``degraded > running > starting > stopped > draft``:
+    ``degraded`` if any deployed mode is degraded, else ``running`` if any runs
+    (with data flowing), else ``starting`` if any is warming up, else ``stopped``
+    if any is deployed-but-stopped, else ``draft``."""
     statuses = {m["status"] for m in mode_views}
     if STATUS_DEGRADED in statuses:
         return STATUS_DEGRADED
     if STATUS_RUNNING in statuses:
         return STATUS_RUNNING
+    if STATUS_STARTING in statuses:
+        return STATUS_STARTING
     if STATUS_STOPPED in statuses:
         return STATUS_STOPPED
     return STATUS_DRAFT
@@ -236,17 +267,21 @@ def build_pipeline_view(
     setup: Mapping,
     deployments: Iterable[Mapping],
     job_running: Mapping[str, Any] | None = None,
+    flowing: Mapping[str, bool] | None = None,
 ) -> dict:
     """Return the full pipeline contract object for one setup.
 
     ``job_running`` maps ``job_id`` (as ``str``) → the Jobs-API runtime, either a
-    plain ``bool`` (RUNNING) or the richer ``{running, degraded, detail, tasks}``
-    mapping.  The caller resolves this via the Jobs API and passes it in so this
-    stays pure.  A missing / empty map means no mode is running (default draft /
-    stopped, never a fabricated "running").
+    plain ``bool`` (RUNNING) or the richer
+    ``{running, degraded, starting, detail, tasks}`` mapping.  ``flowing`` maps
+    ``mode`` → whether fresh rows are landing in that mode's sink; the caller
+    resolves both via the Jobs API / a freshness probe and passes them in so this
+    stays pure.  Missing / empty maps mean no mode is running-with-data (default
+    draft / stopped / starting, never a fabricated "running").
     """
     deployments = list(deployments or [])
     job_running = job_running or {}
+    flowing = flowing or {}
     dep_by_mode = {d.get("mode"): d for d in deployments}
 
     mode_views: list[dict] = []
@@ -254,7 +289,9 @@ def build_pipeline_view(
         dep = dep_by_mode.get(mode)
         job_id = dep.get("job_id") if dep else None
         job_state = job_running.get(str(job_id)) if job_id else None
-        mode_views.append(build_mode_view(setup, dep, mode, job_state))
+        mode_views.append(
+            build_mode_view(setup, dep, mode, job_state, bool(flowing.get(mode)))
+        )
 
     startable = any(m["startable"] for m in mode_views)
     return {

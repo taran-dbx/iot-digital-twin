@@ -46,20 +46,36 @@ class TestModeStatus:
     def test_draft_when_not_deployed(self):
         assert pv.mode_status({"job_id": None}, True) == pv.STATUS_DRAFT
 
-    def test_running_only_when_deployed_and_job_running(self):
-        assert pv.mode_status(_deployed(), True) == pv.STATUS_RUNNING
+    def test_running_only_when_deployed_running_and_flowing(self):
+        # RUNNING job + data flowing → running (the strict readiness gate).
+        assert pv.mode_status(_deployed(), True, flowing=True) == pv.STATUS_RUNNING
+
+    def test_starting_when_running_but_not_flowing(self):
+        # RUNNING job but no fresh rows in the sink → still warming up.
+        assert pv.mode_status(_deployed(), True, flowing=False) == pv.STATUS_STARTING
+
+    def test_starting_when_run_pending(self):
+        # Coarse run life-cycle PENDING/STARTING → starting, regardless of flow.
+        rt = {"running": False, "starting": True, "degraded": False, "detail": None}
+        assert pv.mode_status(_deployed(), rt, flowing=False) == pv.STATUS_STARTING
+        assert pv.mode_status(_deployed(), rt, flowing=True) == pv.STATUS_STARTING
 
     def test_stopped_when_deployed_but_not_running(self):
         assert pv.mode_status(_deployed(), False) == pv.STATUS_STOPPED
 
     def test_degraded_when_deployed_and_a_task_crashed(self):
         # Job run is up but a task died (e.g. producer) → degraded, NOT running.
+        # Degraded wins even if the freshness probe somehow reports flowing.
         rt = {"running": True, "degraded": True, "detail": "data_producer: driver stopped"}
-        assert pv.mode_status(_deployed(), rt) == pv.STATUS_DEGRADED
+        assert pv.mode_status(_deployed(), rt, flowing=True) == pv.STATUS_DEGRADED
 
-    def test_running_with_healthy_richer_runtime(self):
+    def test_running_with_healthy_richer_runtime_and_flowing(self):
         rt = {"running": True, "degraded": False, "detail": None}
-        assert pv.mode_status(_deployed(), rt) == pv.STATUS_RUNNING
+        assert pv.mode_status(_deployed(), rt, flowing=True) == pv.STATUS_RUNNING
+
+    def test_starting_with_healthy_richer_runtime_not_flowing(self):
+        rt = {"running": True, "degraded": False, "detail": None}
+        assert pv.mode_status(_deployed(), rt, flowing=False) == pv.STATUS_STARTING
 
     def test_build_mode_view_surfaces_runtime_detail_and_tasks(self):
         rt = {"running": True, "degraded": True, "detail": "data_producer: boom",
@@ -69,10 +85,33 @@ class TestModeStatus:
         assert v["runtime_detail"] == "data_producer: boom"
         assert v["tasks"] and v["tasks"][0]["task"] == "data_producer"
 
+    def test_build_mode_view_carries_flowing_and_deployed(self):
+        # A deployed+RUNNING+flowing mode is running and exposes flowing/deployed.
+        v = pv.build_mode_view(None, _deployed(), "microbatch", True, flowing=True)
+        assert v["status"] == pv.STATUS_RUNNING
+        assert v["deployed"] is True
+        assert v["flowing"] is True
+
+    def test_build_mode_view_not_deployed_never_flowing(self):
+        # A non-deployed mode is draft and never reports flowing (even if passed).
+        v = pv.build_mode_view(None, None, "microbatch", True, flowing=True)
+        assert v["status"] == pv.STATUS_DRAFT
+        assert v["deployed"] is False
+        assert v["flowing"] is False
+
     def test_rollup_degraded_beats_running(self):
         views = [{"status": pv.STATUS_RUNNING}, {"status": pv.STATUS_DEGRADED},
                  {"status": pv.STATUS_DRAFT}]
         assert pv.rollup_status(views) == pv.STATUS_DEGRADED
+
+    def test_rollup_running_beats_starting(self):
+        views = [{"status": pv.STATUS_STARTING}, {"status": pv.STATUS_RUNNING}]
+        assert pv.rollup_status(views) == pv.STATUS_RUNNING
+
+    def test_rollup_starting_beats_stopped_and_draft(self):
+        views = [{"status": pv.STATUS_DRAFT}, {"status": pv.STATUS_STOPPED},
+                 {"status": pv.STATUS_STARTING}]
+        assert pv.rollup_status(views) == pv.STATUS_STARTING
 
 
 # --- cdf / gate --------------------------------------------------------------
@@ -164,14 +203,35 @@ class TestBuildPipelineView:
         assert view["health"] == pv.HEALTH_UNHEALTHY
         assert view["startable"] is False
 
-    def test_running_reported_only_from_jobs_api(self):
+    def test_running_reported_only_when_jobs_api_running_and_flowing(self):
         setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
                  "validation_state": _all_passed_state("microbatch")}
         deployments = [_deployed("microbatch")]
-        view = pv.build_pipeline_view(setup, deployments, {"123": True})
+        view = pv.build_pipeline_view(
+            setup, deployments, {"123": True}, {"microbatch": True}
+        )
         assert view["status"] == pv.STATUS_RUNNING
         assert view["health"] == pv.HEALTH_HEALTHY
         assert view["startable"] is True
+        assert view["modes"][0]["flowing"] is True
+
+    def test_running_job_without_flow_is_starting(self):
+        # Deployed + RUNNING but no fresh data yet → the pipeline is warming up.
+        setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
+                 "validation_state": _all_passed_state("microbatch")}
+        deployments = [_deployed("microbatch")]
+        view = pv.build_pipeline_view(setup, deployments, {"123": True}, {})
+        assert view["status"] == pv.STATUS_STARTING
+        assert view["modes"][0]["status"] == pv.STATUS_STARTING
+        assert view["modes"][0]["flowing"] is False
+
+    def test_pending_run_is_starting(self):
+        setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
+                 "validation_state": _all_passed_state("microbatch")}
+        deployments = [_deployed("microbatch")]
+        job = {"123": {"running": False, "starting": True, "degraded": False}}
+        view = pv.build_pipeline_view(setup, deployments, job, {})
+        assert view["status"] == pv.STATUS_STARTING
 
     def test_mode_union_orders_by_mode_order(self):
         setup = {"id": "s1", "industry": "x", "enabled_modes": ["zerobus"]}

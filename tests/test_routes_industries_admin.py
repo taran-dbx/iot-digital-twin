@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 from core.state import AppState
 from routes import industries_admin
 from services import pipeline_setup_repo, resource_ledger, teardown_service
+from services import validation_state_machine as sm
 
 MOD = "routes.industries_admin"
 
@@ -305,6 +306,7 @@ class TestListPipelines:
             "mode": "realtime", "status": "stopped",
             "health": "unhealthy", "startable": False,
             "runtime_detail": None, "tasks": [],
+            "deployed": True, "flowing": False,
         }
         # resource ledger rollup preserved under resource_health
         assert pipe["resource_health"]["overall"] == "healthy"
@@ -326,6 +328,57 @@ class TestListPipelines:
         assert pipe["status"] == "draft"
         assert pipe["health"] == "draft"
         assert pipe["startable"] is False
+
+    async def test_running_and_flowing_reports_running(self) -> None:
+        # Deployed + RUNNING job + fresh data in the sink → running.
+        setup = {"id": "s1", "industry": "pharmaceutical", "status": "deployed",
+                 "enabled_modes": ["microbatch"], "validation_state": {"steps": {
+                     k: {"status": sm.PASSED}
+                     for k in sm.mode_required_keys("microbatch")}}}
+        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed",
+                        "job_id": "j1"}]
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])
+        ), patch(
+            f"{MOD}.deployment_repo.list_deployments",
+            AsyncMock(return_value=deployments),
+        ), patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ), patch(
+            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})
+        ), patch(
+            f"{MOD}._flowing_lookup", AsyncMock(return_value={"microbatch": True})
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/pipelines")
+        pipe = resp.json()["pipelines"][0]
+        assert pipe["status"] == "running"
+        assert pipe["modes"][0]["status"] == "running"
+        assert pipe["modes"][0]["flowing"] is True
+
+    async def test_running_but_not_flowing_reports_starting(self) -> None:
+        # Deployed + RUNNING job but NO fresh data yet → starting (warming up).
+        setup = {"id": "s1", "industry": "pharmaceutical", "status": "deployed",
+                 "enabled_modes": ["microbatch"]}
+        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed",
+                        "job_id": "j1"}]
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])
+        ), patch(
+            f"{MOD}.deployment_repo.list_deployments",
+            AsyncMock(return_value=deployments),
+        ), patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ), patch(
+            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})
+        ), patch(
+            f"{MOD}._flowing_lookup", AsyncMock(return_value={})
+        ):
+            async with _client(_state()) as c:
+                resp = await c.get("/api/admin/pipelines")
+        pipe = resp.json()["pipelines"][0]
+        assert pipe["status"] == "starting"
+        assert pipe["modes"][0]["status"] == "starting"
 
 
 # ---------------------------------------------------------------------------

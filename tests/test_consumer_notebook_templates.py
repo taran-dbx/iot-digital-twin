@@ -83,10 +83,14 @@ class TestKafkaRead:
         assert "kafka.sasl" not in block
         assert "security.protocol" not in block
 
-    def test_reads_kafka_earliest(self) -> None:
+    def test_reads_kafka_latest(self) -> None:
+        # Reads only NEW messages ("latest"). "earliest" replayed historical rows
+        # whose event_time predates the LakeTS ChronoTable's rolling partitions →
+        # psycopg CheckViolation "no partition of relation sensor_readings".
         block = _kafka_read_template()
         assert 'spark.readStream.format("kafka")' in block
-        assert '.option("startingOffsets", "earliest")' in block
+        assert '.option("startingOffsets", "latest")' in block
+        assert '"earliest"' not in block
 
 
 class TestParseSchema:
@@ -114,7 +118,11 @@ class TestRealtimeWriter:
     def test_writer_chain_is_verified_rtm_shape(self) -> None:
         text = _ts()
         assert '.outputMode("update")' in text
-        assert ".foreach(LakebaseWriter())" in text
+        # The RTM sink is now a dual writer: it fans each row to the Lakebase
+        # ChronoTable (source of truth) AND the app SSE bridge. The stream is
+        # driven by RealtimeDualWriter, which itself delegates to LakebaseWriter.
+        assert ".foreach(RealtimeDualWriter())" in text
+        assert "self.lakebase = LakebaseWriter()" in text
         assert ".trigger(realTime=" in text
 
     def test_realtime_spark_conf_enables_rtm(self) -> None:
@@ -134,10 +142,13 @@ class TestRealtimeWriter:
 
     def test_lakebase_oauth_primary_endpoint(self) -> None:
         text = _ts()
-        assert "w.postgres.generate_database_credential" in text
-        assert "w.postgres.list_endpoints" in text
-        # writes go to the READ_WRITE primary, never a replica.
-        assert "READ_WRITE" in text
+        assert "postgres.generate_database_credential" in text
+        # Writes must target the writable PRIMARY endpoint BY NAME. endpoint_type
+        # is None on these branches and the replica is listed first, so any
+        # type/list-based selection lands on the read replica → "cannot execute
+        # INSERT in a read-only transaction". Resolve `.../endpoints/primary`.
+        assert "endpoints/primary" in text
+        assert "postgres.get_endpoint" in text
         assert 'sslmode="require"' in text
 
     def test_inserts_into_chronotable_with_all_columns(self) -> None:
@@ -149,6 +160,60 @@ class TestRealtimeWriter:
             "fault_active", "metadata",
         ):
             assert col in text, f"INSERT missing column {col}"
+
+
+class TestRealtimeAppSseBridge:
+    """The realtime consumer ALSO POSTs each batch to the app for the live SSE
+    dashboard, in addition to the psycopg Lakebase write (dual writer)."""
+
+    def _sse_block(self) -> str:
+        text = _ts()
+        m = re.search(
+            r"const REALTIME_APP_SSE_WRITER = `(.*?)`;", text, re.DOTALL
+        )
+        assert m is not None, "could not locate REALTIME_APP_SSE_WRITER"
+        return m.group(1)
+
+    def test_dual_writer_delegates_to_lakebase_and_app(self) -> None:
+        block = self._sse_block()
+        assert "class RealtimeDualWriter" in block
+        assert "self.lakebase = LakebaseWriter()" in block
+        assert "self.app = AppSseWriter()" in block
+
+    def test_lakebase_gates_writer_sse_is_best_effort(self) -> None:
+        # Lakebase open() gates the writer (return lb_ok); the SSE write only
+        # runs when its own open() succeeded (self._app_ok) — a failed SSE token
+        # mint must never block the persisted Lakebase write.
+        block = self._sse_block()
+        assert "return lb_ok" in block
+        assert "if self._app_ok:" in block
+
+    def test_posts_to_app_ingest_with_pipeline_id_header(self) -> None:
+        block = self._sse_block()
+        assert "/api/sss/ingest" in block
+        assert '"X-Pipeline-Id": _sse_pipeline_id_bc.value' in block
+        assert 'method="POST"' in block
+
+    def test_mints_oauth_token_client_credentials_all_apis(self) -> None:
+        block = self._sse_block()
+        assert "/oidc/v1/token" in block
+        assert '"grant_type": "client_credentials"' in block
+        assert '"scope": "all-apis"' in block
+        # creds come from the workspace secret scope, minted per open().
+        assert 'dbutils.secrets.get(APP_SECRET_SCOPE, "zerobus-client-id")' in _ts()
+        assert "def open(self, partition_id, epoch_id):" in block
+
+    def test_retries_once_on_401_403(self) -> None:
+        block = self._sse_block()
+        assert "if e.code in (401, 403):" in block
+        assert "self.token = self._mint_token()" in block
+
+    def test_config_cell_defines_app_url_and_pipeline_id(self) -> None:
+        text = _ts()
+        assert "APP_URL = " in text
+        assert "PIPELINE_ID = " in text
+        # industry-first realtime pipelines default to the industry: cache key.
+        assert "industry:${cfg.industry}" in text
 
 
 class TestMicrobatchWriter:

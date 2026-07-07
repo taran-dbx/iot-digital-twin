@@ -267,6 +267,10 @@ SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
 SHARED_STREAMING_SP_SECRET_SCOPE = "iot-secrets"
 SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
 SHARED_STREAMING_SP_SECRET_KEY = "sss-industries-client-secret"
+# Distinct Lakebase role_id for the shared streaming SP so it can be registered
+# on the SAME branch as the app-backend role (LAKEBASE_ROLE_ID="iot-app-user")
+# without a role_id collision.
+SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
 
 
 def _parse_lakebase_endpoint_project() -> tuple[str | None, str | None]:
@@ -785,6 +789,7 @@ async def provision_lakebase_role(
     endpoint_name: str | None = None,
     sink_tables: Any = ("sensor_readings",),
     ws: Any | None = None,
+    role_id: str | None = None,
     **kwargs: Any,
 ) -> list[dict]:
     """Register a service principal as an OAuth-auth Postgres role and grant
@@ -826,6 +831,12 @@ async def provision_lakebase_role(
 
     # Normalise sink_tables (tests pass tuples, production uses list).
     sink_tables_list: list[str] = [t for t in sink_tables] if sink_tables else ["sensor_readings"]
+
+    # The Lakebase role_id must be UNIQUE per role on a branch. Default to the
+    # app-backend id (LAKEBASE_ROLE_ID — also how settings_service looks it up),
+    # but a second SP on the same branch (e.g. the shared streaming SP) MUST pass
+    # a distinct role_id or create_role collides on the fixed id.
+    _lb_role_id = role_id or LAKEBASE_ROLE_ID
 
     results: list[dict] = []
 
@@ -904,7 +915,7 @@ async def provision_lakebase_role(
         w.postgres.create_role(
             parent=parent,
             role=Role(spec=RoleRoleSpec(**create_kwargs)),
-            role_id=LAKEBASE_ROLE_ID,
+            role_id=_lb_role_id,
         )
         results.append({"resource": role_resource, "status": "created"})
     except AttributeError as exc:
@@ -920,7 +931,7 @@ async def provision_lakebase_role(
                         "identity_type": "SERVICE_PRINCIPAL",
                         "membership_roles": ["DATABRICKS_SUPERUSER"],
                     },
-                    "role_id": LAKEBASE_ROLE_ID,
+                    "role_id": _lb_role_id,
                 },
             )
             results.append({"resource": role_resource, "status": "created"})
@@ -1269,6 +1280,10 @@ async def provision_metrics_table(
                 f'GRANT MODIFY, SELECT ON TABLE {fqn} TO `{grant_to}`',
                 f'GRANT USE CATALOG ON CATALOG {catalog} TO `{grant_to}`',
                 f'GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `{grant_to}`',
+                # Required so the deployed job identity can mint UC
+                # temporary-table-credentials for the delta-rs metrics writer
+                # (generate_temporary_table_credentials -> EXTERNAL USE SCHEMA).
+                f'GRANT EXTERNAL USE SCHEMA ON SCHEMA {catalog}.{schema} TO `{grant_to}`',
             ]:
                 try:
                     w.statement_execution.execute_statement(

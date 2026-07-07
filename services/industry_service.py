@@ -543,7 +543,42 @@ async def _deploy_and_start(
         service has no real notebook content to give.
     """
     if not mode_config(mode).get("uses_kafka"):
-        return {"status": "running", "note": "no Spark job for this mode"}
+        # Zerobus writes straight to Delta via a *serverless, run-once producer
+        # job* (``build_zerobus_task``) that only the deploy flow can create —
+        # it needs the client-generated producer notebook this backend-only
+        # service can't produce. So:
+        #   - if that job already exists, trigger a run so data actually lands
+        #     (serverless run-once → ``run_now``, not the continuous unpause
+        #     path below);
+        #   - otherwise report ``"starting"`` truthfully — NOT a fabricated
+        #     ``"running"`` (the old behaviour, which lied and left the mode
+        #     stuck showing "not deployed" because no job ever backed it).
+        zerobus_job_id = await _get_job_id(state, pipeline_id)
+        if not zerobus_job_id:
+            return {
+                "status": "starting",
+                "note": (
+                    "No zerobus job deployed yet — deploy it from the setup "
+                    "flow first (the serverless producer job needs the "
+                    "client-generated producer notebook)."
+                ),
+            }
+        from databricks.sdk import WorkspaceClient
+
+        w = getattr(state, "workspace_client", None) or WorkspaceClient()
+        try:
+            run = w.jobs.run_now(job_id=int(zerobus_job_id))
+            return {
+                "status": "running",
+                "job_id": zerobus_job_id,
+                "run_id": getattr(run, "run_id", None),
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to run zerobus job %s for %s: %s",
+                zerobus_job_id, pipeline_name(industry, mode), exc,
+            )
+            return {"status": "starting", "job_id": zerobus_job_id, "error": str(exc)[:200]}
 
     job_id = await _get_job_id(state, pipeline_id)
     if not job_id:
@@ -583,18 +618,26 @@ def _stop_job(job_id: str, state: AppState | None = None) -> dict:
     from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
     w = getattr(state, "workspace_client", None) or WorkspaceClient()
-    try:
-        w.jobs.cancel_all_runs(job_id=int(job_id))
-    except Exception as exc:  # non-fatal — pausing below still stops future runs
-        logger.warning("cancel_all_runs failed for job %s (non-fatal): %s", job_id, exc)
+    # PAUSE FIRST, then cancel: a Continuous job's scheduler immediately starts a
+    # fresh run when the active one is cancelled, so cancelling before pausing
+    # races (the run comes back before the pause lands, leaving it RUNNING).
+    # Pausing stops the scheduler; the subsequent cancel is then durable.
+    paused_ok = False
     try:
         w.jobs.update(
             job_id=int(job_id),
             new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.PAUSED)),
         )
-        return {"status": "stopped", "job_id": job_id}
+        paused_ok = True
     except Exception as exc:
-        return {"status": "failed", "job_id": job_id, "error": str(exc)[:200]}
+        logger.warning("pause failed for job %s: %s", job_id, exc)
+    try:
+        w.jobs.cancel_all_runs(job_id=int(job_id))
+    except Exception as exc:  # non-fatal — the pause above already stops future runs
+        logger.warning("cancel_all_runs failed for job %s (non-fatal): %s", job_id, exc)
+    if paused_ok:
+        return {"status": "stopped", "job_id": job_id}
+    return {"status": "failed", "job_id": job_id, "error": "pause failed"}
 
 
 async def start_mode(state: AppState, industry: str, mode: str) -> dict:
@@ -631,10 +674,21 @@ async def start_mode(state: AppState, industry: str, mode: str) -> dict:
     deploy_result = await _call_maybe_async(_deploy_and_start, state, industry, mode, pipeline_id)
     steps.append({"step": "deploy_and_start", "result": deploy_result})
 
-    final_status = "starting"
     if isinstance(deploy_result, dict) and deploy_result.get("status") == "running":
         final_status = "running"
         await _set_pipeline_status(state, name, "running")
+    else:
+        # The start attempt did NOT bring up a running job — either nothing is
+        # deployed for this mode yet (e.g. zerobus with no serverless producer
+        # job), or the unpause/run call failed. ``start_mode`` is synchronous,
+        # so by the time we're here the mode is definitively not running; don't
+        # strand the row at ``"starting"`` (that would render a perpetual
+        # "provisioning…" spinner on the card that never resolves). Persist a
+        # not-running status so the card reflects reality — the real per-mode
+        # ``ModeView`` (``draft`` when there's no job) then drives it to the
+        # honest "Set up & deploy →" / idle affordance.
+        await _set_pipeline_status(state, name, _STOPPED_STATUS)
+        final_status = _mode_status({"status": _STOPPED_STATUS})
 
     return {"pipeline": name, "status": final_status, "steps": steps}
 

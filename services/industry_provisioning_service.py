@@ -111,6 +111,27 @@ async def provision_industry(
         branch = branch_result["branch"]
         summary["branch"] = branch
 
+        # 4b. Register the shared streaming SP as an OAuth Postgres role on THIS
+        #     industry branch (distinct role_id so it doesn't collide with the
+        #     app-backend's iot-app-user role) — this is what lets the realtime
+        #     consumer's LakebaseWriter authenticate + write as that SP. Was a
+        #     manual step for pharmaceutical; now systematic.
+        try:
+            sss_role_result = await provisioning_service.provision_lakebase_role(
+                sp_client_id=principal,
+                project_id=branch_result["project"],
+                branch_id=branch,
+                role_id=provisioning_service.SHARED_STREAMING_LAKEBASE_ROLE_ID,
+                ws=ws,
+            )
+            _section("lakebase_sss_role", sss_role_result)
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.warning(
+                "SSS SP Lakebase role registration on branch '%s' failed "
+                "(non-fatal): %s", branch, exc,
+            )
+            _section("lakebase_sss_role", {"status": "failed", "error": str(exc)[:200]})
+
         write_mgr = None
         try:
             write_mgr = await pps.get_write_conn(branch, ws=ws)

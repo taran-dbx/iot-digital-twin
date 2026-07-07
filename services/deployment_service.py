@@ -67,7 +67,13 @@ logger = logging.getLogger("iot_digital_twin.services.deployment")
 RTM_DBR = "18.2.x-scala2.13"
 
 # Smallest suitable general-purpose node (AWS us-east-1 / fe-vm-shared-interop).
-DEFAULT_NODE_TYPE = "m5d.large"
+# Must have >= CORES_PER_WORKER vCPUs: RTM's concurrent scheduler needs one slot
+# per Kafka partition (+ overhead), and ``compute_workers`` assumes 4 cores/worker.
+# ``m5d.large`` is only 2 vCPUs — with the industry deploy's default 1 worker that
+# gives just 2 slots for a 3-partition topic → [CONCURRENT_SCHEDULER_INSUFFICIENT_SLOT].
+# ``m5d.xlarge`` = 4 vCPUs matches CORES_PER_WORKER and the (proven) validation
+# harness, which picks the smallest ~4-vCPU node (see validation_steps._pick_gp_node).
+DEFAULT_NODE_TYPE = "m5d.xlarge"
 CORES_PER_WORKER = 4
 
 # Real-time mode Spark conf (verified).  Only the base flag is needed for the

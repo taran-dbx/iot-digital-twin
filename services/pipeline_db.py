@@ -17,6 +17,17 @@ This module provides:
        ``LAKEBASE_ENDPOINT=projects/<project>/branches/<branch>/endpoints/primary``
        so OAuth credential generation hits the right project.
 - Pools are cached in ``state.pipeline_dbs`` by ``pipeline_id``.
+
+- ``get_industry_lakebase(state, industry)``: same idea, but for **industry-first**
+  real-time pipelines, which have no row in the legacy ``pipelines`` table to read
+  ``sink_config`` from. Their Lakebase location is deterministic instead of
+  config-driven (see ``services.pipelines_project_service``):
+    - project = ``PIPELINES_PROJECT`` (``"iot-pipelines"``, shared across all
+      industries)
+    - branch = the industry id (e.g. ``"pharmaceutical"``)
+    - database = ``"databricks_postgres"``
+    - endpoint = ``primary``
+  Pools are cached in ``state.pipeline_dbs`` under ``f"industry:{industry}"``.
 """
 
 from __future__ import annotations
@@ -124,6 +135,77 @@ async def get_pipeline_lakebase(
     logger.info(
         "Pipeline %s bound to Lakebase endpoint=%s host=%s db=%s",
         pipeline_id, endpoint_name, host, database,
+    )
+    return handle
+
+
+async def get_industry_lakebase(
+    state: AppState, industry: str
+) -> "PipelineLakebaseHandle | None":
+    """Return a connection manager for an industry-first pipeline's Lakebase, or None.
+
+    Unlike ``get_pipeline_lakebase``, this does not read a ``pipelines`` row —
+    industry-first pipelines live in ``pipeline_setup`` and have no legacy
+    ``sink_config`` to read. Instead the location is deterministic: the shared
+    ``PIPELINES_PROJECT`` (``iot-pipelines``), one branch per industry, database
+    ``databricks_postgres``, ``primary`` endpoint (see
+    ``services.pipelines_project_service.provision_industry_branch``).
+
+    Caches the manager in ``state.pipeline_dbs`` under ``f"industry:{industry}"``
+    so repeat calls reuse the same asyncpg pool. Never raises — logs and
+    returns None on any resolution/connection failure so callers can degrade
+    to an empty/graceful payload.
+    """
+    from services.pipelines_project_service import (
+        PG_DATABASE,
+        PIPELINES_PROJECT,
+        PRIMARY_ENDPOINT_ID,
+        endpoint_resource_name,
+    )
+
+    cache: dict[str, "PipelineLakebaseHandle"] = getattr(state, "pipeline_dbs", None)
+    if cache is None:
+        cache = {}
+        state.pipeline_dbs = cache
+
+    cache_key = f"industry:{industry}"
+    if cache_key in cache:
+        return cache[cache_key]
+
+    project_id = PIPELINES_PROJECT
+    branch_id = industry
+    database = PG_DATABASE
+    endpoint_name = endpoint_resource_name(branch_id, PRIMARY_ENDPOINT_ID, project_id)
+
+    host = _resolve_endpoint_host(endpoint_name)
+    if not host:
+        logger.warning(
+            "Industry %s: could not resolve Lakebase endpoint host (%s)",
+            industry, endpoint_name,
+        )
+        return None
+
+    from backend import LakebaseConnectionManager
+
+    manager = LakebaseConnectionManager(
+        pg_host=host,
+        pg_database=database,
+        endpoint_name=endpoint_name,
+    )
+    handle = PipelineLakebaseHandle(
+        manager=manager, endpoint_name=endpoint_name, project_id=project_id,
+        branch_id=branch_id, database=database, host=host,
+    )
+    try:
+        await handle.initialize()
+    except Exception as exc:
+        logger.warning("Industry %s Lakebase initialize failed: %s", industry, exc)
+        return None
+
+    cache[cache_key] = handle
+    logger.info(
+        "Industry %s bound to Lakebase endpoint=%s host=%s db=%s",
+        industry, endpoint_name, host, database,
     )
     return handle
 

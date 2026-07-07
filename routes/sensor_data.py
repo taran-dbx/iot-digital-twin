@@ -11,7 +11,11 @@ from fastapi.responses import JSONResponse
 
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
-from services.pipeline_db import get_pipeline_lakebase, PipelineLakebaseHandle
+from services.pipeline_db import (
+    get_industry_lakebase,
+    get_pipeline_lakebase,
+    PipelineLakebaseHandle,
+)
 from services.simulator_service import broadcast
 from services.dbsql_service import (
     validate_catalog,
@@ -37,6 +41,17 @@ def _is_undefined_relation(exc: Exception) -> bool:
         return True
     msg = str(exc).lower()
     return "does not exist" in msg and "relation" in msg
+
+
+async def _resolve_lakebase(
+    state: AppState, pipeline_id: str, industry: str | None
+) -> "PipelineLakebaseHandle | None":
+    """Resolve the Lakebase handle to query: industry-first when ``industry`` is
+    passed (deterministic ``iot-pipelines`` branch, no legacy ``pipelines`` row
+    required), else the legacy per-pipeline ``sink_config`` lookup."""
+    if industry:
+        return await get_industry_lakebase(state, industry)
+    return await get_pipeline_lakebase(state, pipeline_id)
 
 
 @router.post("/api/sss/ingest")
@@ -81,6 +96,17 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
 
     # If the consumer identifies a pipeline, insert rows into its Lakebase.
     pipeline_id = request.headers.get("X-Pipeline-Id") or request.headers.get("x-pipeline-id")
+    # Industry-first REALTIME pipelines send ``X-Pipeline-Id="industry:<industry>"``.
+    # The deployed consumer ONLY POSTs here (no direct executor psycopg write) —
+    # the app owns BOTH the SSE broadcast AND the Lakebase persist via the
+    # per-industry OAuth-REFRESHING pool (``get_industry_lakebase``). This avoids
+    # the OAuth token-expiry that ages out long-lived per-executor connections
+    # (a broadcast/driver-minted token dies after ~1h). We stamp event_time=NOW()
+    # on insert (below), so rows always land in the LakeTS ChronoTable's CURRENT
+    # partition regardless of how old the Kafka backlog being consumed is.
+    industry_id: str | None = None
+    if pipeline_id and pipeline_id.startswith("industry:"):
+        industry_id = pipeline_id.split(":", 1)[1] or None
     lakebase_inserted = 0
     lakebase_error: str | None = None
     lb_resolved = False
@@ -106,7 +132,11 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
         src._lb_counters["with_header"] += 1
     if pipeline_id:
         try:
-            lb = await get_pipeline_lakebase(state, pipeline_id)
+            lb = (
+                await get_industry_lakebase(state, industry_id)
+                if industry_id
+                else await get_pipeline_lakebase(state, pipeline_id)
+            )
             lb_resolved = lb is not None
             if lb is None:
                 lakebase_error = "get_pipeline_lakebase returned None"
@@ -628,6 +658,12 @@ async def get_pipeline_stats(
 async def get_lakebase_perf(
     pipeline_id: str,
     minutes: int = Query(5, ge=1, le=60, description="Lookback window in minutes"),
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the deterministic iot-pipelines "
+        "branch directly (for industry-first dashboards with no legacy "
+        "`pipelines` row).",
+    ),
     state: AppState = Depends(get_app_state),
 ):
     """Return insertion-time write performance for a pipeline's Lakebase.
@@ -668,18 +704,20 @@ async def get_lakebase_perf(
         "Ingest lag = now() - producer event-time, measured at Lakebase insert"
     )
 
-    lb = await get_pipeline_lakebase(state, pipeline_id)
+    empty_perf_payload = {
+        "rows_per_sec": 0,
+        "rows_per_min": 0,
+        "p50_insert_lag_ms": None,
+        "p95_insert_lag_ms": None,
+        "lag_basis": lag_basis,
+        "lag_definition": lag_definition,
+        "lag_sample_count": 0,
+        "series": [],
+    }
+
+    lb = await _resolve_lakebase(state, pipeline_id, industry)
     if lb is None:
-        return {
-            "rows_per_sec": 0,
-            "rows_per_min": 0,
-            "p50_insert_lag_ms": None,
-            "p95_insert_lag_ms": None,
-            "lag_basis": lag_basis,
-            "lag_definition": lag_definition,
-            "lag_sample_count": 0,
-            "series": [],
-        }
+        return empty_perf_payload
 
     try:
         rows = await lb.fetch(
@@ -695,6 +733,14 @@ async def get_lakebase_perf(
             minutes,
         )
     except Exception as exc:
+        if industry and _is_undefined_relation(exc):
+            # Realtime not deployed yet for this industry branch — no table,
+            # not a server fault.
+            logger.info(
+                "Lakebase perf: sensor_readings not provisioned yet for industry %s",
+                industry,
+            )
+            return empty_perf_payload
         logger.warning("Pipeline %s lakebase-perf query failed: %s", pipeline_id, exc)
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
@@ -764,6 +810,12 @@ async def _probe_lakets_available(
 async def get_lakets_gapfill(
     pipeline_id: str,
     minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the deterministic iot-pipelines "
+        "branch directly (for industry-first dashboards with no legacy "
+        "`pipelines` row).",
+    ),
     state: AppState = Depends(get_app_state),
 ):
     """Return 1-minute gap-filled average values per sensor via LakeTS.
@@ -773,7 +825,7 @@ async def get_lakets_gapfill(
     previous value forward — a continuous line even when a sensor stops
     reporting for a few seconds.
     """
-    lb = await get_pipeline_lakebase(state, pipeline_id)
+    lb = await _resolve_lakebase(state, pipeline_id, industry)
     installed, reason = await _probe_lakets_available(lb)
     if not installed or lb is None:
         return {"rows": [], "reason": reason or "LakeTS not installed"}
@@ -804,6 +856,8 @@ async def get_lakets_gapfill(
             minutes,
         )
     except Exception as exc:
+        if industry and _is_undefined_relation(exc):
+            return {"rows": [], "reason": "sensor_readings not provisioned yet"}
         logger.warning("LakeTS gapfill query failed for pipeline %s: %s", pipeline_id, exc)
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
@@ -822,6 +876,12 @@ async def get_lakets_gapfill(
 async def get_lakets_rate(
     pipeline_id: str,
     minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the deterministic iot-pipelines "
+        "branch directly (for industry-first dashboards with no legacy "
+        "`pipelines` row).",
+    ),
     state: AppState = Depends(get_app_state),
 ):
     """Return per-minute value rate-of-change per sensor via ``lakets.rate``.
@@ -830,7 +890,7 @@ async def get_lakets_rate(
     ``lakets.rate`` with the current bucket value and a ``LAG`` of the previous
     bucket value / timestamp to compute per-second change.
     """
-    lb = await get_pipeline_lakebase(state, pipeline_id)
+    lb = await _resolve_lakebase(state, pipeline_id, industry)
     installed, reason = await _probe_lakets_available(lb)
     if not installed or lb is None:
         return {"rows": [], "reason": reason or "LakeTS not installed"}
@@ -865,6 +925,8 @@ async def get_lakets_rate(
             minutes,
         )
     except Exception as exc:
+        if industry and _is_undefined_relation(exc):
+            return {"rows": [], "reason": "sensor_readings not provisioned yet"}
         logger.warning("LakeTS rate query failed for pipeline %s: %s", pipeline_id, exc)
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
@@ -885,6 +947,12 @@ async def get_lakets_histogram(
     sensor: str = Query(..., description="Sensor name to compute the distribution for"),
     minutes: int = Query(30, ge=1, le=1440, description="Lookback window in minutes"),
     buckets: int = Query(20, ge=2, le=200, description="Number of histogram buckets"),
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the deterministic iot-pipelines "
+        "branch directly (for industry-first dashboards with no legacy "
+        "`pipelines` row).",
+    ),
     state: AppState = Depends(get_app_state),
 ):
     """Return a value-distribution histogram for a given sensor via LakeTS.
@@ -893,7 +961,7 @@ async def get_lakets_histogram(
     reading to a bucket index, then aggregates counts + emits each bucket's
     lower/upper numeric bounds.
     """
-    lb = await get_pipeline_lakebase(state, pipeline_id)
+    lb = await _resolve_lakebase(state, pipeline_id, industry)
     installed, reason = await _probe_lakets_available(lb)
     if not installed or lb is None:
         return {"rows": [], "reason": reason or "LakeTS not installed"}
@@ -937,6 +1005,8 @@ async def get_lakets_histogram(
             buckets,
         )
     except Exception as exc:
+        if industry and _is_undefined_relation(exc):
+            return {"rows": [], "reason": "sensor_readings not provisioned yet"}
         logger.warning("LakeTS histogram query failed for pipeline %s: %s", pipeline_id, exc)
         return JSONResponse(status_code=500, content={"error": str(exc)})
 

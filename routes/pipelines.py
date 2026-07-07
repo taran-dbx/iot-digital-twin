@@ -16,7 +16,8 @@ from databricks.sdk import WorkspaceClient
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
 from services import app_permissions
-from services.pipeline_db import get_pipeline_lakebase
+from routes.sensor_data import _is_undefined_relation
+from services.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 from services.pipeline_service import pipeline_row_to_dict
 from services.producer_service import stop_data_producer
 from services.source_registry import check_source_available, claim_source, release_source
@@ -489,9 +490,92 @@ async def reset_pipeline(
     }
 
 
+async def _heal_industry_lakebase(industry: str) -> "dict[str, Any] | JSONResponse":
+    """Re-apply role + LakeTS provisioning to an industry-first branch.
+
+    Mirrors the legacy ``heal_lakebase`` role/LakeTS steps against the
+    deterministic ``iot-pipelines`` project/branch (no legacy ``pipelines``
+    row, so no ``job_id`` to restart — the "restart_job" step is reported as
+    skipped). Never raises: every step is wrapped in its own try/except and
+    reported in the response, matching the legacy endpoint's shape.
+    """
+    from services.pipelines_project_service import PG_DATABASE, PIPELINES_PROJECT
+
+    lb_project_id = PIPELINES_PROJECT
+    lb_branch_id = industry
+    lb_database = PG_DATABASE
+    endpoint_name = f"projects/{lb_project_id}/branches/{lb_branch_id}/endpoints/primary"
+
+    try:
+        w = WorkspaceClient()
+        sp_client_id = w.current_user.me().user_name
+    except Exception as exc:
+        logger.warning("heal_lakebase(industry=%s): failed to resolve SP client id: %s", industry, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to resolve service principal: {exc}"},
+        )
+
+    steps: list[dict[str, Any]] = []
+
+    try:
+        provision_results = await provision_lakebase_role(
+            sp_client_id=sp_client_id,
+            project_id=lb_project_id,
+            branch_id=lb_branch_id,
+            database=lb_database,
+            endpoint_name=endpoint_name,
+            sink_tables=("sensor_readings",),
+        )
+        steps.append({"step": "provision_role", "results": provision_results})
+    except Exception as exc:
+        logger.exception("heal_lakebase(industry=%s): provision_lakebase_role failed", industry)
+        steps.append({"step": "provision_role", "error": str(exc), "results": []})
+
+    try:
+        lakets_result = await install_lakets_if_missing(
+            endpoint_name=endpoint_name,
+            database=lb_database,
+        )
+        steps.append({"step": "install_lakets", "result": lakets_result})
+    except Exception as exc:
+        logger.exception("heal_lakebase(industry=%s): install_lakets_if_missing failed", industry)
+        steps.append({"step": "install_lakets", "error": str(exc), "result": None})
+
+    grant_step: dict[str, Any] = {"step": "grant_app_access"}
+    try:
+        app_name = _app_name()
+        grant_app_can_use(w, app_name, sp_client_id)
+        grant_step["app_name"] = app_name
+        grant_step["sp"] = sp_client_id
+        grant_step["status"] = "granted"
+    except Exception as exc:  # pragma: no cover — grant is itself non-raising
+        logger.warning("heal_lakebase(industry=%s): grant_app_can_use failed: %s", industry, exc)
+        grant_step["error"] = str(exc)
+    steps.append(grant_step)
+
+    steps.append({
+        "step": "restart_job",
+        "status": "skipped",
+        "reason": "Industry-first pipelines have no legacy job_id to restart",
+    })
+
+    return {
+        "industry": industry,
+        "endpoint": endpoint_name,
+        "steps": steps,
+    }
+
+
 @router.post("/api/pipelines/{pipeline_id}/heal-lakebase")
 async def heal_lakebase(
     pipeline_id: str,
+    industry: str | None = Query(
+        None,
+        description="Industry id — for industry-first pipelines with no legacy "
+        "`pipelines` row, re-applies role + LakeTS provisioning to the "
+        "deterministic iot-pipelines branch instead (no job to restart).",
+    ),
     state: AppState = Depends(get_app_state),
     user_email: str = Depends(get_current_user),
 ):
@@ -501,6 +585,11 @@ async def heal_lakebase(
     updated consumer notebook takes effect. Each step (provision, install lakets,
     restart job) is wrapped in its own try/except so a single failure does not
     break the whole endpoint — every step result is reported in the response.
+
+    Industry-first pipelines have no row in the legacy ``pipelines`` table, so
+    when ``industry`` is passed and no legacy row is found, this instead heals
+    the deterministic ``iot-pipelines`` branch directly (role + LakeTS install
+    only — there is no legacy ``job_id`` to restart).
     """
     if not state.db_available or not state.db:
         return JSONResponse(status_code=503, content={"error": "Database not configured"})
@@ -510,6 +599,8 @@ async def heal_lakebase(
         pipeline_id, user_email,
     )
     if not row:
+        if industry:
+            return await _heal_industry_lakebase(industry)
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
 
     pipeline = pipeline_row_to_dict(row)
@@ -742,6 +833,12 @@ async def clone_pipeline(
 @router.get("/api/pipelines/{pipeline_id}/lakebase-health")
 async def get_lakebase_health(
     pipeline_id: str,
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the deterministic iot-pipelines "
+        "branch directly (for industry-first dashboards with no legacy "
+        "`pipelines` row).",
+    ),
     state: AppState = Depends(get_app_state),
 ):
     """Return Lakebase sink health signals for the dashboard observability card.
@@ -753,7 +850,10 @@ async def get_lakebase_health(
     - ``inserts_per_sec_recent``: ``rows_5m / 300`` rounded to 2 dp.
 
     On DB error the same shape is returned with zeroes plus an ``error`` key so
-    the client never has to special-case a transport failure.
+    the client never has to special-case a transport failure. When ``industry``
+    is passed, an ``undefined table`` error (realtime not deployed yet on that
+    branch) degrades to the zeroed payload without an ``error`` key rather than
+    surfacing a spurious failure.
     """
     default_payload: dict[str, Any] = {
         "rows_5m": 0,
@@ -762,7 +862,11 @@ async def get_lakebase_health(
         "inserts_per_sec_recent": 0.0,
     }
 
-    lb = await get_pipeline_lakebase(state, pipeline_id)
+    lb = (
+        await get_industry_lakebase(state, industry)
+        if industry
+        else await get_pipeline_lakebase(state, pipeline_id)
+    )
     if lb is None:
         return {**default_payload, "error": "Pipeline Lakebase not resolvable"}
 
@@ -782,6 +886,12 @@ async def get_lakebase_health(
             """
         )
     except Exception as exc:
+        if industry and _is_undefined_relation(exc):
+            logger.info(
+                "lakebase-health: sensor_readings not provisioned yet for industry %s",
+                industry,
+            )
+            return default_payload
         logger.warning("lakebase-health query failed for pipeline %s: %s", pipeline_id, exc)
         return {**default_payload, "error": str(exc)}
 

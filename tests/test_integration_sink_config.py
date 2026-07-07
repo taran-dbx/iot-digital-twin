@@ -181,6 +181,50 @@ class TestSseIngestBroadcastE2E:
         assert body["status"] == "ok"
         assert body["records"] == 2
 
+    @pytest.mark.asyncio
+    async def test_industry_pipeline_id_broadcasts_only_no_lakebase_insert(
+        self, sse_client: tuple[AsyncClient, AppState]
+    ) -> None:
+        """A realtime consumer POSTs with ``X-Pipeline-Id="industry:<industry>"``.
+
+        The deployed consumer's psycopg ForeachWriter already owns the Lakebase
+        ChronoTable write, so the app must ONLY broadcast for SSE — it must NOT
+        call ``get_pipeline_lakebase`` (which would attempt a second, lossy
+        insert). We assert the SSE fan-out still happens, the response reports
+        no lakebase insert, and the resolver was never invoked.
+        """
+        client, state = sse_client
+        queue = _register_sse_queue(state)
+
+        with patch(
+            "routes.sensor_data.get_pipeline_lakebase", new=AsyncMock()
+        ) as mock_get_lb:
+            resp = await client.post(
+                "/api/sss/ingest",
+                json=[
+                    {
+                        "sensor_name": "temp-01",
+                        "industry": "pharmaceutical",
+                        "value": 42.0,
+                        "unit": "C",
+                        "sensor_type": "temperature",
+                        "timestamp": "2026-04-05T10:00:00Z",
+                    }
+                ],
+                headers={"X-Pipeline-Id": "industry:pharmaceutical"},
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["lakebase_inserted"] == 0
+            assert "lakebase_error" not in body
+            # broadcast-only path must NEVER resolve a per-pipeline Lakebase.
+            mock_get_lb.assert_not_awaited()
+
+        # SSE fan-out still reaches the subscriber.
+        event = await asyncio.wait_for(queue.get(), timeout=1.0)
+        assert event["type"] == "sensor_update"
+        assert event["sensors"][0]["sensor_name"] == "temp-01"
+
 
 # ---------------------------------------------------------------------------
 # 2. Threshold-alert SSE E2E — POST /api/sss/alerts fans out to /api/events

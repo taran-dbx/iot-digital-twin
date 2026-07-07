@@ -74,7 +74,12 @@ def test_start_mode_writes_running_status_when_job_started(monkeypatch):
     assert out["status"] == "running"
 
 
-def test_start_mode_stays_starting_when_job_not_started(monkeypatch):
+def test_start_mode_settles_to_idle_when_job_not_started(monkeypatch):
+    # start_mode is synchronous: by the time it returns, the mode is either
+    # running or it isn't. When the deploy step couldn't bring up a job
+    # (nothing deployed yet, or the unpause/run failed), the row must be
+    # settled to the stopped status — NEVER stranded at "starting", which would
+    # render a perpetual "provisioning…" spinner on the card that never resolves.
     set_calls = []
 
     async def fake_ensure(*a, **k):
@@ -91,8 +96,8 @@ def test_start_mode_stays_starting_when_job_not_started(monkeypatch):
 
     out = _run(isvc.start_mode(None, "automotive", "zerobus"))
 
-    assert set_calls == []
-    assert out["status"] == "starting"
+    assert set_calls == [isvc._STOPPED_STATUS]
+    assert out["status"] == "idle"
 
 
 def test_stop_mode_sets_stopped_status_and_reports_idle(monkeypatch):
@@ -141,9 +146,48 @@ async def _noop():
 
 # --- Real (unmocked) behaviour of the thin seams themselves ---------------
 
-def test_deploy_and_start_zerobus_returns_running_without_job():
+def test_deploy_and_start_zerobus_without_job_returns_starting():
+    # Zerobus has no continuous Spark job, but it DOES have a serverless
+    # producer job that only the deploy flow can create. With no job deployed
+    # yet, start must report "starting" truthfully — never a fabricated
+    # "running" (the old behaviour left the mode stuck showing "not deployed").
     out = _run(isvc._deploy_and_start(None, "automotive", "zerobus", None))
+    assert out["status"] == "starting"
+    assert "note" in out
+
+
+def test_deploy_and_start_zerobus_with_job_triggers_run(monkeypatch):
+    # When a zerobus job exists, start triggers a run (serverless run-once
+    # producer → run_now) so data actually lands, and reports it as running.
+    class _FakeRun:
+        run_id = 777
+
+    class _FakeJobs:
+        def __init__(self):
+            self.ran = None
+
+        def run_now(self, job_id):
+            self.ran = job_id
+            return _FakeRun()
+
+    class _FakeWorkspace:
+        def __init__(self):
+            self.jobs = _FakeJobs()
+
+    async def fake_get_job_id(_state, _pipeline_id):
+        return "555"
+
+    fake_w = _FakeWorkspace()
+    monkeypatch.setattr(isvc, "_get_job_id", fake_get_job_id)
+
+    class _State:
+        workspace_client = fake_w
+
+    out = _run(isvc._deploy_and_start(_State(), "automotive", "zerobus", "pid"))
     assert out["status"] == "running"
+    assert out["job_id"] == "555"
+    assert out["run_id"] == 777
+    assert fake_w.jobs.ran == 555
 
 
 def test_deploy_and_start_realtime_without_job_returns_starting():

@@ -39,11 +39,13 @@ import os
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
-dbutils.widgets.text("branch_id", "production", "Lakebase branch")
+dbutils.widgets.text("branch_id", "", "Lakebase branch")
 dbutils.widgets.text("database", "databricks_postgres", "Postgres database")
 
 project_id = dbutils.widgets.get("project_id").strip()
-branch_id = dbutils.widgets.get("branch_id").strip() or "production"
+branch_id = dbutils.widgets.get("branch_id").strip()
+if not branch_id:
+    raise ValueError("branch_id widget is empty - refusing to silently target 'production'")
 database = dbutils.widgets.get("database").strip() or "databricks_postgres"
 
 if not project_id:
@@ -51,13 +53,12 @@ if not project_id:
 
 from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
-parent = f"projects/{project_id}/branches/{branch_id}"
-endpoints = list(w.postgres.list_endpoints(parent=parent))
-if not endpoints:
-    raise RuntimeError(f"No endpoints on {parent}")
-
-endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
-cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
+# Target the WRITABLE PRIMARY endpoint BY NAME. list_endpoints returns the read
+# REPLICA first, so endpoints[0] -> "cannot execute CREATE TABLE/DROP in a
+# read-only transaction". The .../endpoints/primary endpoint is read-write.
+primary = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
+endpoint = w.postgres.get_endpoint(name=primary)
+cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
 conn = psycopg2.connect(
@@ -130,11 +131,13 @@ import os
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
-dbutils.widgets.text("branch_id", "production", "Lakebase branch")
+dbutils.widgets.text("branch_id", "", "Lakebase branch")
 dbutils.widgets.text("database", "databricks_postgres", "Postgres database")
 
 project_id = dbutils.widgets.get("project_id").strip()
-branch_id = dbutils.widgets.get("branch_id").strip() or "production"
+branch_id = dbutils.widgets.get("branch_id").strip()
+if not branch_id:
+    raise ValueError("branch_id widget is empty - refusing to silently target 'production'")
 database = dbutils.widgets.get("database").strip() or "databricks_postgres"
 
 if not project_id:
@@ -142,13 +145,12 @@ if not project_id:
 
 from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
-parent = f"projects/{project_id}/branches/{branch_id}"
-endpoints = list(w.postgres.list_endpoints(parent=parent))
-if not endpoints:
-    raise RuntimeError(f"No endpoints on {parent}")
-
-endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
-cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
+# Target the WRITABLE PRIMARY endpoint BY NAME. list_endpoints returns the read
+# REPLICA first, so endpoints[0] -> "cannot execute CREATE TABLE/DROP in a
+# read-only transaction". The .../endpoints/primary endpoint is read-write.
+primary = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
+endpoint = w.postgres.get_endpoint(name=primary)
+cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
 conn = psycopg2.connect(
@@ -173,7 +175,10 @@ for table_id, schema, table in tables:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT lakets._ensure_partitions(%s, p_future_count := 8)",
+                # 192 * 15-min chunks = 48h forward window, so coverage never
+                # lapses between (daily) runs and fresh rows always land in an
+                # existing partition (avoids CheckViolation "no partition found").
+                "SELECT lakets._ensure_partitions(%s, p_future_count := 192)",
                 (table_id,),
             )
             created = cur.fetchone()[0]
@@ -215,11 +220,13 @@ import os
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
-dbutils.widgets.text("branch_id", "production", "Lakebase branch")
+dbutils.widgets.text("branch_id", "", "Lakebase branch")
 dbutils.widgets.text("database", "databricks_postgres", "Postgres database")
 
 project_id = dbutils.widgets.get("project_id").strip()
-branch_id = dbutils.widgets.get("branch_id").strip() or "production"
+branch_id = dbutils.widgets.get("branch_id").strip()
+if not branch_id:
+    raise ValueError("branch_id widget is empty - refusing to silently target 'production'")
 database = dbutils.widgets.get("database").strip() or "databricks_postgres"
 
 if not project_id:
@@ -227,13 +234,12 @@ if not project_id:
 
 from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
-parent = f"projects/{project_id}/branches/{branch_id}"
-endpoints = list(w.postgres.list_endpoints(parent=parent))
-if not endpoints:
-    raise RuntimeError(f"No endpoints on {parent}")
-
-endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
-cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
+# Target the WRITABLE PRIMARY endpoint BY NAME. list_endpoints returns the read
+# REPLICA first, so endpoints[0] -> "cannot execute CREATE TABLE/DROP in a
+# read-only transaction". The .../endpoints/primary endpoint is read-write.
+primary = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
+endpoint = w.postgres.get_endpoint(name=primary)
+cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
 conn = psycopg2.connect(
@@ -297,11 +303,13 @@ import os
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
-dbutils.widgets.text("branch_id", "production", "Lakebase branch")
+dbutils.widgets.text("branch_id", "", "Lakebase branch")
 dbutils.widgets.text("database", "databricks_postgres", "Postgres database")
 
 project_id = dbutils.widgets.get("project_id").strip()
-branch_id = dbutils.widgets.get("branch_id").strip() or "production"
+branch_id = dbutils.widgets.get("branch_id").strip()
+if not branch_id:
+    raise ValueError("branch_id widget is empty - refusing to silently target 'production'")
 database = dbutils.widgets.get("database").strip() or "databricks_postgres"
 
 if not project_id:
@@ -309,13 +317,12 @@ if not project_id:
 
 from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
-parent = f"projects/{project_id}/branches/{branch_id}"
-endpoints = list(w.postgres.list_endpoints(parent=parent))
-if not endpoints:
-    raise RuntimeError(f"No endpoints on {parent}")
-
-endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
-cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
+# Target the WRITABLE PRIMARY endpoint BY NAME. list_endpoints returns the read
+# REPLICA first, so endpoints[0] -> "cannot execute CREATE TABLE/DROP in a
+# read-only transaction". The .../endpoints/primary endpoint is read-write.
+primary = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
+endpoint = w.postgres.get_endpoint(name=primary)
+cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
 conn = psycopg2.connect(
@@ -386,8 +393,11 @@ _WS_FILENAME = "retention"  # no extension — Databricks infers from import for
 # Daily 03:00 UTC.  Quartz syntax required by the Jobs API (seconds + ? for DOW).
 _DEFAULT_CRON = "0 0 3 * * ?"
 
-# Operational-job crons (quartz).  Every 10 / 15 / 30 minutes respectively.
-_PARTITION_MANAGER_CRON = "0 0/10 * * * ?"
+# Operational-job crons (quartz).  The partition manager pre-creates a 48h
+# forward window (p_future_count := 192), so a single DAILY run keeps coverage
+# well ahead of ingestion — far cheaper than spinning a cluster every 10 min and
+# with a full day of safety margin if a run is missed.
+_PARTITION_MANAGER_CRON = "0 0 2 * * ?"  # daily @ 02:00 UTC
 _ROLLUP_REFRESH_CRON = "0 0/15 * * * ?"
 _TIERING_CRON = "0 0/30 * * * ?"
 

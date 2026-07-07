@@ -21,6 +21,7 @@ from routes.warehouses import router as warehouses_router
 from routes.pipelines import router as pipelines_router
 from routes.lakets import router as lakets_router
 from routes.pipeline_deploy import router as pipeline_deploy_router
+from routes.streaming_latency import router as streaming_latency_router
 
 
 def create_api_router() -> APIRouter:
@@ -43,4 +44,5 @@ def create_api_router() -> APIRouter:
     api.include_router(pipelines_router)
     api.include_router(lakets_router)
     api.include_router(pipeline_deploy_router)
+    api.include_router(streaming_latency_router)
     return api

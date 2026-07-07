@@ -350,6 +350,61 @@ class TestLakebasePerf:
         assert resp.status_code == 500
         assert "error" in resp.json()
 
+    @pytest.mark.asyncio
+    async def test_industry_param_resolves_via_get_industry_lakebase(self) -> None:
+        """``industry`` must drive ``get_industry_lakebase``, not the legacy
+        per-pipeline ``get_pipeline_lakebase`` lookup (industry-first pipelines
+        have no row in the legacy ``pipelines`` table)."""
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        db = _mock_db(fetch_return=[{"bucket": bucket_a, "cnt": 60}])
+        state = _state_with_db(db)
+        lb = _mock_pipeline_lakebase(db)
+
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        with patch(
+            "routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)
+        ) as mock_industry, patch(
+            "routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=None)
+        ) as mock_pipeline:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/pipe-1/lakebase-perf?minutes=5&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rows_per_min"] == 12
+        mock_industry.assert_awaited_once_with(state, "pharmaceutical")
+        mock_pipeline.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_industry_no_data_yet_returns_graceful_empty(self) -> None:
+        """A fresh industry branch with no ``sensor_readings`` table yet (realtime
+        not deployed) must return the graceful-empty payload, never a 500."""
+
+        class _UndefinedRelation(Exception):
+            sqlstate = "42P01"
+
+        db = _mock_db()
+        db.fetch = AsyncMock(side_effect=_UndefinedRelation("relation does not exist"))
+        state = _state_with_db(db)
+        lb = _mock_pipeline_lakebase(db)
+
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        with patch("routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/pipe-1/lakebase-perf?minutes=5&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rows_per_sec"] == 0
+        assert body["rows_per_min"] == 0
+        assert body["series"] == []
+
 
 # ---------------------------------------------------------------------------
 # Zerobus ingest-metrics endpoint
