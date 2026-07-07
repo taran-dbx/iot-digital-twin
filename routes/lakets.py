@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
 from services import lakets_service
 from services.lakets_deploy_service import deploy_retention_job
-from services.pipeline_db import get_pipeline_lakebase
+from services.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 
 logger = logging.getLogger("iot_digital_twin.routes.lakets")
 
@@ -100,6 +100,11 @@ async def check_sync(request: Request):
 @router.get("/api/pipelines/{pipeline_id}/cdf-status")
 async def get_cdf_status(
     pipeline_id: str,
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the deterministic iot-pipelines "
+        "branch directly (industry-first dashboards have no legacy pipelines row).",
+    ),
     state: AppState = Depends(get_app_state),
 ):
     """Report whether Lakebase CDF (Lakehouse Sync) is streaming for a pipeline.
@@ -124,7 +129,14 @@ async def get_cdf_status(
     }
 
     try:
-        lb = await get_pipeline_lakebase(state, pipeline_id)
+        # Industry-first pipelines resolve the deterministic iot-pipelines branch
+        # by industry (no legacy pipelines/sink_config row); legacy pipelines fall
+        # back to the per-pipeline lookup.
+        lb = (
+            await get_industry_lakebase(state, industry)
+            if industry
+            else await get_pipeline_lakebase(state, pipeline_id)
+        )
     except Exception as exc:
         return {**none_result, "reason": f"Pipeline Lakebase not resolvable: {exc}"[:200]}
 

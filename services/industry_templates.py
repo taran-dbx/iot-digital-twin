@@ -81,20 +81,27 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
             "temperature, pressure, WFI flow and batch yield with "
             "tamper-evident history."
         ),
+        # Real simulator sensor names (the SSE feed keys the live stream + KPI
+        # tiles by these). Kept in sync with KPI_SENSOR_MAP in
+        # `client/src/pages/mode-dashboard-page.tsx`.
         sensors=[
-            "Reactor A · temp",
-            "Vessel pressure",
-            "WFI flow",
-            "pH",
-            "Dissolved O₂",
-            "Agitator RPM",
+            "bioreactor_1_temp",
+            "bioreactor_1_ph",
+            "bioreactor_1_dissolved_oxygen",
+            "cleanroom_1_pressure",
+            "tablet_weight",
+            "autoclave_chamber_temp",
         ],
+        # Curated KPI tiles — each label maps (frontend KPI_SENSOR_MAP) to the
+        # real sensor_name above so the tile resolves its live value. `v` is the
+        # pre-power placeholder shown before the pipeline is running.
         kpis=[
-            {"k": "Reactor temp", "v": "37.2", "u": "°C"},
-            {"k": "Vessel pressure", "v": "1.8", "u": "bar"},
-            {"k": "WFI flow", "v": "42", "u": "L/min"},
-            {"k": "Batch yield", "v": "96.1", "u": "%"},
-            {"k": "Deviations", "v": "0", "u": ""},
+            {"k": "Bioreactor temp", "v": "37.0", "u": "°C"},
+            {"k": "Bioreactor pH", "v": "7.15", "u": "pH"},
+            {"k": "Dissolved O₂", "v": "39", "u": "%"},
+            {"k": "Cleanroom ΔP", "v": "12", "u": "Pa"},
+            {"k": "Tablet weight", "v": "100", "u": "mg"},
+            {"k": "Autoclave temp", "v": "83", "u": "°C"},
         ],
         default_hz=25,
     ),
