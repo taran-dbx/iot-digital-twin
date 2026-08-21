@@ -1,8 +1,9 @@
-"""Deploy the LakeTS retention notebook as a scheduled Databricks Job.
+"""Deploy the LakeTS operational notebooks as scheduled Databricks Jobs.
 
-Uploads ``databricks/notebooks/lakets_retention.py`` to the authenticated
-user's workspace and creates (or updates) a Databricks Job that runs it
-daily against the supplied Lakebase project/branch.
+The notebook sources are INLINED in this module (e.g. ``_RETENTION_NOTEBOOK_SOURCE``)
+and uploaded to the authenticated user's workspace via the SDK — nothing is read
+from disk. Creates (or updates) the daily/scheduled Jobs that run them against the
+supplied Lakebase project/branch.
 """
 
 from __future__ import annotations

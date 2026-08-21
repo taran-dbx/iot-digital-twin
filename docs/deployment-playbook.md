@@ -228,8 +228,11 @@ databricks workspace import \
   --file iot_data_simulator-0.1.0-py3-none-any.whl -p <profile> --overwrite
 ```
 
-**Recommendation:** Either remove `*.whl` from `.databricksignore` or publish the
-wheel to a PyPI-compatible feed and reference it by URL in `requirements.txt`.
+**Status (2026-08): RESOLVED.** `*.whl` is no longer excluded by
+`.databricksignore`, so `databricks sync` ships the wheel automatically and the
+manual upload above is only a fallback. The wheel is git-tracked at the repo
+root (installed via `requirements.txt`); `lib/…whl` is a runtime copy read by
+`routes/deployment.py`.
 
 ---
 
@@ -380,7 +383,7 @@ cd client && npm run build && cd ..
 # Sync files
 databricks sync . "$TARGET" --watch=false -p $PROFILE
 
-# Upload .whl (excluded by .databricksignore)
+# Upload .whl (fallback only — it now syncs automatically; not .databricksignore'd)
 databricks workspace import "$TARGET/iot_data_simulator-0.1.0-py3-none-any.whl" \
   --file iot_data_simulator-0.1.0-py3-none-any.whl -p $PROFILE --overwrite
 
