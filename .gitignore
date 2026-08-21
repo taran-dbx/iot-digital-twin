@@ -26,9 +26,12 @@ node_modules/
 
 # Project-specific exclusions
 screenshots/
-# Anchored with leading slash so only the top-level notebooks/ (legacy
-# Spark job sources) is excluded — databricks/notebooks/ must remain
-# synced because lakets_deploy_service uploads lakets_retention.py from there.
+# Design-reference mockups — kept on disk as reference, out of the repo.
+mockups/
+# Anchored with a leading slash so only the top-level notebooks/ (legacy Spark
+# job sources) is excluded; databricks/ (vendor/lakets.sql) stays tracked.
+# NOTE: the LakeTS ops notebooks are inlined in services/lakets_deploy_service.py,
+# not read from disk — there is no databricks/notebooks/ dir.
 /notebooks/
 capture_screenshots.py
 client/

@@ -2,9 +2,9 @@
 __pycache__/
 client/
 screenshots/
-# Exclude ONLY the top-level notebooks/ (sss_rtm_job.py etc.) — the
-# leading slash anchors the pattern so that databricks/notebooks/
-# (lakets_retention.py) is still synced.
+# Exclude ONLY the top-level notebooks/ (legacy sss_rtm_job.py) — the leading
+# slash anchors the pattern so databricks/vendor/lakets.sql (the only file the
+# app reads from databricks/ at runtime) is still synced.
 /notebooks/
 .gitignore
 capture_screenshots.py
@@ -22,4 +22,11 @@ node_modules/
 .idea/
 .superpowers/
 .claude-terminal
-docs/superpowers/
+
+# Dev-only assets — the deployed app only serves static/dist and reads
+# databricks/vendor/lakets.sql + the wheels at runtime. Keep these in git but
+# out of the deployed bundle to slim it.
+docs/
+mockups/
+design-ref/
+scripts/
