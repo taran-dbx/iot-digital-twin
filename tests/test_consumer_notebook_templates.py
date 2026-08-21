@@ -13,10 +13,12 @@ Verified invariants asserted here:
   * Real-time writer: ``.outputMode("update").foreach(LakebaseWriter())
     .trigger(realTime=...)`` with a POSITIONAL-tuple ForeachWriter INSERTing into
     the LakeTS ChronoTable via ``w.postgres.generate_database_credential``.
-  * Micro-batch writer: Delta ``.trigger(processingTime="10 seconds")``.
-  * Metrics: buffered delta-rs listener (queue + daemon thread +
-    ``write_deltalake(mode="append")``; NO ``saveAsTable``; ``progress`` STRING;
-    UC temp-table-creds + ``AWS_REGION`` + ``AWS_S3_ALLOW_UNSAFE_RENAME``).
+  * Micro-batch writer: Delta ``.foreachBatch(write_micro_batch)`` (saveAsTable)
+    on ``.trigger(processingTime="15 seconds")``.
+  * Metrics: buffered Spark listener (queue + daemon thread + Spark
+    ``.write...save(LOCATION)`` via native UC credential vending; NO
+    ``saveAsTable`` and NO delta-rs / temp-table-creds — that API is prohibited
+    on network-restricted workspaces; ``progress`` STRING).
   * Parse schema = all 11 SSOT fields (models/sensor_schema.py).
 """
 
@@ -62,7 +64,7 @@ def _metrics_listener_block() -> str:
     """Region from the buffered-metrics header to addListener()."""
     text = _ts()
     m = re.search(
-        r"# Streaming metrics — buffered async delta-rs write.*?"
+        r"# Streaming metrics — buffered async SPARK write.*?"
         r"spark\.streams\.addListener\(BufferedDeltaMetricsListener\(\)\)",
         text,
         re.DOTALL,
@@ -199,8 +201,11 @@ class TestRealtimeAppSseBridge:
         assert "/oidc/v1/token" in block
         assert '"grant_type": "client_credentials"' in block
         assert '"scope": "all-apis"' in block
-        # creds come from the workspace secret scope, minted per open().
-        assert 'dbutils.secrets.get(APP_SECRET_SCOPE, "zerobus-client-id")' in _ts()
+        # creds come from the workspace secret scope, minted per open(). The
+        # realtime dual writer authenticates as the shared streaming SP (the
+        # principal registered as the Lakebase OAuth role), reused for the SSE
+        # callback token too — NOT the zerobus SP.
+        assert 'dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")' in _ts()
         assert "def open(self, partition_id, epoch_id):" in block
 
     def test_retries_once_on_401_403(self) -> None:
@@ -217,15 +222,18 @@ class TestRealtimeAppSseBridge:
 
 
 class TestMicrobatchWriter:
-    def test_processing_time_ten_seconds(self) -> None:
+    def test_processing_time_fifteen_seconds(self) -> None:
         text = _ts()
-        assert 'DEFAULT_MICROBATCH_INTERVAL = "10 seconds"' in text
+        assert 'DEFAULT_MICROBATCH_INTERVAL = "15 seconds"' in text
         assert '.trigger(processingTime=' in text
 
-    def test_writes_to_delta_table(self) -> None:
+    def test_writes_to_delta_table_via_foreachbatch(self) -> None:
+        # Micro-batch now writes via foreachBatch (so it can also record the real
+        # event-time e2e latency), appending to the Delta table with saveAsTable.
         text = _ts()
         assert '.format("delta")' in text
-        assert ".toTable(DELTA_TABLE)" in text
+        assert ".foreachBatch(write_micro_batch)" in text
+        assert 'saveAsTable(DELTA_TABLE)' in text
 
 
 class TestBufferedDeltaMetricsListener:
@@ -236,22 +244,30 @@ class TestBufferedDeltaMetricsListener:
         # callback enqueues only — no Spark work.
         assert "_metrics_q.put" in block
 
-    def test_flushes_via_delta_rs_append(self) -> None:
+    def test_flushes_via_spark_save_to_location(self) -> None:
+        # The daemon thread flushes with Spark (createDataFrame → .save(LOCATION)),
+        # NOT delta-rs — delta-rs needed temp-table-creds, which are prohibited on
+        # network-restricted workspaces.
         block = _metrics_listener_block()
-        assert "write_deltalake" in block
-        assert 'mode="append"' in block
+        assert "spark.createDataFrame(" in block
+        assert 'mode("append")' in block
+        assert ".save(METRICS_TABLE_LOCATION)" in block
+        assert "write_deltalake" not in block
 
     def test_never_uses_saveastable(self) -> None:
         # saveAsTable from the listener launches a contending Spark job (§1.11);
-        # the actual call form must never appear (the comment naming it is fine).
+        # the metrics write uses .save(LOCATION), never saveAsTable.
         block = _metrics_listener_block()
         assert ".saveAsTable(" not in block
 
-    def test_regenerates_temp_creds_per_batch_with_region_and_rename(self) -> None:
+    def test_uses_native_uc_vending_no_temp_creds_or_keys(self) -> None:
+        # Spark's native UC credential vending — no generate_temporary_table_credentials
+        # CALL, no static AWS keys. (The header comment may name the API to explain
+        # why it's avoided; the actual call form must not appear.)
         block = _metrics_listener_block()
-        assert "generate_temporary_table_credentials" in block
-        assert 'AWS_REGION": "us-east-1"' in block
-        assert 'AWS_S3_ALLOW_UNSAFE_RENAME": "true"' in block
+        assert "generate_temporary_table_credentials(" not in block
+        assert "AWS_ACCESS_KEY_ID" not in block
+        assert "AWS_SECRET_ACCESS_KEY" not in block
 
     def test_progress_stored_as_string(self) -> None:
         block = _metrics_listener_block()

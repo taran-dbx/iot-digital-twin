@@ -267,6 +267,18 @@ class TestEnsureStreamingSP:
     """ensure_streaming_sp creates scope+SP+OAuth-secret idempotently and grants
     the SP CAN_USE on the app."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_scope(self):
+        # provision_secrets_scope builds its OWN WorkspaceClient() (real SDK,
+        # default auth) — correct in prod, but it must be stubbed here so these
+        # tests exercise the SP create / already-exists / permission paths
+        # instead of bailing out early at a failed (unauthenticated) scope step.
+        with patch(
+            "services.provisioning_service.provision_secrets_scope",
+            new=AsyncMock(return_value={"resource": "Secret scope", "status": "created"}),
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_fresh_create_returns_client_id_and_grants(self) -> None:
         w = _make_sp_ws(existing_keys=[])

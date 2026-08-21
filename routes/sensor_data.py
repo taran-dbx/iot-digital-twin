@@ -97,13 +97,11 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
     # If the consumer identifies a pipeline, insert rows into its Lakebase.
     pipeline_id = request.headers.get("X-Pipeline-Id") or request.headers.get("x-pipeline-id")
     # Industry-first REALTIME pipelines send ``X-Pipeline-Id="industry:<industry>"``.
-    # The deployed consumer ONLY POSTs here (no direct executor psycopg write) —
-    # the app owns BOTH the SSE broadcast AND the Lakebase persist via the
-    # per-industry OAuth-REFRESHING pool (``get_industry_lakebase``). This avoids
-    # the OAuth token-expiry that ages out long-lived per-executor connections
-    # (a broadcast/driver-minted token dies after ~1h). We stamp event_time=NOW()
-    # on insert (below), so rows always land in the LakeTS ChronoTable's CURRENT
-    # partition regardless of how old the Kafka backlog being consumed is.
+    # The deployed consumer's RealtimeDualWriter writes sensor_readings DIRECTLY to
+    # the Lakebase branch (LakebaseWriter, per-open OAuth mint + auto-reconnect) AND
+    # POSTs here purely for the SSE broadcast — so this handler must NOT insert again
+    # for industry ids (that would double every row). Only legacy per-pipeline ids
+    # persist below, via the app's OAuth-refreshing pool.
     industry_id: str | None = None
     if pipeline_id and pipeline_id.startswith("industry:"):
         industry_id = pipeline_id.split(":", 1)[1] or None
@@ -130,13 +128,14 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
         src.error = msg
     else:
         src._lb_counters["with_header"] += 1
-    if pipeline_id:
+    # Legacy per-pipeline ids persist to Lakebase here. Industry-first pipelines
+    # are BROADCAST-ONLY: the realtime consumer's RealtimeDualWriter already
+    # writes sensor_readings directly (LakebaseWriter), so inserting again here
+    # would double every row (see project_pipeline_dataflow_wiring). We still
+    # broadcast the rows over SSE below for the live dashboard.
+    if pipeline_id and not industry_id:
         try:
-            lb = (
-                await get_industry_lakebase(state, industry_id)
-                if industry_id
-                else await get_pipeline_lakebase(state, pipeline_id)
-            )
+            lb = await get_pipeline_lakebase(state, pipeline_id)
             lb_resolved = lb is not None
             if lb is None:
                 lakebase_error = "get_pipeline_lakebase returned None"

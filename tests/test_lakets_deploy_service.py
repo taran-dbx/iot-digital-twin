@@ -130,7 +130,10 @@ class TestDeployPartitionManagerJob:
         w.jobs.reset.assert_not_called()
 
         _, kwargs = w.jobs.create.call_args
-        assert kwargs["schedule"].quartz_cron_expression == "0 0/10 * * * ?"
+        # Daily — the manager now pre-creates a 48h forward window
+        # (p_future_count := 192), so one run/day keeps coverage well ahead of
+        # ingestion (far cheaper than every-10-min cluster spins).
+        assert kwargs["schedule"].quartz_cron_expression == "0 0 2 * * ?"
         assert kwargs["max_concurrent_runs"] == 1
 
     def test_updates_job_when_exists(self) -> None:
