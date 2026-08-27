@@ -36,13 +36,8 @@ import os
 import re
 from typing import Any
 
-from models.metrics_schema import (
-    ALL_METRIC_MODES,
-    METRICS_SCHEMA,
-    metrics_external_table_ddl,
-    metrics_table_fqn,
-    metrics_table_location,
-)
+from models.metrics_schema import metrics_managed_table_ddl
+from models.sensor_schema import delta_table_ddl
 from services.dbsql_service import execute_dbsql
 from core.workspace_config import get_secret_scope
 from services.provisioning_service import (
@@ -116,6 +111,57 @@ def catalog_managed_location(catalog: str) -> str:
     """
     base = _storage_base()
     return f"{base}/{catalog}" if base else ""
+
+
+# --- One-schema / industry-prefixed managed-table layout (Task 3) ----------
+# The workspace catalog PRE-EXISTS (owned by another SP), so provisioning never
+# creates it.  All industry tables are MANAGED and live in the single
+# ``{UC_CATALOG}.{UC_SCHEMA}`` schema, distinguished by an ``{industry}_{kind}``
+# name.  Config values are read at call time (never import-time literals) so
+# tests can monkeypatch the environment.
+TABLE_KINDS: tuple[str, ...] = ("realtime", "microbatch", "zerobus", "metrics")
+
+# The single UC secret holding the app SP's own OAuth client-secret, read by the
+# Zerobus producer notebooks at runtime (they only need READ SECRET).
+APP_SP_OAUTH_SECRET = "app_sp_oauth"
+
+
+def _uc_catalog() -> str:
+    """Return the pre-existing UC catalog to provision into (``UC_CATALOG``)."""
+    catalog = os.getenv("UC_CATALOG", "")
+    if not catalog:
+        raise RuntimeError(
+            "UC_CATALOG must be set — it names the pre-existing catalog to "
+            "provision the industry schema/tables into."
+        )
+    return catalog
+
+
+def _uc_schema() -> str:
+    """Return the single UC schema all industry tables live in (``UC_SCHEMA``)."""
+    schema = os.getenv("UC_SCHEMA", "")
+    if not schema:
+        raise RuntimeError("UC_SCHEMA must be set — it names the single schema to provision.")
+    return schema
+
+
+def _sanitize_industry(industry: str) -> str:
+    """Lower-case + collapse non ``[a-z0-9_]`` runs so ``industry`` is a valid identifier prefix."""
+    safe = _CATALOG_SAFE_RE.sub("_", (industry or "").strip().lower()).strip("_")
+    if not safe:
+        raise ValueError(f"industry {industry!r} has no valid characters for a table name")
+    return safe
+
+
+def industry_table(industry: str, kind: str) -> str:
+    """Return the FQN of an industry's managed table: ``{catalog}.{schema}.{industry}_{kind}``.
+
+    ``kind`` must be one of :data:`TABLE_KINDS` (realtime/microbatch/zerobus/metrics).
+    This is the single place a table FQN is built for the one-schema layout.
+    """
+    if kind not in TABLE_KINDS:
+        raise ValueError(f"unknown table kind {kind!r}; expected one of {TABLE_KINDS}")
+    return f"{_uc_catalog()}.{_uc_schema()}.{_sanitize_industry(industry)}_{kind}"
 
 
 def _new_ws() -> Any:
@@ -233,234 +279,104 @@ async def provision_industry_catalog(
     setup_id: Any | None = None,
     deployment_id: Any | None = None,
 ) -> dict:
-    """Create the canonical ``iot_<industry>`` catalog + schemas + volume + the
-    three per-mode external metrics tables (idempotent), recording each in the
-    ledger.
+    """Provision one industry into the PRE-EXISTING ``{UC_CATALOG}.{UC_SCHEMA}``.
 
-    Returns ``{catalog, results, metrics_table, metrics_tables, metrics_locations}``
-    — ``metrics_table``/``metrics_tables`` are ``{mode: fqn}`` dicts (kept as two
-    keys for readability at call sites) and ``metrics_locations`` is ``{mode: s3_uri}``.
+    The catalog already exists and is owned by another SP, so this NEVER issues
+    ``CREATE CATALOG``.  It runs ``CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}``
+    then creates the MANAGED, industry-prefixed Delta tables (no ``LOCATION``):
+
+    - ``{industry}_zerobus``  — the Zerobus ingest target, pre-created with the
+      canonical SensorRecord/SSOT schema so the Zerobus SDK ingests into an
+      existing table.
+    - ``{industry}_realtime`` / ``{industry}_microbatch`` — same SensorRecord
+      schema (created for completeness; not exercised in this plan).
+    - ``{industry}_metrics`` — the managed streaming-metrics table with a leading
+      ``mode`` column.
+
+    Records the schema + each table in the ledger.  Returns
+    ``{catalog, schema, results, tables, metrics_table}`` where ``tables`` is a
+    ``{kind: fqn}`` dict.
     """
     ws = ws or _new_ws()
-    catalog = catalog_name(industry)
-    managed_location = catalog_managed_location(catalog)
+    catalog = _uc_catalog()
+    schema = _uc_schema()
+    schema_fqn = f"{catalog}.{schema}"
+    wh = resolve_warehouse_id(ws, warehouse_id)
     results: list[dict] = []
+    tables: dict[str, str] = {}
 
-    # 1. Catalog — pass MANAGED LOCATION only when UC_STORAGE_BASE is configured;
-    #    otherwise let the metastore use its default managed-storage location.
-    try:
-        if managed_location:
-            ws.catalogs.create(name=catalog, storage_root=managed_location)
-        else:
-            ws.catalogs.create(name=catalog)
-        results.append({"resource": f"UC catalog '{catalog}'", "status": "created"})
-    except Exception as exc:
-        if _is_already_exists(exc):
-            results.append({"resource": f"UC catalog '{catalog}'", "status": "already_exists"})
-        else:
-            results.append({
-                "resource": f"UC catalog '{catalog}'",
-                "status": "failed",
-                "error": str(exc)[:200],
-            })
-            # Catalog is the root dependency — abort if it can't be created.
-            return {
-                "catalog": catalog,
-                "results": results,
-                "metrics_table": None,
-                "metrics_tables": None,
-                "metrics_locations": None,
-            }
-    await _record(
-        db, setup_id, deployment_id,
-        resource_type="uc_catalog", identifier=catalog,
-        teardown_order=TEARDOWN_ORDER_CATALOG,
-        metadata={"managed_location": managed_location},
-    )
-
-    # 2. Schemas.
-    for schema in CANONICAL_SCHEMAS:
-        try:
-            ws.schemas.create(name=schema, catalog_name=catalog)
-            results.append({"resource": f"Schema '{catalog}.{schema}'", "status": "created"})
-        except Exception as exc:
-            if _is_already_exists(exc):
-                results.append({"resource": f"Schema '{catalog}.{schema}'", "status": "already_exists"})
-            else:
-                results.append({
-                    "resource": f"Schema '{catalog}.{schema}'",
-                    "status": "failed",
-                    "error": str(exc)[:200],
-                })
-                continue
+    # 1. Schema — the catalog pre-exists (owned by another SP), so only ever
+    #    create the schema.  Managed tables need no external storage.
+    res = await _run_sql(f"CREATE SCHEMA IF NOT EXISTS {schema_fqn}", wh)
+    results.append({
+        "resource": f"Schema '{schema_fqn}'",
+        "status": "created" if res["status"] == "ok" else res["status"],
+        **({"error": res["error"]} if res.get("error") else {}),
+    })
+    if res["status"] != "failed":
         await _record(
             db, setup_id, deployment_id,
-            resource_type="uc_schema", identifier=f"{catalog}.{schema}",
+            resource_type="uc_schema", identifier=schema_fqn,
             parent_ref=catalog, teardown_order=TEARDOWN_ORDER_SCHEMA,
         )
+    else:
+        # Schema is the root dependency for the tables — abort if it failed.
+        return {
+            "catalog": catalog, "schema": schema, "results": results,
+            "tables": tables, "metrics_table": None,
+        }
 
-    # 3. Managed checkpoint volume.
-    from databricks.sdk.service.catalog import VolumeType
-
-    vol_fqn = f"{catalog}.{CHECKPOINT_SCHEMA}.{CHECKPOINT_VOLUME}"
-    try:
-        ws.volumes.create(
-            catalog_name=catalog,
-            schema_name=CHECKPOINT_SCHEMA,
-            name=CHECKPOINT_VOLUME,
-            volume_type=VolumeType.MANAGED,
-        )
-        results.append({"resource": f"Volume '{vol_fqn}'", "status": "created"})
-    except Exception as exc:
-        if _is_already_exists(exc):
-            results.append({"resource": f"Volume '{vol_fqn}'", "status": "already_exists"})
-        else:
-            results.append({
-                "resource": f"Volume '{vol_fqn}'",
-                "status": "failed",
-                "error": str(exc)[:200],
-            })
-    await _record(
-        db, setup_id, deployment_id,
-        resource_type="uc_volume", identifier=vol_fqn,
-        parent_ref=f"{catalog}.{CHECKPOINT_SCHEMA}",
-        teardown_order=TEARDOWN_ORDER_VOLUME,
-    )
-
-    # 4. External metrics Delta tables (delta-rs write targets) — one per mode
-    # so realtime/microbatch/zerobus metrics never share a table.
-    wh = resolve_warehouse_id(ws, warehouse_id)
-    metrics_fqns: dict[str, str] = {}
-    metrics_locs: dict[str, str] = {}
-    storage_base = _storage_base()
-    for mode in ALL_METRIC_MODES:
-        metrics_fqn = metrics_table_fqn(catalog, mode)
-        metrics_loc = metrics_table_location(catalog, storage_base, mode)
-        ddl = metrics_external_table_ddl(catalog, storage_base, mode)
+    # 2. Managed, industry-prefixed Delta tables (no LOCATION).
+    for kind in TABLE_KINDS:
+        fqn = industry_table(industry, kind)
+        ddl = metrics_managed_table_ddl(fqn) if kind == "metrics" else delta_table_ddl(fqn)
         res = await _run_sql(ddl, wh)
-        if res["status"] == "failed":
-            results.append({
-                "resource": f"Metrics table '{metrics_fqn}'",
-                "status": "failed",
-                "error": res.get("error"),
-            })
-            continue
         results.append({
-            "resource": f"Metrics table '{metrics_fqn}'",
+            "resource": f"Table '{fqn}'",
             "status": "created" if res["status"] == "ok" else res["status"],
+            **({"error": res["error"]} if res.get("error") else {}),
         })
-        metrics_fqns[mode] = metrics_fqn
-        metrics_locs[mode] = metrics_loc
-        await _record(
-            db, setup_id, deployment_id,
-            resource_type="metrics_table", identifier=metrics_fqn,
-            parent_ref=f"{catalog}.{METRICS_SCHEMA}",
-            teardown_order=TEARDOWN_ORDER_METRICS_TABLE,
-            metadata={"external": True, "location": metrics_loc, "mode": mode},
-        )
+        if res["status"] != "failed":
+            tables[kind] = fqn
+            await _record(
+                db, setup_id, deployment_id,
+                resource_type="uc_table", identifier=fqn,
+                parent_ref=schema_fqn, teardown_order=TEARDOWN_ORDER_METRICS_TABLE,
+                metadata={"managed": True, "kind": kind},
+            )
 
     return {
         "catalog": catalog,
+        "schema": schema,
         "results": results,
-        "metrics_table": metrics_fqns,
-        "metrics_tables": metrics_fqns,
-        "metrics_locations": metrics_locs,
+        "tables": tables,
+        "metrics_table": tables.get("metrics"),
     }
 
 
 # --- Grants ----------------------------------------------------------------
 def resolve_streaming_sp_principal(ws: Any) -> str:
-    """Return the streaming SP's grant principal (application id).
+    """Return the grant principal (application id) for the single app SP.
 
     Grants to a service principal in UC SQL use the SP's *application id*.
-    Falls back to the app SP's own client id (``DATABRICKS_CLIENT_ID``) when
-    the streaming SP cannot be resolved by display name.
+    Resolves the app SP by its known display name, falling back to the app SP's
+    own client id (``DATABRICKS_CLIENT_ID``).  In the single-SP layout this is
+    the same identity used for every auth path.
     """
     try:
         sp = _find_sp_by_display_name(ws, SHARED_STREAMING_SP_DISPLAY_NAME)
         if sp is not None and getattr(sp, "application_id", None):
             return sp.application_id
     except Exception as exc:
-        logger.warning("Could not resolve streaming SP by name (non-fatal): %s", exc)
+        logger.warning("Could not resolve SP by name (non-fatal): %s", exc)
     return os.getenv("DATABRICKS_CLIENT_ID", "")
 
 
-def _grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
-    """Return ``(label, sql)`` GRANT statements for the shared SP on ``catalog``.
-
-    Covers streaming-writer needs on realtime/microbatch/metrics + zerobus
-    CREATE TABLE + the ``EXTERNAL USE SCHEMA`` required for delta-rs temp-creds
-    on the metrics schema (spec §1.9–1.11, §1.10 zerobus, §2.7).
-    """
-    q = f"`{principal}`"
-    stmts: list[tuple[str, str]] = [
-        ("USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
-    ]
-    # Writer schemas (streaming writes land here + metrics).
-    for schema in ("realtime", "microbatch", METRICS_SCHEMA):
-        fqn = f"{catalog}.{schema}"
-        stmts.append((
-            f"USE/MODIFY/SELECT on {schema}",
-            f"GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA {fqn} TO {q}",
-        ))
-    # EXTERNAL USE SCHEMA on metrics — required for GenerateTemporaryTableCredentials.
-    stmts.append((
-        "EXTERNAL USE SCHEMA on metrics",
-        f"GRANT EXTERNAL USE SCHEMA ON SCHEMA {catalog}.{METRICS_SCHEMA} TO {q}",
-    ))
-    # Zerobus schema — needs CREATE TABLE (create_stream requires the table to
-    # pre-exist) plus the standard read/write privileges.
-    stmts.append((
-        "USE/MODIFY/SELECT/CREATE on zerobus",
-        f"GRANT USE SCHEMA, MODIFY, SELECT, CREATE TABLE ON SCHEMA {catalog}.zerobus TO {q}",
-    ))
-    return stmts
-
-
-async def grant_streaming_sp(
-    industry: str,
-    *,
-    ws: Any | None = None,
-    warehouse_id: str | None = None,
-    principal: str | None = None,
-    db: Any | None = None,
-    setup_id: Any | None = None,
-    deployment_id: Any | None = None,
-) -> dict:
-    """Grant the shared streaming SP the privileges it needs on ``iot_<industry>``.
-
-    Records each grant in the ledger.  Returns ``{catalog, principal, results}``.
-    """
-    ws = ws or _new_ws()
-    catalog = catalog_name(industry)
-    principal = principal or resolve_streaming_sp_principal(ws)
-    wh = resolve_warehouse_id(ws, warehouse_id)
-    results: list[dict] = []
-
-    for label, sql in _grant_statements(catalog, principal):
-        res = await _run_sql(sql, wh)
-        results.append({"resource": f"GRANT {label} → {principal}", "status": res["status"], **({"error": res["error"]} if res.get("error") else {})})
-        if res["status"] != "failed":
-            await _record(
-                db, setup_id, deployment_id,
-                resource_type="grant",
-                identifier=f"{catalog}:{label}:{principal}",
-                parent_ref=catalog,
-                teardown_order=TEARDOWN_ORDER_GRANT,
-                metadata={"sql": sql},
-            )
-
-    return {"catalog": catalog, "principal": principal, "results": results}
-
-
 def resolve_app_principal(ws: Any) -> str | None:
-    """Return the APP BACKEND's own SP application id — the identity that runs the
-    app's DBSQL reads + Tier-1 health checks (distinct from the streaming SP that
-    runs the jobs). In the deployed app this is ``DATABRICKS_CLIENT_ID``; falls
-    back to the current principal. ``None`` if it can't be resolved (grant then
-    skipped, non-fatal)."""
-    import os
-
+    """Return the single app SP's application id — the identity used for ALL
+    auth (DBSQL reads, health checks, streaming writes, Zerobus ingest).  In the
+    deployed app this is ``DATABRICKS_CLIENT_ID``; falls back to the current
+    principal.  ``None`` if it can't be resolved (grant then skipped, non-fatal)."""
     cid = os.getenv("DATABRICKS_CLIENT_ID")
     if cid:
         return cid
@@ -471,36 +387,30 @@ def resolve_app_principal(ws: Any) -> str | None:
         return None
 
 
-def _app_read_grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
-    """Read-only, catalog-wide grants for the app backend SP. Catalog-level SELECT
-    cascades to ALL current + future tables in every schema — critically the CDF
-    ``lb_<shadow>_history`` Delta table the managed sync creates later, owned by
-    whoever set up the sync (so the app SP would otherwise lack SELECT on it)."""
+def _app_sp_grant_statements(
+    catalog: str, schema: str, principal: str,
+) -> list[tuple[str, str]]:
+    """Return ``(label, sql)`` GRANT statements for the SINGLE app SP.
+
+    The one app SP does everything, so it gets USE CATALOG on the catalog;
+    USE SCHEMA + CREATE TABLE + MODIFY + SELECT on the schema (CREATE TABLE so
+    the Zerobus SDK can ensure its target table; MODIFY/SELECT for ingest +
+    reads); and READ SECRET on the schema so it can read the ``app_sp_oauth``
+    UC secret the Zerobus notebooks authenticate with.
+    """
     q = f"`{principal}`"
+    schema_fqn = f"{catalog}.{schema}"
     return [
-        ("app USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
-        ("app USE SCHEMA", f"GRANT USE SCHEMA ON CATALOG {catalog} TO {q}"),
-        ("app SELECT", f"GRANT SELECT ON CATALOG {catalog} TO {q}"),
+        ("USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
+        (
+            "USE SCHEMA, CREATE TABLE, MODIFY, SELECT on schema",
+            f"GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA {schema_fqn} TO {q}",
+        ),
+        ("READ SECRET on schema", f"GRANT READ SECRET ON SCHEMA {schema_fqn} TO {q}"),
     ]
 
 
-def _app_metrics_write_grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
-    """Metrics-WRITE grants for the app backend SP.
-
-    The per-mode metrics listeners run **as the app SP** (not the streaming SP)
-    on the validation/interactive cluster, so delta-rs's UC temp-table-credentials
-    write path needs ``EXTERNAL USE SCHEMA`` + ``MODIFY`` on the metrics schema
-    for that principal too — mirroring the streaming SP's grant in
-    ``_grant_statements``. Without this the per-mode metrics tables stay empty."""
-    q = f"`{principal}`"
-    fqn = f"{catalog}.{METRICS_SCHEMA}"
-    return [
-        ("app EXTERNAL USE SCHEMA on metrics", f"GRANT EXTERNAL USE SCHEMA ON SCHEMA {fqn} TO {q}"),
-        ("app MODIFY on metrics", f"GRANT MODIFY ON SCHEMA {fqn} TO {q}"),
-    ]
-
-
-async def grant_app_backend_read(
+async def grant_app_sp(
     industry: str,
     *,
     ws: Any | None = None,
@@ -510,107 +420,42 @@ async def grant_app_backend_read(
     setup_id: Any | None = None,
     deployment_id: Any | None = None,
 ) -> dict:
-    """Grant the app backend SP read-only access to ``iot_<industry>`` so its DBSQL
-    reads (validation ``dbsql_read``) + Tier-1 health checks can query every table,
-    including the CDF-synced Delta table created later by the managed sync — plus
-    the metrics-WRITE grants (``EXTERNAL USE SCHEMA`` + ``MODIFY`` on the metrics
-    schema) the app-hosted streaming-metrics listener needs to write the per-mode
-    external Delta tables via delta-rs temp credentials.
+    """Grant the SINGLE app SP everything it needs on ``{catalog}.{schema}``.
 
-    Records each grant in the ledger. Returns ``{catalog, principal, results}``.
+    Idempotent; records each grant in the ledger.  ``industry`` is accepted for
+    call-site symmetry (the grants are schema-scoped, not per-industry).
+    Returns ``{catalog, schema, principal, results}``.
     """
     ws = ws or _new_ws()
-    catalog = catalog_name(industry)
+    catalog = _uc_catalog()
+    schema = _uc_schema()
     principal = principal or resolve_app_principal(ws)
     if not principal:
-        return {"catalog": catalog, "principal": None,
-                "results": [{"resource": "app read grant", "status": "skipped",
-                             "error": "app principal unresolved"}]}
+        return {
+            "catalog": catalog, "schema": schema, "principal": None,
+            "results": [{"resource": "app SP grant", "status": "skipped",
+                         "error": "app SP principal unresolved"}],
+        }
     wh = resolve_warehouse_id(ws, warehouse_id)
     results: list[dict] = []
-    grant_statements = (
-        _app_read_grant_statements(catalog, principal)
-        + _app_metrics_write_grant_statements(catalog, principal)
-    )
-    for label, sql in grant_statements:
+    schema_fqn = f"{catalog}.{schema}"
+    for label, sql in _app_sp_grant_statements(catalog, schema, principal):
         res = await _run_sql(sql, wh)
-        results.append({"resource": f"GRANT {label} → {principal}", "status": res["status"],
-                        **({"error": res["error"]} if res.get("error") else {})})
+        results.append({
+            "resource": f"GRANT {label} → {principal}",
+            "status": res["status"],
+            **({"error": res["error"]} if res.get("error") else {}),
+        })
         if res["status"] != "failed":
             await _record(
                 db, setup_id, deployment_id,
                 resource_type="grant",
-                identifier=f"{catalog}:{label}:{principal}",
-                parent_ref=catalog,
+                identifier=f"{schema_fqn}:{label}:{principal}",
+                parent_ref=schema_fqn,
                 teardown_order=TEARDOWN_ORDER_GRANT,
                 metadata={"sql": sql},
             )
-    return {"catalog": catalog, "principal": principal, "results": results}
-
-
-def resolve_zerobus_principal() -> str | None:
-    """Return the Zerobus ingest SP's application id (``ZEROBUS_CLIENT_ID`` env),
-    or ``None`` if unset (grant then skipped, non-fatal)."""
-    import os
-
-    return os.getenv("ZEROBUS_CLIENT_ID") or None
-
-
-def _zerobus_grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:
-    """USE CATALOG + write/create on the zerobus schema for the Zerobus SP.
-
-    The Zerobus Ingest client authenticates as its own SP (``ZEROBUS_CLIENT_ID``),
-    distinct from the streaming + app SPs, and needs CREATE TABLE + write on the
-    zerobus schema to ingest into ``zerobus.iot_sensor_data`` (mirrors
-    ``routes/provisioning.py::_grant_zerobus_sp`` for the industry path)."""
-    q = f"`{principal}`"
-    return [
-        ("zerobus USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
-        (
-            "zerobus USE/MODIFY/SELECT/CREATE on zerobus",
-            f"GRANT USE SCHEMA, MODIFY, SELECT, CREATE TABLE ON SCHEMA {catalog}.zerobus TO {q}",
-        ),
-    ]
-
-
-async def grant_zerobus_sp(
-    industry: str,
-    *,
-    ws: Any | None = None,
-    warehouse_id: str | None = None,
-    principal: str | None = None,
-    db: Any | None = None,
-    setup_id: Any | None = None,
-    deployment_id: Any | None = None,
-) -> dict:
-    """Grant the Zerobus ingest SP the privileges it needs on ``iot_<industry>``.
-
-    Records each grant in the ledger. Skips (non-fatal) if ``ZEROBUS_CLIENT_ID``
-    is unset. Returns ``{catalog, principal, results}``.
-    """
-    ws = ws or _new_ws()
-    catalog = catalog_name(industry)
-    principal = principal or resolve_zerobus_principal()
-    if not principal:
-        return {"catalog": catalog, "principal": None,
-                "results": [{"resource": "zerobus SP grant", "status": "skipped",
-                             "error": "ZEROBUS_CLIENT_ID not set"}]}
-    wh = resolve_warehouse_id(ws, warehouse_id)
-    results: list[dict] = []
-    for label, sql in _zerobus_grant_statements(catalog, principal):
-        res = await _run_sql(sql, wh)
-        results.append({"resource": f"GRANT {label} → {principal}", "status": res["status"],
-                        **({"error": res["error"]} if res.get("error") else {})})
-        if res["status"] != "failed":
-            await _record(
-                db, setup_id, deployment_id,
-                resource_type="grant",
-                identifier=f"{catalog}:{label}:{principal}",
-                parent_ref=catalog,
-                teardown_order=TEARDOWN_ORDER_GRANT,
-                metadata={"sql": sql},
-            )
-    return {"catalog": catalog, "principal": principal, "results": results}
+    return {"catalog": catalog, "schema": schema, "principal": principal, "results": results}
 
 
 # --- Secrets + SP ----------------------------------------------------------

@@ -80,9 +80,9 @@ def _find_sp_by_display_name(w: Any, display_name: str) -> Any | None:
     """Look up a service principal by exact display name.
 
     Returns the first matching SP object that has an ``application_id``, or
-    ``None`` if none match. Shared by ``ensure_streaming_sp`` (grant
-    re-apply on the already-exists path) and ``ensure_shared_streaming_sp``
-    (idempotent lookup).
+    ``None`` if none match. Used by ``ensure_streaming_sp`` (grant re-apply on
+    the already-exists path) and by ``industry_catalog_service`` to resolve the
+    app SP's grant principal.
     """
     matches = list(w.service_principals.list(filter=f'displayName eq "{display_name}"'))
     return next((s for s in matches if getattr(s, "application_id", None)), None)
@@ -95,9 +95,9 @@ def _create_sp_and_oauth_secret(
     the given secret scope.
 
     Returns ``(sp_id, client_id)``. Raises on failure — callers wrap this in
-    their own error handling. Shared by ``ensure_streaming_sp`` and
-    ``ensure_shared_streaming_sp`` so the create-SP-and-secret sequence lives
-    in exactly one place.
+    their own error handling. Used by the legacy per-pipeline
+    ``ensure_streaming_sp`` path (the industry flow uses the single app SP and
+    mints no new SP).
     """
     sp = w.service_principals.create(display_name=sp_name, active=True)
     sp_id = sp.id
@@ -276,115 +276,12 @@ SHARED_STREAMING_SP_SECRET_KEY = "sss-industries-client-secret"
 SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
 
 
-def _parse_lakebase_endpoint_project() -> tuple[str | None, str | None]:
-    """Parse ``LAKEBASE_ENDPOINT`` (set in app.yaml) into (project_id, branch_id).
+# NOTE (Task 3): ``ensure_shared_streaming_sp`` and the separate zerobus SP
+# were removed — the single app SP (``DATABRICKS_CLIENT_ID``) is now used for
+# every auth path.  ``provision_lakebase_role`` registers that one SP as the
+# branch Postgres role.  The SHARED_STREAMING_* constants above are retained
+# only for import compatibility (e.g. health checks) and are otherwise unused.
 
-    Expected shape: ``projects/<project>/branches/<branch>/endpoints/<name>``.
-    Mirrors the parsing already used in ``routes/provisioning.py``. Returns
-    ``(None, None)`` when the env var is unset or doesn't match the shape.
-    """
-    lb_endpoint = os.getenv("LAKEBASE_ENDPOINT", "")
-    parts = lb_endpoint.split("/")
-    if len(parts) >= 4 and parts[0] == "projects" and parts[2] == "branches":
-        return parts[1], parts[3]
-    return None, None
-
-
-async def ensure_shared_streaming_sp(state: Any) -> dict:
-    """Ensure the SHARED streaming service principal exists (idempotent).
-
-    Every industry pipeline reuses ONE service principal — fixed display
-    name ``iot-sss-industries`` — instead of ``ensure_streaming_sp``'s one
-    SP per pipeline (whose name is derived from the caller's secret scope).
-    The only new behaviour versus the existing per-pipeline path is the
-    fixed name and "return the existing SP if already present"; the actual
-    creation steps reuse the same building blocks:
-
-    - ``_find_sp_by_display_name`` / ``_create_sp_and_oauth_secret`` — the
-      same private helpers ``ensure_streaming_sp`` uses for lookup/creation.
-    - ``provision_secrets_scope`` — idempotent secret-scope creation.
-    - ``grant_app_can_use`` / ``_app_name`` — CAN_USE app grant.
-    - ``provision_lakebase_role`` — registers the SP as a Lakebase Postgres
-      role, once, against the project/branch parsed from the app.yaml
-      ``LAKEBASE_ENDPOINT`` env var.
-
-    Resolves the Databricks SDK client from ``state.workspace_client`` when
-    present (the seam tests use), falling back to a fresh
-    ``WorkspaceClient()`` otherwise — the same pattern every other function
-    in this module uses, since ``AppState`` does not otherwise carry a
-    workspace client.
-
-    Returns ``{"client_id": str | None, "display_name": "iot-sss-industries",
-    "created": bool}``. The app grant and Lakebase-role registration are
-    best-effort side effects (logged and swallowed on failure); only SP +
-    secret creation itself can raise.
-    """
-    w = getattr(state, "workspace_client", None)
-    if w is None:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
-
-    from core.workspace_config import get_secret_scope
-    sp_name = SHARED_STREAMING_SP_DISPLAY_NAME
-    scope_name = get_secret_scope()
-
-    existing_sp = None
-    try:
-        existing_sp = _find_sp_by_display_name(w, sp_name)
-    except Exception as exc:
-        logger.warning(
-            "Lookup for shared streaming SP '%s' failed (non-fatal): %s",
-            sp_name, exc,
-        )
-
-    if existing_sp is not None:
-        client_id = existing_sp.application_id
-        try:
-            grant_app_can_use(w, _app_name(), client_id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(
-                "Failed to re-apply app grant to shared SP '%s' (non-fatal): %s",
-                sp_name, exc,
-            )
-        return {"client_id": client_id, "display_name": sp_name, "created": False}
-
-    # Not found — create fresh.
-    await provision_secrets_scope(scope_name)
-    sp_id, client_id = _create_sp_and_oauth_secret(
-        w, sp_name, scope_name,
-        SHARED_STREAMING_SP_ID_KEY, SHARED_STREAMING_SP_SECRET_KEY,
-    )
-    logger.info(
-        "Created shared streaming SP '%s' (id=%s, app_id=%s)",
-        sp_name, sp_id, client_id,
-    )
-
-    try:
-        grant_app_can_use(w, _app_name(), client_id)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "Failed to grant app access to shared SP '%s' (non-fatal): %s",
-            sp_name, exc,
-        )
-
-    project_id, branch_id = _parse_lakebase_endpoint_project()
-    if project_id and branch_id:
-        try:
-            await provision_lakebase_role(
-                sp_client_id=client_id, project_id=project_id, branch_id=branch_id,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(
-                "Failed to register shared SP '%s' as a Lakebase Postgres "
-                "role (non-fatal): %s", sp_name, exc,
-            )
-    else:
-        logger.warning(
-            "LAKEBASE_ENDPOINT not set/parseable — skipping Postgres role "
-            "registration for shared SP '%s'", sp_name,
-        )
-
-    return {"client_id": client_id, "display_name": sp_name, "created": True}
 
 
 async def provision_uc_catalog(uc: dict) -> list[dict]:

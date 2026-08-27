@@ -32,8 +32,11 @@ __all__ = [
     "METRICS_FIELD_MAP",
     "METRICS_SCHEMA",
     "METRICS_TABLE",
+    "METRICS_MODE_COLUMN",
     "ALL_METRIC_MODES",
     "metrics_columns",
+    "metrics_managed_columns",
+    "metrics_managed_table_ddl",
     "metrics_external_table_ddl",
     "metrics_table_location",
     "metrics_table_fqn",
@@ -88,6 +91,35 @@ METRICS_FIELD_MAP: tuple[MetricsFieldSpec, ...] = (
 def metrics_columns() -> tuple[str, ...]:
     """Return the metrics column names in canonical order."""
     return tuple(spec.column for spec in METRICS_FIELD_MAP)
+
+
+# ---------------------------------------------------------------------------
+# Managed, industry-prefixed metrics table (Task 3)
+# ---------------------------------------------------------------------------
+# The industry-first layout keeps a SINGLE ``{industry}_metrics`` MANAGED Delta
+# table per industry in the shared ``{catalog}.{schema}``.  Unlike the per-mode
+# EXTERNAL tables above, a managed table needs no ``LOCATION`` and carries a
+# leading ``mode STRING`` column so a single table holds every mode's metrics,
+# distinguished at query time by ``mode``.  A later task wires the notebook
+# writer to this DDL; provisioning only creates the table.
+METRICS_MODE_COLUMN = "mode"
+
+
+def metrics_managed_columns() -> tuple[MetricsFieldSpec, ...]:
+    """Return the managed-metrics column specs — ``mode`` first, then the map."""
+    return (MetricsFieldSpec(METRICS_MODE_COLUMN, "STRING"),) + METRICS_FIELD_MAP
+
+
+def metrics_managed_table_ddl(fqn: str) -> str:
+    """Return the MANAGED ``{industry}_metrics`` Delta table DDL for ``fqn``.
+
+    No ``LOCATION`` clause (managed storage), and a leading ``mode STRING``
+    column so realtime/micro-batch metrics coexist in one table.
+    """
+    columns = ",\n".join(
+        f"    {s.column} {s.delta_type}" for s in metrics_managed_columns()
+    )
+    return f"CREATE TABLE IF NOT EXISTS {fqn} (\n{columns}\n) USING DELTA"
 
 
 def _validate_mode(mode: str) -> str:

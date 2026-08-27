@@ -11,7 +11,7 @@ def _run(c):
 
 def test_start_zerobus_skips_lakebase(monkeypatch):
     calls = {"branch": 0, "sp": 0}
-    monkeypatch.setattr(isvc, "ensure_shared_streaming_sp",
+    monkeypatch.setattr(isvc, "_resolve_app_sp",
                         lambda s: calls.__setitem__("sp", calls["sp"]+1) or {"client_id":"x"})
     monkeypatch.setattr(isvc, "_provision_lakebase_branch",
                         lambda *a, **k: calls.__setitem__("branch", calls["branch"]+1))
@@ -25,7 +25,7 @@ def test_start_zerobus_skips_lakebase(monkeypatch):
 
 def test_start_realtime_creates_branch(monkeypatch):
     calls = {"branch": 0}
-    monkeypatch.setattr(isvc, "ensure_shared_streaming_sp", lambda s: {"client_id":"x"})
+    monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id":"x"})
     monkeypatch.setattr(isvc, "_provision_lakebase_branch",
                         lambda *a, **k: calls.__setitem__("branch", calls["branch"]+1))
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
@@ -37,7 +37,7 @@ def test_start_realtime_creates_branch(monkeypatch):
 # --- Additional coverage ---------------------------------------------------
 
 def test_start_mode_includes_topic_step_for_streaming_modes(monkeypatch):
-    monkeypatch.setattr(isvc, "ensure_shared_streaming_sp", lambda s: {"client_id": "x"})
+    monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id": "x"})
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
     monkeypatch.setattr(isvc, "_provision_lakebase_branch", lambda *a, **k: None)
     monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "starting"})
@@ -63,7 +63,7 @@ def test_start_mode_writes_running_status_when_job_started(monkeypatch):
 
     monkeypatch.setattr(isvc, "_ensure_pipeline_row", fake_ensure)
     monkeypatch.setattr(isvc, "_set_pipeline_status", fake_set)
-    monkeypatch.setattr(isvc, "ensure_shared_streaming_sp", lambda s: {"client_id": "x"})
+    monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id": "x"})
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
     monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "running", "job_id": "42"})
 
@@ -90,7 +90,7 @@ def test_start_mode_settles_to_idle_when_job_not_started(monkeypatch):
 
     monkeypatch.setattr(isvc, "_ensure_pipeline_row", fake_ensure)
     monkeypatch.setattr(isvc, "_set_pipeline_status", fake_set)
-    monkeypatch.setattr(isvc, "ensure_shared_streaming_sp", lambda s: {"client_id": "x"})
+    monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id": "x"})
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
     monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "starting"})
 

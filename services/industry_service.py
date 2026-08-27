@@ -28,7 +28,17 @@ from services.industry_templates import (
     get_template,
     mode_config,
 )
-from services.provisioning_service import ensure_shared_streaming_sp
+
+
+def _resolve_app_sp(state: Any) -> dict:
+    """Resolve the SINGLE app service principal client id — no minting.
+
+    Task 3 removed the per-pipeline / shared streaming SP: the app SP
+    (``DATABRICKS_CLIENT_ID``) is the one identity used for every auth path,
+    so ``start_mode`` only needs to resolve it, never create it.
+    """
+    cid = os.getenv("DATABRICKS_CLIENT_ID", "")
+    return {"client_id": cid or None}
 
 logger = logging.getLogger("iot_digital_twin.services.industry_service")
 
@@ -366,7 +376,7 @@ async def _call_maybe_async(fn: Any, *args: Any, **kwargs: Any) -> Any:
 
     The provisioning seams below (``_provision_catalog_schema``,
     ``_provision_lakebase_branch``, ``_deploy_and_start``) and
-    ``ensure_shared_streaming_sp`` are real ``async def`` functions in
+    ``_resolve_app_sp`` are seams (async or sync) in
     production, but ``tests/test_industry_service_start.py`` (per the task
     brief) monkeypatches them with plain synchronous lambdas that return a
     value directly instead of a coroutine. This lets ``start_mode`` /
@@ -662,8 +672,8 @@ async def start_mode(state: AppState, industry: str, mode: str) -> dict:
     catalog_result = await _call_maybe_async(_provision_catalog_schema, industry, mode)
     steps.append({"step": "catalog_schema", "result": catalog_result})
 
-    sp_result = await _call_maybe_async(ensure_shared_streaming_sp, state)
-    steps.append({"step": "shared_sp", "result": sp_result})
+    sp_result = await _call_maybe_async(_resolve_app_sp, state)
+    steps.append({"step": "app_sp", "result": sp_result})
 
     if cfg.get("uses_lakebase"):
         lakebase_result = await _call_maybe_async(

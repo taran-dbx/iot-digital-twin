@@ -24,7 +24,9 @@ from pathlib import Path
 import pytest
 
 INDUSTRY = "spiketest"
-CATALOG = "iot_spiketest"
+# Task 3: provision into the PRE-EXISTING catalog + single schema from env.
+CATALOG = os.getenv("UC_CATALOG", "")
+SCHEMA = os.getenv("UC_SCHEMA", "")
 _VENDORED_LAKETS = str(
     Path(__file__).resolve().parent.parent / "databricks" / "vendor" / "lakets.sql"
 )
@@ -66,6 +68,9 @@ async def test_integration_full_provision_and_teardown() -> None:
     from services import pipelines_project_service as pps
     from services.dbsql_service import execute_dbsql
 
+    if not CATALOG or not SCHEMA:
+        pytest.skip("UC_CATALOG / UC_SCHEMA not set — integration provisioning skipped")
+
     ws = _ws_or_skip()
     wh = _warehouse_or_skip(ws)
 
@@ -75,7 +80,6 @@ async def test_integration_full_provision_and_teardown() -> None:
     if any(c["status"] == "fail" for c in checks):
         pytest.skip(f"pre-flight failed: {checks}")
 
-    metrics_location = None
     try:
         summary = await ips.provision_industry(
             INDUSTRY, setup_id=None, ws=ws, warehouse_id=wh,
@@ -84,31 +88,22 @@ async def test_integration_full_provision_and_teardown() -> None:
         )
 
         assert summary["catalog"] == CATALOG
+        assert summary["schema"] == SCHEMA
         assert summary["branch"] == INDUSTRY
 
-        # 1. Catalog + schemas exist.
+        # 1. The single schema exists in the pre-existing catalog.
         assert await _catalog_exists(ws, wh, CATALOG)
-        schemas = await execute_dbsql(f"SHOW SCHEMAS IN {CATALOG}", wh)
-        names = {r.get("databaseName") or r.get("namespace") for r in schemas["data"]}
-        assert {"realtime", "microbatch", "zerobus", "metrics", "checkpoints"} <= names
-
-        # 2. External per-mode metrics tables exist (realtime/microbatch/zerobus).
-        mt = await execute_dbsql(
-            f"SHOW TABLES IN {CATALOG}.metrics", wh
-        )
-        tbls = {r.get("tableName") for r in mt["data"]}
+        tabs = await execute_dbsql(f"SHOW TABLES IN {CATALOG}.{SCHEMA}", wh)
+        names = {r.get("tableName") for r in tabs["data"]}
+        # 2. Managed industry-prefixed tables exist.
         assert {
-            "streaming_metrics_realtime",
-            "streaming_metrics_microbatch",
-        } <= tbls
-        metrics_location = summary["metrics_table"]
+            f"{INDUSTRY}_zerobus",
+            f"{INDUSTRY}_metrics",
+            f"{INDUSTRY}_realtime",
+            f"{INDUSTRY}_microbatch",
+        } <= names
 
-        # 3. Checkpoint volume exists.
-        vols = await execute_dbsql(f"SHOW VOLUMES IN {CATALOG}.checkpoints", wh)
-        vnames = {r.get("volume_name") or r.get("volumeName") for r in vols["data"]}
-        assert "stream_checkpoints" in vnames
-
-        # 4. Lakebase branch is present with a resolvable primary host.
+        # 3. Lakebase branch is present with a resolvable primary host.
         info = summary["sections"]
         branch_section = next(s for s in info if s["phase"] == "lakebase_branch")
         assert branch_section["result"]["primary_host"]
@@ -120,31 +115,16 @@ async def test_integration_full_provision_and_teardown() -> None:
         assert steps.get("precreate_partitions") == "ok"
 
     finally:
-        # ---- FULL CLEANUP ------------------------------------------------
-        # Drop the catalog (CASCADE removes schemas/tables/volume).
-        try:
-            await execute_dbsql(f"DROP CATALOG IF EXISTS {CATALOG} CASCADE", wh)
-        except Exception:
-            pass
-
-        # Best-effort S3-object delete for the external metrics table + catalog
-        # managed location (dropping the catalog does not remove external data).
-        try:
-            import boto3
-
-            s3 = boto3.client("s3", region_name="us-east-1")
-            bucket = "taran-shared-interop"
-            for prefix in (
-                f"iot-digital-twin/{CATALOG}/",
-                f"{CATALOG}/",
-            ):
-                paginator = s3.get_paginator("list_objects_v2")
-                for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                    objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
-                    if objs:
-                        s3.delete_objects(Bucket=bucket, Delete={"Objects": objs})
-        except Exception:
-            pass
+        # ---- CLEANUP -----------------------------------------------------
+        # The catalog PRE-EXISTS and is shared — NEVER drop it.  Drop only the
+        # throwaway industry-prefixed managed tables (managed → data removed too).
+        for kind in ("realtime", "microbatch", "zerobus", "metrics"):
+            try:
+                await execute_dbsql(
+                    f"DROP TABLE IF EXISTS {CATALOG}.{SCHEMA}.{INDUSTRY}_{kind}", wh
+                )
+            except Exception:
+                pass
 
         # Delete the Lakebase branch (removes its primary endpoint); delete the
         # replica first.

@@ -1,28 +1,31 @@
-"""Industry provisioning orchestrator (plan Phase 2 — 2.2 + 2.4 + LakeTS 2.3).
+"""Industry provisioning orchestrator (Task 3 — one schema, single app SP).
 
 ``provision_industry(industry, setup_id)`` runs the full additive provisioning
 sequence for one industry pipeline and records every resource in the
 ``provisioned_resource`` ledger:
 
 1. Pre-flight checks (external location + warehouse).
-2. Shared identity + secrets — the ``iot-sss-industries`` SP and ``iot-secrets``
-   scope (shared; recorded but never torn down per-industry).
-3. Canonical ``iot_<industry>`` UC catalog + schemas + volume + external metrics
-   table (§2.5, §1.11).
-4. (real-time) never-expiring Lakebase branch + primary/replica endpoints
-   (§2.1–2.2), then LakeTS setup on the branch: install, ``sensor_readings``
-   ChronoTable, ~24h partition pre-create, LakeTS ops jobs (§1.9–1.10).
-5. Grants for the shared SP on the catalog, incl. ``EXTERNAL USE SCHEMA`` on the
-   metrics schema (§1.11) and ``CREATE TABLE`` on the zerobus schema (§1.10).
+2. Resolve the SINGLE app service principal (``DATABRICKS_CLIENT_ID``) — no
+   second SP is minted; the app SP is used for every auth path.
+3. Provision into the PRE-EXISTING ``{UC_CATALOG}.{UC_SCHEMA}``: ``CREATE SCHEMA
+   IF NOT EXISTS`` (never ``CREATE CATALOG``) + the managed, industry-prefixed
+   Delta tables (``{industry}_zerobus`` / ``_realtime`` / ``_microbatch`` /
+   ``_metrics``).
+4. Store the app SP's own OAuth client-secret as the UC secret
+   ``{catalog}.{schema}.app_sp_oauth`` (read from ``DATABRICKS_CLIENT_SECRET``)
+   so the Zerobus producer notebooks can authenticate at runtime.
+5. (real-time) never-expiring Lakebase branch + endpoints, then LakeTS setup on
+   the branch, registering the SAME app SP as the branch Postgres role.
+6. Grants for the single app SP on the schema (USE CATALOG / USE SCHEMA /
+   CREATE TABLE / MODIFY / SELECT + READ SECRET on the UC secret).
 
-Additive only — does not touch ``app.yaml``, ``backend.py`` live wiring, or the
-legacy ``iot-lakets-demo`` project.
+Additive only — does not touch ``app.yaml`` or ``backend.py`` live wiring.
 """
 
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
+import os
 from typing import Any
 
 from services import (
@@ -30,8 +33,9 @@ from services import (
     industry_setup_service as setup,
     pipelines_project_service as pps,
     provisioning_service,
+    uc_secrets,
 )
-from services.industry_catalog_service import TEARDOWN_ORDER_SP
+from services.industry_catalog_service import APP_SP_OAUTH_SECRET, TEARDOWN_ORDER_SP
 from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.industry_provisioning")
@@ -58,10 +62,8 @@ async def provision_industry(
     """Provision all resources for one industry pipeline; record them in the ledger.
 
     Returns a summary dict with a ``sections`` list (one per phase) and the key
-    identifiers (``catalog``, ``branch``, ``metrics_table`` — a ``{mode: fqn}``
-    dict of the three per-mode metrics tables — ``sp_principal``).
-    Raises ``RuntimeError`` on failed pre-flight; otherwise best-effort per phase
-    (each phase's granular status is in its section).
+    identifiers (``catalog``, ``schema``, ``metrics_table``, ``sp_principal``).
+    Raises ``RuntimeError`` on failed pre-flight; otherwise best-effort per phase.
     """
     ws = ws or _new_ws()
     summary: dict[str, Any] = {"industry": industry, "setup_id": setup_id, "sections": []}
@@ -75,34 +77,46 @@ async def provision_industry(
         _section("preflight", checks)
         cat.raise_on_failed_preflight(checks)
 
-    # 2. Shared identity + secrets (shared — recorded but never torn down here).
-    sp_result = await provisioning_service.ensure_shared_streaming_sp(
-        SimpleNamespace(workspace_client=ws)
-    )
-    _section("shared_sp", sp_result)
-    principal = sp_result.get("client_id") or cat.resolve_streaming_sp_principal(ws)
+    # 2. Resolve the SINGLE app SP (no minting) — used for every auth path.
+    principal = cat.resolve_app_principal(ws)
     summary["sp_principal"] = principal
+    _section("app_sp", {"principal": principal})
     if db is not None and setup_id is not None:
         await record_resource(
             db, setup_id=setup_id,
             resource_type="service_principal",
-            identifier=provisioning_service.SHARED_STREAMING_SP_DISPLAY_NAME,
+            identifier=principal or "app-sp",
             teardown_order=TEARDOWN_ORDER_SP,
             metadata={"shared": True, "application_id": principal},
         )
-    scope_result = await cat.ensure_secret_scope(ws=ws, db=db, setup_id=setup_id)
-    _section("secret_scope", scope_result)
 
-    # 3. Canonical UC catalog + schemas + volume + external metrics table.
+    # 3. Schema + managed industry-prefixed tables in the pre-existing catalog.
     catalog_result = await cat.provision_industry_catalog(
         industry, ws=ws, warehouse_id=warehouse_id,
         db=db, setup_id=setup_id,
     )
     _section("uc_catalog", catalog_result)
     summary["catalog"] = catalog_result.get("catalog")
+    summary["schema"] = catalog_result.get("schema")
     summary["metrics_table"] = catalog_result.get("metrics_table")
 
-    # 4. Real-time Lakebase branch + LakeTS setup on the branch.
+    # 4. Store the app SP's OAuth client-secret as a UC secret for the notebooks.
+    catalog = catalog_result.get("catalog")
+    schema = catalog_result.get("schema")
+    client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "")
+    if catalog and schema and client_secret:
+        secret_result = await uc_secrets.put_secret(
+            catalog, schema, APP_SP_OAUTH_SECRET, client_secret, ws=ws,
+        )
+    else:
+        secret_result = {
+            "resource": f"UC secret '{catalog}.{schema}.{APP_SP_OAUTH_SECRET}'",
+            "status": "skipped",
+            "error": "DATABRICKS_CLIENT_SECRET not set — cannot store app SP OAuth secret",
+        }
+    _section("uc_secret", secret_result)
+
+    # 5. Real-time Lakebase branch + LakeTS setup on the branch.
     if enable_realtime:
         branch_result = await pps.provision_industry_branch(
             industry, ws=ws, db=db, setup_id=setup_id,
@@ -111,26 +125,23 @@ async def provision_industry(
         branch = branch_result["branch"]
         summary["branch"] = branch
 
-        # 4b. Register the shared streaming SP as an OAuth Postgres role on THIS
-        #     industry branch (distinct role_id so it doesn't collide with the
-        #     app-backend's iot-app-user role) — this is what lets the realtime
-        #     consumer's LakebaseWriter authenticate + write as that SP. Was a
-        #     manual step for pharmaceutical; now systematic.
+        # 5b. Register the SINGLE app SP as an OAuth Postgres role on THIS
+        #     industry branch so the realtime consumer's LakebaseWriter can
+        #     authenticate + write as that SP (one role, not a separate SP).
         try:
-            sss_role_result = await provisioning_service.provision_lakebase_role(
+            sp_role_result = await provisioning_service.provision_lakebase_role(
                 sp_client_id=principal,
                 project_id=branch_result["project"],
                 branch_id=branch,
-                role_id=provisioning_service.SHARED_STREAMING_LAKEBASE_ROLE_ID,
                 ws=ws,
             )
-            _section("lakebase_sss_role", sss_role_result)
+            _section("lakebase_sp_role", sp_role_result)
         except Exception as exc:  # pragma: no cover - best-effort
             logger.warning(
-                "SSS SP Lakebase role registration on branch '%s' failed "
+                "App SP Lakebase role registration on branch '%s' failed "
                 "(non-fatal): %s", branch, exc,
             )
-            _section("lakebase_sss_role", {"status": "failed", "error": str(exc)[:200]})
+            _section("lakebase_sp_role", {"status": "failed", "error": str(exc)[:200]})
 
         write_mgr = None
         try:
@@ -150,27 +161,11 @@ async def provision_industry(
                 except Exception:  # pragma: no cover - best-effort
                     pass
 
-    # 5. Grants for the shared SP on the catalog.
-    grants_result = await cat.grant_streaming_sp(
+    # 6. Grants for the SINGLE app SP on the schema (incl. READ SECRET).
+    grants_result = await cat.grant_app_sp(
         industry, ws=ws, warehouse_id=warehouse_id, principal=principal,
         db=db, setup_id=setup_id,
     )
     _section("grants", grants_result)
-
-    # 5b. Read-only grant for the APP BACKEND SP so its DBSQL reads + health checks
-    #     can query every table in the catalog — including the CDF-synced
-    #     lb_<shadow>_history Delta table the managed sync creates later (owned by
-    #     whoever enables the sync, so the app SP would otherwise lack SELECT).
-    app_grants = await cat.grant_app_backend_read(
-        industry, ws=ws, warehouse_id=warehouse_id, db=db, setup_id=setup_id,
-    )
-    _section("app_read_grants", app_grants)
-
-    # 5c. Grant the Zerobus ingest SP write/create on the zerobus schema so the
-    #     zerobus producer can land rows (ZEROBUS_CLIENT_ID; skipped if unset).
-    zerobus_grants = await cat.grant_zerobus_sp(
-        industry, ws=ws, warehouse_id=warehouse_id, db=db, setup_id=setup_id,
-    )
-    _section("zerobus_grants", zerobus_grants)
 
     return summary
