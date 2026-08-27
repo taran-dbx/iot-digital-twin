@@ -122,9 +122,39 @@ class TestZerobusDbsqlReadOneSchema:
 
     @pytest.mark.asyncio
     async def test_dbsql_read_zerobus_zero_rows_fails(self):
+        # Zerobus dbsql_read polls to absorb the ingest→commit lag; stub sleep so
+        # the bounded wait doesn't actually block the test.
         exec_mock = AsyncMock(return_value={"data": [{"n": 0}]})
-        with patch.object(vsteps, "execute_dbsql", new=exec_mock):
+        with patch.object(vsteps, "execute_dbsql", new=exec_mock), patch.object(
+            vsteps.asyncio, "sleep", new=AsyncMock()
+        ):
             result = await vsteps.dbsql_read(_make_ctx(mode="zerobus"))
 
         assert result.status == sm.FAILED
         assert EXPECTED_ZB_FQN in (result.error or "")
+        assert str(vsteps._ZEROBUS_READ_WAIT_S) in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_dbsql_read_zerobus_polls_until_rows_land(self):
+        """Zerobus acks a record before the server commits it to the queryable
+        Delta table, so an immediate read sees 0 rows.  dbsql_read must keep
+        polling and PASS once the commit lands (LIVE-observed ~30s lag)."""
+        # 0 rows on the first two polls, then the commit becomes visible.
+        exec_mock = AsyncMock(
+            side_effect=[
+                {"data": [{"n": 0}]},
+                {"data": [{"n": 0}]},
+                {"data": [{"n": 100}]},
+            ]
+        )
+        sleep_mock = AsyncMock()
+        with patch.object(vsteps, "execute_dbsql", new=exec_mock), patch.object(
+            vsteps.asyncio, "sleep", new=sleep_mock
+        ):
+            result = await vsteps.dbsql_read(_make_ctx(mode="zerobus"))
+
+        assert result.status == sm.PASSED
+        assert result.data["rows"] == 100
+        assert exec_mock.await_count == 3
+        # Slept between the three reads, but not after the final (successful) one.
+        assert sleep_mock.await_count == 2

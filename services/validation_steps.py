@@ -59,6 +59,15 @@ _CLUSTER_POLL_S = 15
 _LIB_WAIT_S = 300
 _LIB_POLL_S = 10
 
+# Zerobus acks a record once it is durably buffered, but the server
+# micro-batches the commit to the queryable Delta table a short time later, so a
+# single immediate DBSQL read races ahead of the commit and sees 0 rows even
+# though produce_test succeeded (LIVE-observed ~30s ingest→commit lag).  Poll the
+# zerobus dbsql_read with a bounded backoff; the realtime/microbatch lanes commit
+# synchronously and need no wait.
+_ZEROBUS_READ_WAIT_S = 150
+_ZEROBUS_READ_POLL_S = 8
+
 # PyPI libraries the validation snippets need on the interactive cluster.  The
 # ``topic_create`` / producer snippets import ``kafka`` + the MSK-IAM signer; the
 # Spark Kafka read is built into DBR so needs no pip package.  (Mirrors the
@@ -650,7 +659,31 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
         # {industry}_realtime Delta table (one-schema layout, provisioned by
         # industry_catalog_service).
         table = cat.industry_table(cfg["industry"], "realtime")
-    res = await execute_dbsql(f"SELECT count(*) AS n FROM {table}", wh)
+    sql = f"SELECT count(*) AS n FROM {table}"
+
+    if ctx.mode == "zerobus":
+        # Bounded poll to absorb the Zerobus ingest→commit lag (see
+        # _ZEROBUS_READ_WAIT_S); return as soon as rows are queryable.
+        n = 0
+        attempts = max(1, _ZEROBUS_READ_WAIT_S // _ZEROBUS_READ_POLL_S)
+        for attempt in range(attempts):
+            res = await execute_dbsql(sql, wh)
+            n = _dbsql_count(res)
+            if n > 0:
+                break
+            if attempt < attempts - 1:
+                await asyncio.sleep(_ZEROBUS_READ_POLL_S)
+        if n <= 0:
+            return StepResult(
+                sm.FAILED,
+                error=(
+                    f"{table} has 0 rows after {_ZEROBUS_READ_WAIT_S}s — no zerobus "
+                    "data landed / queryable via DBSQL"
+                ),
+            )
+        return StepResult(sm.PASSED, data={"dbsql": table, "rows": n})
+
+    res = await execute_dbsql(sql, wh)
     n = _dbsql_count(res)
     if n <= 0:
         return StepResult(
