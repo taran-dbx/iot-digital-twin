@@ -6,10 +6,8 @@ client-secret here (``{catalog}.{schema}.app_sp_oauth``) so the Zerobus
 producer notebooks can read it at runtime with only ``READ SECRET`` on the
 schema — no static credential is baked into notebook source.
 
-Both helpers hit the ``/api/2.1/unity-catalog/secrets`` REST surface via the
-SDK api-client (which carries the app SP's OAuth auth automatically).  The
-blocking api-client call is run in a worker thread so the event loop is never
-blocked during provisioning.
+Both helpers use the native SDK ``ws.secrets_uc`` surface (databricks-sdk
+≥ 0.133.0) and run in a worker thread so the event loop is never blocked.
 """
 
 from __future__ import annotations
@@ -19,8 +17,6 @@ import logging
 from typing import Any
 
 logger = logging.getLogger("iot_digital_twin.services.uc_secrets")
-
-_SECRETS_PATH = "/api/2.1/unity-catalog/secrets"
 
 
 def _new_ws() -> Any:
@@ -39,32 +35,28 @@ def _is_already_exists(exc: Exception) -> bool:
 
 
 def _put_sync(ws: Any, catalog: str, schema: str, name: str, value: str) -> dict:
-    """Create-or-update a UC secret via the api-client (blocking)."""
+    """Create-or-update a UC secret via the native SDK ``secrets_uc`` API (blocking)."""
+    from databricks.sdk.common.types.fieldmask import FieldMask
+    from databricks.sdk.service.catalog import Secret
+
     fqn = _fqn(catalog, schema, name)
-    body = {
-        "secret_info": {
-            "catalog_name": catalog,
-            "schema_name": schema,
-            "name": name,
-            "value": value,
-        }
-    }
     try:
-        ws.api_client.do("POST", _SECRETS_PATH, body=body)
+        ws.secrets_uc.create_secret(
+            Secret(catalog_name=catalog, schema_name=schema, name=name, value=value)
+        )
         return {"resource": f"UC secret '{fqn}'", "status": "created"}
     except Exception as exc:
         if not _is_already_exists(exc):
             return {"resource": f"UC secret '{fqn}'", "status": "failed", "error": str(exc)[:200]}
         # Already present — update the value in place.  Best-effort: a failing
-        # PATCH (wrong API form, permission denied, network blip) must NOT hard-
+        # update (wrong API form, permission denied, network blip) must NOT hard-
         # fail provisioning on a teardown→re-provision re-run, so mirror the
-        # POST path's contract and surface the error instead of raising.
+        # create path's contract and surface the error instead of raising.
         try:
-            ws.api_client.do(
-                "PATCH",
-                f"{_SECRETS_PATH}/{fqn}",
-                query={"update_mask": "value"},
-                body={"secret_info": {"value": value}},
+            ws.secrets_uc.update_secret(
+                fqn,
+                Secret(catalog_name=catalog, schema_name=schema, name=name, value=value),
+                FieldMask(["value"]),
             )
         except Exception as update_exc:
             return {"resource": f"UC secret '{fqn}'", "status": "failed", "error": str(update_exc)[:200]}
@@ -72,15 +64,10 @@ def _put_sync(ws: Any, catalog: str, schema: str, name: str, value: str) -> dict
 
 
 def _get_sync(ws: Any, catalog: str, schema: str, name: str) -> str:
-    """Read a UC secret value via the api-client (blocking)."""
+    """Read a UC secret value via the native SDK ``secrets_uc`` API (blocking)."""
     fqn = _fqn(catalog, schema, name)
-    resp = ws.api_client.do("GET", f"{_SECRETS_PATH}/{fqn}") or {}
-    info = resp.get("secret_info") if isinstance(resp, dict) else None
-    if isinstance(info, dict) and "value" in info:
-        return info["value"]
-    if isinstance(resp, dict) and "value" in resp:
-        return resp["value"]
-    return ""
+    result = ws.secrets_uc.get_secret(fqn, include_value=True)
+    return result.effective_value or ""
 
 
 async def put_secret(

@@ -1,8 +1,9 @@
 """Tests for the UC-secret read/write helper (Task 3).
 
 The app SP's own OAuth secret is stored as a Unity Catalog secret so the
-Zerobus producer notebooks can read it at runtime.  These tests mock the SDK
-api-client call and assert the exact ``/api/2.1/unity-catalog/secrets`` shape.
+Zerobus producer notebooks can read it at runtime.  These tests mock the native
+SDK ``secrets_uc`` surface (``ws.secrets_uc.create_secret`` /
+``update_secret`` / ``get_secret``) rather than the raw REST api-client.
 """
 
 from __future__ import annotations
@@ -14,57 +15,60 @@ import pytest
 from services import uc_secrets
 
 
-def _make_ws(do_return=None):
+def _make_ws(*, get_value: str | None = ""):
+    """Return a mocked WorkspaceClient with secrets_uc wired."""
     ws = MagicMock()
-    ws.api_client.do = MagicMock(return_value=do_return if do_return is not None else {})
+    # create_secret and update_secret return a mock Secret by default
+    ws.secrets_uc.create_secret = MagicMock(return_value=MagicMock())
+    ws.secrets_uc.update_secret = MagicMock(return_value=MagicMock())
+    # get_secret returns a Secret whose effective_value is configurable
+    secret_result = MagicMock()
+    secret_result.effective_value = get_value
+    ws.secrets_uc.get_secret = MagicMock(return_value=secret_result)
     return ws
 
 
 class TestPutSecret:
     @pytest.mark.asyncio
-    async def test_posts_to_uc_secrets_api_with_secret_info(self) -> None:
-        ws = _make_ws({})
+    async def test_creates_secret_via_native_sdk(self) -> None:
+        ws = _make_ws()
         res = await uc_secrets.put_secret(
             "classic_stable_realtime_demos_catalog", "rtm_lakets_zb",
             "app_sp_oauth", "top-secret", ws=ws,
         )
-        method = ws.api_client.do.call_args.args[0]
-        path = ws.api_client.do.call_args.args[1]
-        body = ws.api_client.do.call_args.kwargs["body"]
-        assert method == "POST"
-        assert path == "/api/2.1/unity-catalog/secrets"
-        info = body["secret_info"]
-        assert info["catalog_name"] == "classic_stable_realtime_demos_catalog"
-        assert info["schema_name"] == "rtm_lakets_zb"
-        assert info["name"] == "app_sp_oauth"
-        assert info["value"] == "top-secret"
+        ws.secrets_uc.create_secret.assert_called_once()
+        secret_arg = ws.secrets_uc.create_secret.call_args.args[0]
+        assert secret_arg.catalog_name == "classic_stable_realtime_demos_catalog"
+        assert secret_arg.schema_name == "rtm_lakets_zb"
+        assert secret_arg.name == "app_sp_oauth"
+        assert secret_arg.value == "top-secret"
         assert res["status"] in ("created", "updated", "ok")
 
     @pytest.mark.asyncio
     async def test_already_exists_falls_back_to_update(self) -> None:
-        ws = MagicMock()
-        # First POST raises "already exists", the PATCH update then succeeds.
-        ws.api_client.do = MagicMock(side_effect=[Exception("secret already exists"), {}])
+        ws = _make_ws()
+        # create raises "already exists", the update then succeeds
+        ws.secrets_uc.create_secret.side_effect = Exception("secret already exists")
         res = await uc_secrets.put_secret(
             "cat", "sch", "app_sp_oauth", "v2", ws=ws,
         )
-        # Two calls: the failed POST and the update.
-        assert ws.api_client.do.call_count == 2
-        update_call = ws.api_client.do.call_args_list[1]
-        assert update_call.args[0] in ("PATCH", "PUT")
-        assert "cat.sch.app_sp_oauth" in update_call.args[1]
+        ws.secrets_uc.create_secret.assert_called_once()
+        ws.secrets_uc.update_secret.assert_called_once()
+        update_call = ws.secrets_uc.update_secret.call_args
+        # first positional arg is the full name
+        assert "cat.sch.app_sp_oauth" in update_call.args[0]
         assert res["status"] in ("updated", "created", "ok")
 
     @pytest.mark.asyncio
     async def test_update_path_failure_is_not_fatal(self) -> None:
-        # Both the create POST (already-exists) and the update PATCH raise; the
-        # helper must return status="failed" rather than propagating, so a
-        # teardown->re-provision re-run never hard-fails provisioning.
-        ws = MagicMock()
-        ws.api_client.do = MagicMock(side_effect=[
-            Exception("secret already exists"),
-            Exception("PERMISSION_DENIED: cannot update secret"),
-        ])
+        # Both the create (already-exists) and the update raise; the helper must
+        # return status="failed" rather than propagating, so a teardown→re-provision
+        # re-run never hard-fails provisioning.
+        ws = _make_ws()
+        ws.secrets_uc.create_secret.side_effect = Exception("secret already exists")
+        ws.secrets_uc.update_secret.side_effect = Exception(
+            "PERMISSION_DENIED: cannot update secret"
+        )
         res = await uc_secrets.put_secret("cat", "sch", "app_sp_oauth", "v3", ws=ws)
         assert res["status"] == "failed"
         assert "PERMISSION_DENIED" in res["error"]
@@ -72,17 +76,16 @@ class TestPutSecret:
 
 class TestGetSecret:
     @pytest.mark.asyncio
-    async def test_gets_from_uc_secrets_api_and_returns_value(self) -> None:
-        ws = _make_ws({"secret_info": {"value": "the-secret"}})
+    async def test_returns_effective_value_via_native_sdk(self) -> None:
+        ws = _make_ws(get_value="the-secret")
         val = await uc_secrets.get_secret("cat", "sch", "app_sp_oauth", ws=ws)
-        method = ws.api_client.do.call_args.args[0]
-        path = ws.api_client.do.call_args.args[1]
-        assert method == "GET"
-        assert path == "/api/2.1/unity-catalog/secrets/cat.sch.app_sp_oauth"
+        ws.secrets_uc.get_secret.assert_called_once_with(
+            "cat.sch.app_sp_oauth", include_value=True
+        )
         assert val == "the-secret"
 
     @pytest.mark.asyncio
-    async def test_returns_value_when_flat_shape(self) -> None:
-        ws = _make_ws({"value": "flat-secret"})
+    async def test_returns_empty_string_when_effective_value_absent(self) -> None:
+        ws = _make_ws(get_value=None)
         val = await uc_secrets.get_secret("cat", "sch", "app_sp_oauth", ws=ws)
-        assert val == "flat-secret"
+        assert val == ""
