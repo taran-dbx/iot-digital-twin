@@ -51,13 +51,15 @@ env:
   - name: UC_EXTERNAL_LOCATION
     value: ""
 
-  # ── UC service credential for MSK-IAM (maps to the IAM role on MSK). ──
+  # ── UC service credential for MSK-IAM.
+  #    Blank until the service credential is provisioned in a later task. ──
   - name: UC_SERVICE_CREDENTIAL
-    value: "iot-rtm-sc"
+    value: ""
 
-  # ── Streaming Lakebase project (per-industry branches; created in Task 3). ─
+  # ── Streaming Lakebase project (per-industry branches).
+  #    Blank until the project is provisioned in a later task. ──
   - name: PIPELINES_LAKEBASE_PROJECT
-    value: "iot-pipelines"
+    value: ""
 
   # ── MSK bootstrap — leave blank; pipelines configure their own bootstrap
   #    servers in the setup wizard. ──

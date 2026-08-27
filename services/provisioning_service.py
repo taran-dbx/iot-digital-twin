@@ -264,9 +264,10 @@ async def ensure_streaming_sp(
 # ---------------------------------------------------------------------------
 
 SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
-# Read from env so each workspace can name its own secret scope;
-# falls back to "iot-secrets" for workspaces that pre-date this config.
-SHARED_STREAMING_SP_SECRET_SCOPE: str = os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")
+# DEPRECATED constant kept for import compatibility; use get_secret_scope() at
+# call time instead.  Set to "" so import-time reads never inject a workspace
+# literal — the real value is resolved per-call via workspace_config.
+SHARED_STREAMING_SP_SECRET_SCOPE: str = ""
 SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
 SHARED_STREAMING_SP_SECRET_KEY = "sss-industries-client-secret"
 # Distinct Lakebase role_id for the shared streaming SP so it can be registered
@@ -323,8 +324,9 @@ async def ensure_shared_streaming_sp(state: Any) -> dict:
         from databricks.sdk import WorkspaceClient
         w = WorkspaceClient()
 
+    from core.workspace_config import get_secret_scope
     sp_name = SHARED_STREAMING_SP_DISPLAY_NAME
-    scope_name = SHARED_STREAMING_SP_SECRET_SCOPE
+    scope_name = get_secret_scope()
 
     existing_sp = None
     try:

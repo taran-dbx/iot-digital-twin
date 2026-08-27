@@ -135,7 +135,7 @@ def zerobus_produce_snippet(
     server_endpoint: str,
     num_records: int = 100,
     source: str = "validation",
-    secret_scope: str = os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
+    secret_scope: str | None = None,
     client_id_key: str = "zerobus-client-id",
     client_secret_key: str = "zerobus-client-secret",
 ) -> str:
@@ -152,6 +152,9 @@ def zerobus_produce_snippet(
     the same sentinel convention ``services/validation_snippets.py`` uses so
     ``validation_steps._run_on_cluster`` can parse it unmodified.
     """
+    if secret_scope is None:
+        from core.workspace_config import get_secret_scope
+        secret_scope = get_secret_scope()
     record_fields = (
         ("sensor_name", "s"),
         ("industry", repr(industry)),

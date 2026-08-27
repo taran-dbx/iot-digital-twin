@@ -89,7 +89,8 @@ class TestEnsureSharedStreamingSP:
             {
                 "LAKEBASE_ENDPOINT": (
                     "projects/iot-lakets-demo/branches/production/endpoints/primary"
-                )
+                ),
+                "ZEROBUS_SECRET_SCOPE": "iot-secrets",
             },
         ):
             out = await provisioning_service.ensure_shared_streaming_sp(

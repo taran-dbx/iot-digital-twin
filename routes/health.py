@@ -7,6 +7,7 @@ import os
 from fastapi import APIRouter, Depends
 
 from core.state import AppState, get_app_state
+from core.workspace_config import get_pipelines_project, get_secret_scope, get_service_credential
 
 router = APIRouter()
 
@@ -64,10 +65,10 @@ async def app_defaults():
         "lakebase_database": os.getenv("PGDATABASE", ""),
         # Workspace-specific values consumed by the TS notebook generators so
         # they never contain hardcoded workspace names or resource identifiers.
-        "service_credential": os.getenv("UC_SERVICE_CREDENTIAL", "iot-rtm-sc"),
-        "pipelines_project": os.getenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines"),
+        "service_credential": get_service_credential(),
+        "pipelines_project": get_pipelines_project(),
         "storage_base": os.getenv("UC_STORAGE_BASE", ""),
-        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
+        "secret_scope": get_secret_scope(),
         "msk_bootstrap": os.getenv("MSK_BOOTSTRAP_SERVERS", ""),
     }
 

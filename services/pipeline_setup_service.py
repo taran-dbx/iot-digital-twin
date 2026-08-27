@@ -22,8 +22,9 @@ so this module always imports even if that surface is still in flight.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
+
+from core.workspace_config import get_secret_scope
 
 from services import lakets_service
 from services.provisioning_service import (
@@ -141,7 +142,7 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
     lb_branch_id = (params.get("lb_branch_id") or "production").strip()
     lb_database = (params.get("lb_database") or "databricks_postgres").strip()
     table_name = (params.get("table_name") or "sensor_readings").strip()
-    secret_scope = (params.get("secret_scope") or os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")).strip()
+    secret_scope = (params.get("secret_scope") or get_secret_scope()).strip()
     tiering = params.get("tiering")
     retention = params.get("retention")
     rollups = params.get("rollups") or []

@@ -4,8 +4,8 @@ Every workspace-specific value the app needs lives in a single place:
 ``app.yaml`` env vars → this module → callsites.  No workspace-specific
 literals may appear elsewhere in source.
 
-Env var → WorkspaceConfig field mapping
----------------------------------------
+Required env var → WorkspaceConfig field mapping
+------------------------------------------------
 UC_CATALOG                  → uc_catalog
 UC_SCHEMA                   → uc_schema
 LAKEBASE_PROJECT            → lakebase_project
@@ -16,9 +16,22 @@ ZEROBUS_SERVER_ENDPOINT     → zerobus_endpoint
 DATABRICKS_CLIENT_ID        → app_sp_client_id
 INDUSTRIES                  → industries       (comma-separated → list)
 
-All fields except ``pg_host`` are required.  ``get_config()`` raises
-``RuntimeError`` naming every missing variable when any required var is unset.
-The config is a frozen dataclass so callers cannot mutate it accidentally.
+Optional env var → WorkspaceConfig field mapping
+------------------------------------------------
+SECRET_SCOPE (alias ZEROBUS_SECRET_SCOPE) → secret_scope
+UC_SERVICE_CREDENTIAL                     → service_credential
+PIPELINES_LAKEBASE_PROJECT                → pipelines_project
+
+All required fields raise ``RuntimeError`` at ``get_config()`` call time when
+unset.  Optional fields default to ``""`` — the app must tolerate empty values
+gracefully (e.g. skip operations that need the credential/scope until it is
+provisioned).
+
+The three standalone call-time getters (``get_secret_scope()``,
+``get_service_credential()``, ``get_pipelines_project()``) exist so individual
+service modules can read a single value without calling the heavyweight
+``get_config()`` that requires ALL required env vars to be set.  They read from
+env on every call — use them inside functions, never at module/class scope.
 """
 
 from __future__ import annotations
@@ -46,18 +59,56 @@ class WorkspaceConfig:
     uc_schema: str
     lakebase_project: str
     lakebase_endpoint: str
-    pg_host: str  # may be empty until the Lakebase project is provisioned (Task 2)
+    pg_host: str         # optional — blank until Lakebase project is provisioned (Task 2)
     warehouse_id: str
     zerobus_endpoint: str
     app_sp_client_id: str
     industries: list[str]
+    # Optional fields — blank ("") when the corresponding env var is not set.
+    secret_scope: str       # SECRET_SCOPE or ZEROBUS_SECRET_SCOPE
+    service_credential: str # UC_SERVICE_CREDENTIAL
+    pipelines_project: str  # PIPELINES_LAKEBASE_PROJECT
+
+
+# ---------------------------------------------------------------------------
+# Call-time single-value getters
+# Use these inside functions / methods — never at module or class scope —
+# so monkeypatching env vars in tests takes effect correctly.
+# ---------------------------------------------------------------------------
+
+def get_secret_scope() -> str:
+    """Return the secret scope name, read from env on every call.
+
+    Checks ``SECRET_SCOPE`` first (future canonical name), then falls back to
+    ``ZEROBUS_SECRET_SCOPE`` (legacy name).  Returns ``""`` when neither is set.
+    """
+    return os.getenv("SECRET_SCOPE") or os.getenv("ZEROBUS_SECRET_SCOPE", "")
+
+
+def get_service_credential() -> str:
+    """Return the UC service credential name (``UC_SERVICE_CREDENTIAL``).
+
+    Returns ``""`` when the env var is not set — the service credential is
+    provisioned in a later task and the app must tolerate its absence.
+    """
+    return os.getenv("UC_SERVICE_CREDENTIAL", "")
+
+
+def get_pipelines_project() -> str:
+    """Return the shared streaming Lakebase project name (``PIPELINES_LAKEBASE_PROJECT``).
+
+    Returns ``""`` when the env var is not set — the project is provisioned in
+    a later task.
+    """
+    return os.getenv("PIPELINES_LAKEBASE_PROJECT", "")
 
 
 def get_config() -> WorkspaceConfig:
     """Return the workspace configuration read from environment variables.
 
     Raises ``RuntimeError`` with a clear message listing every missing
-    required env var.  ``PGHOST`` is optional and may be empty.
+    required env var.  ``PGHOST`` and the three optional fields are never
+    in the required set and may be empty.
     """
     missing = [env for env in _REQUIRED_ENV if not os.getenv(env)]
     if missing:
@@ -79,4 +130,7 @@ def get_config() -> WorkspaceConfig:
         zerobus_endpoint=os.environ["ZEROBUS_SERVER_ENDPOINT"],
         app_sp_client_id=os.environ["DATABRICKS_CLIENT_ID"],
         industries=industries,
+        secret_scope=get_secret_scope(),
+        service_credential=get_service_credential(),
+        pipelines_project=get_pipelines_project(),
     )

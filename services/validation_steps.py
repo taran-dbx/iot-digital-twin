@@ -25,6 +25,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from core.workspace_config import get_secret_scope
 from models.metrics_schema import ALL_METRIC_MODES, metrics_table_fqn, metrics_table_location
 from services import industry_catalog_service as cat
 from services import lakets_service as lakets_svc
@@ -104,7 +105,7 @@ def _cfg(ctx: StepContext) -> dict:
         "replication_factor": vc.replication_factor(brokers),
         "warehouse_id": setup.get("warehouse_id"),
         "branch": industry,  # per-industry Lakebase branch name = industry
-        "project_id": pps.PIPELINES_PROJECT,
+        "project_id": pps.get_pipelines_project(),
         "metric_mode": metric_mode,
         "metrics_table_fqn": metrics_table_fqn(catalog, metric_mode),
         "metrics_table_location": metrics_table_location(
@@ -754,7 +755,7 @@ async def auth_probe(ctx: StepContext) -> StepResult:
         return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
     ok, detail = await asyncio.to_thread(
         zbv.auth_probe, workspace_url, server_endpoint, table_fqn,
-        secret_scope=os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
+        secret_scope=get_secret_scope(),
         secret_key=os.getenv("ZEROBUS_SECRET_KEY", "zerobus-client-secret"),
     )
     return StepResult(sm.PASSED if ok else sm.FAILED,

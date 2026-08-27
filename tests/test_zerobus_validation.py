@@ -104,7 +104,8 @@ def test_snippet_embeds_table_and_endpoint_and_num_records():
     assert "range(42)" in code
 
 
-def test_snippet_uses_secret_scope_and_keys():
+def test_snippet_uses_secret_scope_and_keys(monkeypatch):
+    monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")
     code = _snippet()
     assert "'iot-secrets'" in code
     assert "'zerobus-client-id'" in code

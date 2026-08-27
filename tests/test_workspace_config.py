@@ -1,11 +1,6 @@
-"""Tests for core/workspace_config.py — the central workspace configuration module.
-
-TDD step 1: these tests define the contract for get_config() before the module exists.
-"""
+"""Tests for core/workspace_config.py — the central workspace configuration module."""
 
 from __future__ import annotations
-
-import os
 
 import pytest
 
@@ -31,6 +26,10 @@ _FULL_ENV: dict[str, str] = {
     "DATABRICKS_CLIENT_ID": "7c59807d-7f0d-47ab-8e83-6d91add2f35c",
     "INDUSTRIES": "pharmaceutical,manufacturing",
     "PGHOST": "ep-test.database.eu-central-1.cloud.databricks.com",
+    # Optional env vars for the three call-time-only fields.
+    "SECRET_SCOPE": "test-scope",
+    "UC_SERVICE_CREDENTIAL": "test-credential",
+    "PIPELINES_LAKEBASE_PROJECT": "test-pipelines",
 }
 
 
@@ -105,6 +104,104 @@ class TestGetConfigReadsEnvVars:
             cfg.uc_catalog = "modified"  # type: ignore[misc]
 
 
+class TestOptionalFields:
+    """Optional fields (secret_scope, service_credential, pipelines_project) default to ''."""
+
+    def test_secret_scope_from_secret_scope_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.setenv("SECRET_SCOPE", "my-scope")
+        monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
+        from core.workspace_config import get_config
+        assert get_config().secret_scope == "my-scope"
+
+    def test_secret_scope_falls_back_to_zerobus_scope(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.delenv("SECRET_SCOPE", raising=False)
+        monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "zb-scope")
+        from core.workspace_config import get_config
+        assert get_config().secret_scope == "zb-scope"
+
+    def test_secret_scope_empty_when_neither_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.delenv("SECRET_SCOPE", raising=False)
+        monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
+        from core.workspace_config import get_config
+        assert get_config().secret_scope == ""
+
+    def test_service_credential_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.setenv("UC_SERVICE_CREDENTIAL", "my-cred")
+        from core.workspace_config import get_config
+        assert get_config().service_credential == "my-cred"
+
+    def test_service_credential_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.delenv("UC_SERVICE_CREDENTIAL", raising=False)
+        from core.workspace_config import get_config
+        assert get_config().service_credential == ""
+
+    def test_pipelines_project_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "my-project")
+        from core.workspace_config import get_config
+        assert get_config().pipelines_project == "my-project"
+
+    def test_pipelines_project_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.delenv("PIPELINES_LAKEBASE_PROJECT", raising=False)
+        from core.workspace_config import get_config
+        assert get_config().pipelines_project == ""
+
+
+class TestCallTimeGetters:
+    """Standalone getter functions must read from env on every call (call-time)."""
+
+    def test_get_secret_scope_reads_secret_scope_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SECRET_SCOPE", "call-time-scope")
+        monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
+        from core.workspace_config import get_secret_scope
+        assert get_secret_scope() == "call-time-scope"
+
+    def test_get_secret_scope_falls_back_to_zerobus(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SECRET_SCOPE", raising=False)
+        monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "zb-call-scope")
+        from core.workspace_config import get_secret_scope
+        assert get_secret_scope() == "zb-call-scope"
+
+    def test_get_secret_scope_returns_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SECRET_SCOPE", raising=False)
+        monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
+        from core.workspace_config import get_secret_scope
+        assert get_secret_scope() == ""
+
+    def test_get_service_credential_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("UC_SERVICE_CREDENTIAL", "call-time-cred")
+        from core.workspace_config import get_service_credential
+        assert get_service_credential() == "call-time-cred"
+
+    def test_get_service_credential_returns_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("UC_SERVICE_CREDENTIAL", raising=False)
+        from core.workspace_config import get_service_credential
+        assert get_service_credential() == ""
+
+    def test_get_pipelines_project_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "call-time-project")
+        from core.workspace_config import get_pipelines_project
+        assert get_pipelines_project() == "call-time-project"
+
+    def test_get_pipelines_project_returns_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("PIPELINES_LAKEBASE_PROJECT", raising=False)
+        from core.workspace_config import get_pipelines_project
+        assert get_pipelines_project() == ""
+
+
 class TestGetConfigRaisesOnMissingRequired:
     """get_config() must raise RuntimeError naming the missing var."""
 
@@ -156,6 +253,8 @@ class TestWorkspaceConfigStructure:
             "uc_catalog", "uc_schema", "lakebase_project", "lakebase_endpoint",
             "pg_host", "warehouse_id", "zerobus_endpoint", "app_sp_client_id",
             "industries",
+            # Optional fields added in review pass.
+            "secret_scope", "service_credential", "pipelines_project",
         }
         actual = {f for f in cfg.__dataclass_fields__}
         assert actual == expected

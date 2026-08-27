@@ -20,7 +20,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.workspace_config import get_pipelines_project
 from services import pipelines_project_service as pps
+
+# The test suite sets this env var so get_pipelines_project() returns a known value.
+_TEST_PIPELINES_PROJECT = "iot-pipelines"
+
+
+@pytest.fixture(autouse=True)
+def _set_pipelines_project_env(monkeypatch):
+    """Ensure PIPELINES_LAKEBASE_PROJECT is set for all tests in this module."""
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", _TEST_PIPELINES_PROJECT)
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +98,7 @@ class TestEnsurePipelinesProject:
     def test_returns_existing_when_project_present(self) -> None:
         ws = _make_ws(project_exists=True)
         result = pps.ensure_pipelines_project(ws=ws)
-        assert result["project"] == pps.PIPELINES_PROJECT
+        assert result["project"] == get_pipelines_project()
         assert result["status"] == "existing"
         ws.postgres.create_project.assert_not_called()
 
@@ -99,7 +109,7 @@ class TestEnsurePipelinesProject:
         ws.postgres.create_project.assert_called_once()
         # project_id must be the shared name, not a resource path
         _, kwargs = ws.postgres.create_project.call_args
-        assert kwargs.get("project_id") == pps.PIPELINES_PROJECT
+        assert kwargs.get("project_id") == get_pipelines_project()
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +148,7 @@ class TestProvisionIndustryBranch:
         )
 
         # Return contract
-        assert result["project"] == pps.PIPELINES_PROJECT
+        assert result["project"] == get_pipelines_project()
         assert result["branch"] == "pharmaceutical"
         assert result["primary_endpoint"].endswith("/endpoints/primary")
         assert result["replica_endpoint"].endswith("/endpoints/replica")
@@ -218,7 +228,7 @@ class TestProvisionIndustryBranch:
         # The app SP was registered as a role on THIS branch.
         assert calls and calls[0]["sp_client_id"] == "app-sp-0d42"
         assert calls[0]["branch_id"] == "pharmaceutical"
-        assert calls[0]["project_id"] == pps.PIPELINES_PROJECT
+        assert calls[0]["project_id"] == get_pipelines_project()
         # Recorded in the ledger for visibility.
         role_rows = [r for r in recorded if r["resource_type"] == "lakebase_role"]
         assert role_rows and role_rows[0]["metadata"]["sp_client_id"] == "app-sp-0d42"

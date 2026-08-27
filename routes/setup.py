@@ -10,12 +10,12 @@ status in its ``steps`` list.
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
+from core.workspace_config import get_secret_scope
 from services.pipeline_setup_service import setup_pipeline_lakebase
 
 logger = logging.getLogger("iot_digital_twin.routes.setup")
@@ -75,7 +75,7 @@ async def post_setup_pipeline_lakebase(
         "lb_branch_id": (body.get("lb_branch_id") or "production").strip(),
         "lb_database": (body.get("lb_database") or "databricks_postgres").strip(),
         "table_name": (body.get("table_name") or "sensor_readings").strip(),
-        "secret_scope": (body.get("secret_scope") or os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")).strip(),
+        "secret_scope": (body.get("secret_scope") or get_secret_scope()).strip(),
         "industry": body.get("industry"),
         "tiering": tiering,
         "retention": body.get("retention"),

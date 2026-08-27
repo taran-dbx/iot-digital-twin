@@ -66,9 +66,19 @@ async def test_provision_cluster_live(app_backend_conn):
                 pass
 
 
-def test_verified_cluster_config_is_locked():
-    """Guard the verified compute constants against accidental drift (no cluster)."""
-    spec = vc.build_validation_cluster_spec(
+def test_verified_cluster_config_is_locked(monkeypatch):
+    """Guard the verified compute constants against accidental drift (no cluster).
+
+    SERVICE_CREDENTIAL is now env-driven (UC_SERVICE_CREDENTIAL); the test sets
+    the env var and reloads the module so the constant reflects the patched value.
+    """
+    expected_cred = "iot-rtm-sc"
+    monkeypatch.setenv("UC_SERVICE_CREDENTIAL", expected_cred)
+    import importlib
+    import services.validation_config as _vc
+    importlib.reload(_vc)
+
+    spec = _vc.build_validation_cluster_spec(
         node_type_id="m5d.xlarge", num_workers=2, single_user_name="a@b.com",
     )
     assert spec["spark_version"] == "18.2.x-scala2.13"
@@ -76,5 +86,6 @@ def test_verified_cluster_config_is_locked():
     assert spec["runtime_engine"] == "STANDARD"
     assert "autoscale" not in spec
     assert spec["aws_attributes"]["availability"] == "ON_DEMAND"
-    assert vc.SERVICE_CREDENTIAL == "iot-rtm-sc"
-    assert vc.MSK_PUBLIC_PORT == 9198
+    # Verify the env-read value, not a hardcoded workspace string.
+    assert _vc.SERVICE_CREDENTIAL == expected_cred
+    assert _vc.MSK_PUBLIC_PORT == 9198

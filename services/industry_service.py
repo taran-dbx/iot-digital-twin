@@ -19,6 +19,8 @@ import logging
 import os
 from typing import Any
 
+from core.workspace_config import get_secret_scope
+
 from core.state import AppState
 from services.industry_templates import (
     CURATED_INDUSTRIES,
@@ -511,7 +513,7 @@ async def _provision_lakebase_branch(
         "lb_branch_id": "production",
         "lb_database": "databricks_postgres",
         "table_name": "sensor_readings",
-        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
+        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE") or get_secret_scope(),
         "industry": industry,
     }
     return await setup_pipeline_lakebase(state, params)

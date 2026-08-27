@@ -21,7 +21,6 @@ Every provisioned resource (LakeTS install, ChronoTable, jobs) is recorded in th
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from models.sensor_schema import pg_chronotable_ddl
@@ -64,7 +63,7 @@ async def setup_lakets_on_branch(
     *,
     conn: Any,
     ws: Any | None = None,
-    project_id: str = os.getenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines"),
+    project_id: str | None = None,
     future_count: int = DEFAULT_FUTURE_PARTITIONS,
     chunk: str = CHUNK_INTERVAL,
     lakets_sql_path: str | None = None,
@@ -82,6 +81,8 @@ async def setup_lakets_on_branch(
     Returns a summary dict; records LakeTS install, ChronoTable, and each ops
     job in the ledger.  Idempotent throughout.
     """
+    from core.workspace_config import get_pipelines_project
+    project_id = project_id or get_pipelines_project()
     ws = ws or _new_ws()
     result: dict[str, Any] = {"branch": branch, "steps": []}
 

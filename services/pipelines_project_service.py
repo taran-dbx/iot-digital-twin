@@ -27,18 +27,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any
 
 from backend import LakebaseConnectionManager
+from core.workspace_config import get_pipelines_project
 from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.pipelines_project")
 
 # --- Constants -------------------------------------------------------------
-# Read from env so any workspace can configure its own streaming Lakebase project.
-# Old deployments that do not set PIPELINES_LAKEBASE_PROJECT keep the original name.
-PIPELINES_PROJECT: str = os.getenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines")
+# PIPELINES_PROJECT has been removed as an import-time constant to prevent
+# workspace literals being locked in at module load.  Use get_pipelines_project()
+# at call time, or pass project_id explicitly to any function below.
 PG_DATABASE = "databricks_postgres"
 
 PRIMARY_ENDPOINT_ID = "primary"
@@ -77,18 +77,18 @@ def _new_ws() -> Any:
 
 
 # --- Resource-name helpers -------------------------------------------------
-def project_resource_name(project_id: str = PIPELINES_PROJECT) -> str:
-    return f"projects/{project_id}"
+def project_resource_name(project_id: str | None = None) -> str:
+    return f"projects/{project_id or get_pipelines_project()}"
 
 
-def branch_resource_name(branch: str, project_id: str = PIPELINES_PROJECT) -> str:
-    return f"projects/{project_id}/branches/{branch}"
+def branch_resource_name(branch: str, project_id: str | None = None) -> str:
+    return f"projects/{project_id or get_pipelines_project()}/branches/{branch}"
 
 
 def endpoint_resource_name(
-    branch: str, endpoint_id: str, project_id: str = PIPELINES_PROJECT
+    branch: str, endpoint_id: str, project_id: str | None = None
 ) -> str:
-    return f"projects/{project_id}/branches/{branch}/endpoints/{endpoint_id}"
+    return f"projects/{project_id or get_pipelines_project()}/branches/{branch}/endpoints/{endpoint_id}"
 
 
 # --- Error classification --------------------------------------------------
@@ -103,7 +103,7 @@ def _is_already_exists(exc: Exception) -> bool:
 
 # --- Project ---------------------------------------------------------------
 def ensure_pipelines_project(
-    *, ws: Any | None = None, project_id: str = PIPELINES_PROJECT
+    *, ws: Any | None = None, project_id: str | None = None
 ) -> dict:
     """Ensure the shared ``iot-pipelines`` project exists (create if missing).
 
@@ -112,6 +112,7 @@ def ensure_pipelines_project(
     """
     from databricks.sdk.service.postgres import Project
 
+    project_id = project_id or get_pipelines_project()
     ws = ws or _new_ws()
     name = project_resource_name(project_id)
     try:
@@ -184,7 +185,7 @@ async def provision_industry_branch(
     db: Any | None = None,
     setup_id: Any | None = None,
     deployment_id: Any | None = None,
-    project_id: str = PIPELINES_PROJECT,
+    project_id: str | None = None,
     primary_min_cu: float = PRIMARY_MIN_CU,
     primary_max_cu: float = PRIMARY_MAX_CU,
     replica_min_cu: float = REPLICA_MIN_CU,
@@ -214,6 +215,7 @@ async def provision_industry_branch(
         FieldMask,
     )
 
+    project_id = project_id or get_pipelines_project()
     ws = ws or _new_ws()
     branch = industry
     parent_project = project_resource_name(project_id)
@@ -517,18 +519,18 @@ async def _open_conn(
 
 
 async def get_write_conn(
-    branch: str, *, ws: Any | None = None, project_id: str = PIPELINES_PROJECT
+    branch: str, *, ws: Any | None = None, project_id: str | None = None
 ) -> LakebaseConnectionManager:
     """Return an initialized connection manager for the branch's PRIMARY (write)."""
     return await _open_conn(
-        branch, PRIMARY_ENDPOINT_ID, ws=ws, project_id=project_id
+        branch, PRIMARY_ENDPOINT_ID, ws=ws, project_id=project_id or get_pipelines_project()
     )
 
 
 async def get_read_conn(
-    branch: str, *, ws: Any | None = None, project_id: str = PIPELINES_PROJECT
+    branch: str, *, ws: Any | None = None, project_id: str | None = None
 ) -> LakebaseConnectionManager:
     """Return an initialized connection manager for the branch's REPLICA (read)."""
     return await _open_conn(
-        branch, REPLICA_ENDPOINT_ID, ws=ws, project_id=project_id
+        branch, REPLICA_ENDPOINT_ID, ws=ws, project_id=project_id or get_pipelines_project()
     )

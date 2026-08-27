@@ -44,9 +44,9 @@ from models.metrics_schema import (
     metrics_table_location,
 )
 from services.dbsql_service import execute_dbsql
+from core.workspace_config import get_secret_scope
 from services.provisioning_service import (
     SHARED_STREAMING_SP_DISPLAY_NAME,
-    SHARED_STREAMING_SP_SECRET_SCOPE,
     _find_sp_by_display_name,
 )
 from services.resource_ledger import record_resource
@@ -615,7 +615,7 @@ async def grant_zerobus_sp(
 
 # --- Secrets + SP ----------------------------------------------------------
 async def ensure_secret_scope(
-    scope: str = SHARED_STREAMING_SP_SECRET_SCOPE,
+    scope: str | None = None,
     *,
     ws: Any | None = None,
     db: Any | None = None,
@@ -623,9 +623,11 @@ async def ensure_secret_scope(
 ) -> dict:
     """Ensure the shared secret scope exists (idempotent), recording it (shared).
 
-    The scope + SP are shared across all industries, so the ledger row is
-    flagged ``shared`` and must never be torn down per-industry.
+    ``scope`` is resolved at call time from ``workspace_config.get_secret_scope()``
+    when not provided explicitly.  The scope + SP are shared across all industries,
+    so the ledger row is flagged ``shared`` and must never be torn down per-industry.
     """
+    scope = scope or get_secret_scope()
     ws = ws or _new_ws()
     status: str
     try:
