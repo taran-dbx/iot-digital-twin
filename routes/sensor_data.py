@@ -1031,65 +1031,143 @@ async def get_lakets_histogram(
 async def get_streaming_metrics(
     pipeline_id: str,
     request: Request,
+    industry: str | None = Query(
+        None,
+        description="Industry id — resolves the one-schema prefixed metrics table "
+        "``{UC_CATALOG}.{UC_SCHEMA}.{industry}_metrics`` directly "
+        "(required for industry-first pipelines that have no legacy ``pipelines`` row).",
+    ),
+    mode: str | None = Query(
+        None, description="Streaming mode: realtime or microbatch (filters the metrics table)"
+    ),
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
-    """Query streaming_metrics table from the pipeline's UC catalog via DBSQL."""
+    """Query the shared ``{industry}_metrics`` table from the one-schema layout via DBSQL.
+
+    For industry-first pipelines ``industry`` is required (no legacy
+    ``pipelines`` row exists). When both ``industry`` and ``mode`` are
+    supplied the metrics table is filtered by ``mode``. The response uses the
+    typed COLUMNAR schema (``metrics_schema.METRICS_FIELD_MAP`` + leading
+    ``mode`` column) — the legacy JSON-``progress``-field path is replaced.
+
+    Tiles path (``/api/latency/streaming``) and this charts path now read the
+    same ``{industry}_metrics`` table.
+    """
     from services import app_permissions
+    from services import industry_catalog_service as _icat
 
-    catalog = await get_pipeline_catalog(
-        state.db, state.db_available, pipeline_id, user_email,
-        is_admin=app_permissions.is_admin(request),
-    )
-    if not catalog:
-        return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
-    if not validate_catalog(catalog):
-        return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+    is_admin = app_permissions.is_admin(request)
 
-    metrics_table = f"{catalog}.metrics.streaming_metrics"
+    if industry:
+        try:
+            metrics_table = _icat.industry_table(industry, "metrics")
+        except (ValueError, RuntimeError) as exc:
+            return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
+        catalog_part = metrics_table.split(".")[0]
+        if not validate_catalog(catalog_part):
+            return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+    else:
+        # Legacy path: resolve catalog from the pipeline row.
+        catalog = await get_pipeline_catalog(
+            state.db, state.db_available, pipeline_id, user_email,
+            is_admin=is_admin,
+        )
+        if not catalog:
+            return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
+        if not validate_catalog(catalog):
+            return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+        # Legacy path uses the old per-catalog metrics table (JSON progress column).
+        # This is kept for backward compat; industry-first pipelines should supply
+        # the ``industry`` param to get the new columnar one-schema table.
+        metrics_table = f"{catalog}.metrics.streaming_metrics"
+
     warehouse_id = await resolve_warehouse_id(state.db, state.db_available, user_email)
     if not warehouse_id:
         return JSONResponse(status_code=400, content={"error": "No SQL warehouse configured"})
 
+    normalized_mode = (mode or "").strip().lower() or None
+
     try:
-        # Summary: extract key metrics from the JSON progress column
-        summary_sql = f"""
-            SELECT COUNT(*) AS total_rows,
-                   MAX(timestamp) AS last_write,
-                   MAX(batch_id) AS last_batch,
-                   AVG(progress:inputRowsPerSecond::DOUBLE) AS avg_input_rps,
-                   AVG(progress:processedRowsPerSecond::DOUBLE) AS avg_processed_rps,
-                   AVG(progress:durationMs.triggerExecution::LONG) AS avg_batch_duration_ms,
-                   SUM(progress:numInputRows::LONG) AS total_input_rows,
-                   AVG(progress:e2eLatencyMs.p50::DOUBLE) AS avg_e2e_p50_ms,
-                   AVG(progress:e2eLatencyMs.p99::DOUBLE) AS avg_e2e_p99_ms,
-                   AVG(progress:processingLatencyMs.p50::DOUBLE) AS avg_processing_p50_ms,
-                   AVG(progress:processingLatencyMs.p99::DOUBLE) AS avg_processing_p99_ms,
-                   AVG(progress:sourceQueuingLatencyMs.p50::DOUBLE) AS avg_queuing_p50_ms,
-                   AVG(progress:sourceQueuingLatencyMs.p99::DOUBLE) AS avg_queuing_p99_ms
-            FROM {metrics_table}
-        """
-        # Recent rows: explode the JSON into useful columns
-        rows_sql = f"""
-            SELECT query_id, query_name, batch_id, timestamp,
-                   progress:numInputRows::LONG AS num_input_rows,
-                   progress:inputRowsPerSecond::DOUBLE AS input_rows_per_second,
-                   progress:processedRowsPerSecond::DOUBLE AS processed_rows_per_second,
-                   progress:durationMs.triggerExecution::LONG AS batch_duration_ms,
-                   progress:durationMs.addBatch::LONG AS add_batch_ms,
-                   progress:durationMs.latestOffset::LONG AS latest_offset_ms,
-                   progress:durationMs.walCommit::LONG AS wal_commit_ms,
-                   progress:sink.numOutputRows::LONG AS num_output_rows,
-                   progress:e2eLatencyMs.p50::DOUBLE AS e2e_p50_ms,
-                   progress:e2eLatencyMs.p99::DOUBLE AS e2e_p99_ms,
-                   progress:processingLatencyMs.p50::DOUBLE AS processing_p50_ms,
-                   progress:sourceQueuingLatencyMs.p50::DOUBLE AS queuing_p50_ms,
-                   progress:observedMetrics AS observed_metrics,
-                   progress
-            FROM {metrics_table}
-            ORDER BY batch_id DESC
-            LIMIT 50
-        """
+        if industry:
+            # One-schema columnar table: typed columns, leading ``mode`` column.
+            mode_filter = f"WHERE mode = '{normalized_mode}'" if normalized_mode else ""
+            summary_sql = f"""
+                SELECT COUNT(*) AS total_rows,
+                       MAX(timestamp) AS last_write,
+                       MAX(batch_id) AS last_batch,
+                       AVG(input_rps) AS avg_input_rps,
+                       AVG(processed_rps) AS avg_processed_rps,
+                       AVG(trigger_ms) AS avg_batch_duration_ms,
+                       SUM(num_input_rows) AS total_input_rows,
+                       AVG(e2e_p50) AS avg_e2e_p50_ms,
+                       AVG(e2e_p99) AS avg_e2e_p99_ms,
+                       AVG(processing_p50) AS avg_processing_p50_ms,
+                       AVG(processing_p99) AS avg_processing_p99_ms,
+                       AVG(queuing_p50) AS avg_queuing_p50_ms,
+                       AVG(queuing_p99) AS avg_queuing_p99_ms
+                FROM {metrics_table}
+                {mode_filter}
+            """
+            rows_sql = f"""
+                SELECT query_id, query_name, batch_id, timestamp,
+                       num_input_rows,
+                       input_rps AS input_rows_per_second,
+                       processed_rps AS processed_rows_per_second,
+                       trigger_ms AS batch_duration_ms,
+                       NULL AS add_batch_ms,
+                       NULL AS latest_offset_ms,
+                       NULL AS wal_commit_ms,
+                       NULL AS num_output_rows,
+                       e2e_p50 AS e2e_p50_ms,
+                       e2e_p99 AS e2e_p99_ms,
+                       processing_p50 AS processing_p50_ms,
+                       queuing_p50 AS queuing_p50_ms,
+                       NULL AS observed_metrics,
+                       NULL AS progress
+                FROM {metrics_table}
+                {mode_filter}
+                ORDER BY batch_id DESC
+                LIMIT 50
+            """
+        else:
+            # Legacy path: JSON progress column.
+            summary_sql = f"""
+                SELECT COUNT(*) AS total_rows,
+                       MAX(timestamp) AS last_write,
+                       MAX(batch_id) AS last_batch,
+                       AVG(progress:inputRowsPerSecond::DOUBLE) AS avg_input_rps,
+                       AVG(progress:processedRowsPerSecond::DOUBLE) AS avg_processed_rps,
+                       AVG(progress:durationMs.triggerExecution::LONG) AS avg_batch_duration_ms,
+                       SUM(progress:numInputRows::LONG) AS total_input_rows,
+                       AVG(progress:e2eLatencyMs.p50::DOUBLE) AS avg_e2e_p50_ms,
+                       AVG(progress:e2eLatencyMs.p99::DOUBLE) AS avg_e2e_p99_ms,
+                       AVG(progress:processingLatencyMs.p50::DOUBLE) AS avg_processing_p50_ms,
+                       AVG(progress:processingLatencyMs.p99::DOUBLE) AS avg_processing_p99_ms,
+                       AVG(progress:sourceQueuingLatencyMs.p50::DOUBLE) AS avg_queuing_p50_ms,
+                       AVG(progress:sourceQueuingLatencyMs.p99::DOUBLE) AS avg_queuing_p99_ms
+                FROM {metrics_table}
+            """
+            rows_sql = f"""
+                SELECT query_id, query_name, batch_id, timestamp,
+                       progress:numInputRows::LONG AS num_input_rows,
+                       progress:inputRowsPerSecond::DOUBLE AS input_rows_per_second,
+                       progress:processedRowsPerSecond::DOUBLE AS processed_rows_per_second,
+                       progress:durationMs.triggerExecution::LONG AS batch_duration_ms,
+                       progress:durationMs.addBatch::LONG AS add_batch_ms,
+                       progress:durationMs.latestOffset::LONG AS latest_offset_ms,
+                       progress:durationMs.walCommit::LONG AS wal_commit_ms,
+                       progress:sink.numOutputRows::LONG AS num_output_rows,
+                       progress:e2eLatencyMs.p50::DOUBLE AS e2e_p50_ms,
+                       progress:e2eLatencyMs.p99::DOUBLE AS e2e_p99_ms,
+                       progress:processingLatencyMs.p50::DOUBLE AS processing_p50_ms,
+                       progress:sourceQueuingLatencyMs.p50::DOUBLE AS queuing_p50_ms,
+                       progress:observedMetrics AS observed_metrics,
+                       progress
+                FROM {metrics_table}
+                ORDER BY batch_id DESC
+                LIMIT 50
+            """
 
         summary_result = await execute_dbsql(summary_sql, warehouse_id)
         rows_result = await execute_dbsql(rows_sql, warehouse_id)
@@ -1300,18 +1378,17 @@ async def get_zerobus_metrics(
     }
 
 
-# Per-mode DBSQL table (schema-qualified, relative to the pipeline's UC
-# catalog). Mirrors the layout documented in
-# ``services/industry_catalog_service.py`` and the table selection already
-# proven out by ``services.validation_steps.dbsql_read``:
-#
-#   - realtime lands in the Lakebase ChronoTable, not a UC Delta table — it
-#     only reaches UC through the managed CDF sync, which writes a Delta
-#     table named ``lb_<shadow>_history`` (Lakebase CDF naming convention) in
-#     the sync's destination ``realtime`` schema. So DBSQL reads the SYNCED
-#     table (``CDF_SYNCED_TABLE``), not a nonexistent ``realtime.sensor_readings``.
-#   - microbatch / zerobus write straight to their own per-mode Delta table.
-_DBSQL_MODE_TABLES: dict[str, str] = {
+# Valid streaming modes for the DBSQL cold-tier timeseries endpoint.
+# Table FQNs are resolved via ``industry_catalog_service.industry_table(industry, mode)``
+# (one-schema layout: ``{UC_CATALOG}.{UC_SCHEMA}.{industry}_{mode}``).
+# Legacy (per-industry-catalog) paths are kept for pipelines without an
+# ``industry`` query param so existing non-industry-first callers still work.
+_DBSQL_MODES: frozenset[str] = frozenset({"realtime", "microbatch", "zerobus"})
+
+# Legacy per-catalog schema/table map — used ONLY when the ``industry`` param
+# is absent (backward compat with non-industry-first pipelines).  New callers
+# should always supply ``industry`` to get the one-schema prefixed table.
+_LEGACY_MODE_TABLES: dict[str, str] = {
     "realtime": f"realtime.{_v_steps.CDF_SYNCED_TABLE}",
     "microbatch": "microbatch.sensor_data",
     "zerobus": "zerobus.iot_sensor_data",
@@ -1352,7 +1429,7 @@ async def _resolve_dbsql_mode(
     from services import industry_service as _ind_svc
 
     normalized = (mode or "").strip().lower()
-    if normalized in _DBSQL_MODE_TABLES:
+    if normalized in _DBSQL_MODES:
         return normalized
 
     if state.db_available and state.db:
@@ -1369,7 +1446,7 @@ async def _resolve_dbsql_mode(
             row = None
         if row:
             inferred = _ind_svc._infer_mode(dict(row))
-            if inferred in _DBSQL_MODE_TABLES:
+            if inferred in _DBSQL_MODES:
                 return inferred
     return "microbatch"
 
@@ -1392,32 +1469,38 @@ async def get_dbsql_timeseries(
 ):
     """Query time-series sensor data from the pipeline's UC catalog via DBSQL.
 
-    Catalog resolution: an explicit ``industry`` resolves to ``iot_<industry>``
-    directly (industry-first pipelines live in ``pipeline_setup``, not the legacy
-    ``pipelines`` table, so there's no ``pipeline_id`` → catalog mapping for them);
-    otherwise fall back to the legacy per-pipeline catalog lookup.  Table selection
-    is mode-aware — see ``_DBSQL_MODE_TABLES``.
+    Table resolution:
+    - When ``industry`` is supplied: resolves to the one-schema prefixed table
+      via ``industry_table(industry, mode)``
+      (``{UC_CATALOG}.{UC_SCHEMA}.{industry}_{mode}``).
+    - When ``industry`` is absent: falls back to the legacy per-pipeline catalog
+      lookup (``{iot_<industry>}.{schema}.{table}`` from ``_LEGACY_MODE_TABLES``),
+      kept for non-industry-first pipelines that still have a ``pipelines`` row.
     """
     from services import app_permissions
     from services import industry_catalog_service as _icat
 
     is_admin = app_permissions.is_admin(request)
+    resolved_mode = await _resolve_dbsql_mode(state, pipeline_id, mode)
+
     if industry:
         try:
-            catalog = _icat.catalog_name(industry)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": "Invalid industry"})
+            table = _icat.industry_table(industry, resolved_mode)
+        except (ValueError, RuntimeError) as exc:
+            return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
+        # Validate the catalog portion.
+        catalog_part = table.split(".")[0]
+        if not validate_catalog(catalog_part):
+            return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
     else:
         catalog = await get_pipeline_catalog(
             state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
         )
-    if not catalog:
-        return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
-    if not validate_catalog(catalog):
-        return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
-
-    resolved_mode = await _resolve_dbsql_mode(state, pipeline_id, mode)
-    table = f"{catalog}.{_DBSQL_MODE_TABLES[resolved_mode]}"
+        if not catalog:
+            return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
+        if not validate_catalog(catalog):
+            return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+        table = f"{catalog}.{_LEGACY_MODE_TABLES[resolved_mode]}"
 
     warehouse_id = await resolve_warehouse_id(state.db, state.db_available, user_email)
     if not warehouse_id:

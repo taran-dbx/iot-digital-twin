@@ -47,11 +47,10 @@ _CACHE_TTL_SECONDS = 15.0
 # The realtime Lakebase sink (ChronoTable) — schema.table + timestamp column.
 _REALTIME_TABLE = "public.sensor_readings"
 
-# Delta sinks per DBSQL-backed mode: (schema, table). Mirrors health_checks._MODE_TABLES.
-_DELTA_TABLES: dict[str, tuple[str, str]] = {
-    "microbatch": ("microbatch", "sensor_data"),
-    "zerobus": ("zerobus", "iot_sensor_data"),
-}
+# DBSQL-backed modes — matched by name, not by a per-catalog schema/table mapping.
+# Table FQNs are built at query time via ``cat.industry_table(industry, mode)``
+# (one-schema layout: ``{UC_CATALOG}.{UC_SCHEMA}.{industry}_{mode}``).
+_DELTA_MODES: frozenset[str] = frozenset({"microbatch", "zerobus"})
 
 _EVENT_TIME_COLUMN = "event_time"
 
@@ -108,10 +107,12 @@ async def _dbsql_flowing(
 
     Cheap ``LIMIT 1`` existence probe; never raises — any error (missing table,
     warehouse timeout) is treated as not-flowing.
+
+    Table resolution uses ``cat.industry_table(industry, mode)`` — the
+    one-schema prefixed layout (``{UC_CATALOG}.{UC_SCHEMA}.{industry}_{mode}``)
+    shared across all three pipeline flavours.
     """
-    schema, table = _DELTA_TABLES[mode]
-    catalog = cat.catalog_name(industry)
-    fqn = f"{catalog}.{schema}.{table}"
+    fqn = cat.industry_table(industry, mode)
     sql = (
         f"SELECT 1 FROM {fqn} "
         f"WHERE {_EVENT_TIME_COLUMN} > current_timestamp() - INTERVAL {int(window_minutes)} MINUTES "
@@ -157,7 +158,7 @@ async def mode_flowing(
             handle = await get_industry_lakebase(state, industry)
             if handle is not None:
                 flowing = await _realtime_flowing(handle, window_minutes)
-        elif mode in _DELTA_TABLES:
+        elif mode in _DELTA_MODES:
             if run_sql is not None:
                 flowing = await _dbsql_flowing(run_sql, industry, mode, window_minutes)
     except Exception as exc:  # pragma: no cover - blanket safety net
@@ -221,7 +222,7 @@ async def flowing_lookup(
     if not to_probe:
         return {}
 
-    if run_sql is None and any(m in _DELTA_TABLES for m in to_probe):
+    if run_sql is None and any(m in _DELTA_MODES for m in to_probe):
         run_sql = _make_run_sql(setup)
 
     result: dict[str, bool] = {}

@@ -16,6 +16,9 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
+_UC_CATALOG = "classic_stable_realtime_demos_catalog"
+_UC_SCHEMA = "rtm_lakets_zb"
+
 
 def _build_app(state: AppState) -> FastAPI:
     from routes.streaming_latency import router
@@ -44,6 +47,7 @@ def _dbsql_result(data: list[dict[str, Any]]) -> dict[str, Any]:
 @pytest.mark.asyncio
 class TestStreamingLatency:
     async def test_happy_path_returns_latest_kpis_and_series(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -68,16 +72,18 @@ class TestStreamingLatency:
         exec_mock = AsyncMock(return_value=_dbsql_result(rows))
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
                 )
 
+        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_metrics"
         assert resp.status_code == 200
         body = resp.json()
         assert body["has_data"] is True
-        assert body["table"] == "iot_pharmaceutical.metrics.streaming_metrics_realtime"
+        assert body["table"] == expected_table
         assert body["mode"] == "realtime"
         assert body["last_batch_id"] == 42
         assert body["e2e_p50"] == 120.0
@@ -92,13 +98,16 @@ class TestStreamingLatency:
         assert len(body["series"]) == 2
         assert body["series"][0]["batch_id"] == 41
         assert body["series"][1]["batch_id"] == 42
-        # SQL targets the per-mode metrics table.
+        # SQL targets the shared one-schema metrics table with a mode filter.
         sql = exec_mock.await_args_list[0].args[0]
-        assert "iot_pharmaceutical.metrics.streaming_metrics_realtime" in sql
+        assert expected_table in sql
+        assert "mode" in sql
+        assert "realtime" in sql
 
     async def test_latest_null_falls_through_to_prior_non_null(self) -> None:
         # The newest batch has a null e2e_p50 (idle trigger) — the KPI should
         # surface the most recent NON-null value from an earlier row.
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -113,7 +122,8 @@ class TestStreamingLatency:
         exec_mock = AsyncMock(return_value=_dbsql_result(rows))
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?industry=energy&mode=microbatch"
@@ -126,13 +136,15 @@ class TestStreamingLatency:
         assert body["input_rps"] == 250.0
 
     async def test_no_rows_returns_nulled_payload(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(return_value=_dbsql_result([]))
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
@@ -146,18 +158,20 @@ class TestStreamingLatency:
         assert "reason" in body
 
     async def test_missing_table_returns_nulled_payload_not_500(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(
             side_effect=Exception(
                 "[TABLE_OR_VIEW_NOT_FOUND] The table or view "
-                "`iot_pharmaceutical`.`metrics`.`streaming_metrics_realtime` cannot be found"
+                f"`{_UC_CATALOG}`.`{_UC_SCHEMA}`.`pharmaceutical_metrics` cannot be found"
             )
         )
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
@@ -170,13 +184,15 @@ class TestStreamingLatency:
         assert "not provisioned" in body["reason"].lower()
 
     async def test_other_query_error_degrades_gracefully_not_500(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(side_effect=Exception("connection reset by peer"))
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?industry=pharmaceutical&mode=microbatch"
@@ -188,30 +204,35 @@ class TestStreamingLatency:
         assert "failed" in body["reason"].lower()
 
     async def test_invalid_mode_returns_400(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/api/latency/streaming?industry=pharmaceutical&mode=zerobus"
-            )
+        with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/latency/streaming?industry=pharmaceutical&mode=zerobus"
+                )
         assert resp.status_code == 400
 
     async def test_invalid_industry_returns_400(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/latency/streaming?industry=%21%21%21&mode=realtime")
+        with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/latency/streaming?industry=%21%21%21&mode=realtime")
         assert resp.status_code == 400
 
     async def test_no_warehouse_returns_400(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
-        ):
+        ), patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
@@ -225,6 +246,7 @@ class TestStreamingLatency:
 @pytest.mark.asyncio
 class TestZerobusLatency:
     async def test_happy_path_derives_freshness_throughput_errors(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -245,13 +267,15 @@ class TestZerobusLatency:
         exec_mock = AsyncMock(side_effect=[summary, errors])
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/latency/zerobus?industry=pharmaceutical&minutes=60")
 
+        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_zerobus"
         assert resp.status_code == 200
         body = resp.json()
-        assert body["table_name"] == "iot_pharmaceutical.zerobus.iot_sensor_data"
+        assert body["table_name"] == expected_table
         assert body["has_data"] is True
         assert body["last_commit_time"] == "2026-07-06T10:05:00.000+00:00"
         assert body["seconds_since_commit"] == 12.0
@@ -262,16 +286,18 @@ class TestZerobusLatency:
         assert body["recent_error_count"] == 2
         assert body["recent_errors"] == ["transient ack timeout", "retry succeeded"]
         # The fully-qualified target is in the SQL filter.
-        assert "iot_pharmaceutical.zerobus.iot_sensor_data" in exec_mock.await_args_list[0].args[0]
+        assert expected_table in exec_mock.await_args_list[0].args[0]
 
     async def test_no_rows_returns_zeroed_payload(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(side_effect=[_dbsql_result([]), _dbsql_result([])])
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/latency/zerobus?industry=energy")
 
@@ -284,6 +310,7 @@ class TestZerobusLatency:
         assert "reason" in body
 
     async def test_system_tables_inaccessible_degrades_not_500(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -294,7 +321,8 @@ class TestZerobusLatency:
         )
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/latency/zerobus?industry=pharmaceutical")
 
@@ -308,6 +336,7 @@ class TestZerobusLatency:
     async def test_null_commit_but_records_still_has_data(self) -> None:
         # A window with committed records but a null MAX(commit_time) edge case
         # still counts as data present.
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -323,7 +352,8 @@ class TestZerobusLatency:
         exec_mock = AsyncMock(side_effect=[summary, _dbsql_result([])])
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock):
+        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
+           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/latency/zerobus?industry=energy&minutes=30")
 
@@ -335,20 +365,23 @@ class TestZerobusLatency:
         assert body["records_per_min"] == pytest.approx(1.0, abs=0.01)
 
     async def test_invalid_industry_returns_400(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/latency/zerobus?industry=%21%21%21")
+        with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/latency/zerobus?industry=%21%21%21")
         assert resp.status_code == 400
 
     async def test_no_warehouse_returns_400(self) -> None:
+        import os
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         with patch(
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
-        ):
+        ), patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/latency/zerobus?industry=pharmaceutical")
         assert resp.status_code == 400

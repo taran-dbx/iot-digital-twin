@@ -12,9 +12,14 @@ import pytest
 
 from services import pipeline_freshness as pf
 
+_UC_CATALOG = "classic_stable_realtime_demos_catalog"
+_UC_SCHEMA = "rtm_lakets_zb"
+
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
+def _clear_cache(monkeypatch):
+    monkeypatch.setenv("UC_CATALOG", _UC_CATALOG)
+    monkeypatch.setenv("UC_SCHEMA", _UC_SCHEMA)
     pf.clear_cache()
     yield
     pf.clear_cache()
@@ -65,11 +70,12 @@ class TestDbsqlFlowing:
             return {"data": [{"1": 1}]}
 
         assert await pf._dbsql_flowing(run_sql, "pharma", "microbatch", 10) is True
-        assert "iot_pharma.microbatch.sensor_data" in seen["sql"]
+        # One-schema prefixed FQN (Task 5).
+        assert f"{_UC_CATALOG}.{_UC_SCHEMA}.pharma_microbatch" in seen["sql"]
         assert "INTERVAL 10 MINUTES" in seen["sql"]
 
     @pytest.mark.asyncio
-    async def test_zerobus_targets_iot_sensor_data(self):
+    async def test_zerobus_targets_prefixed_table(self):
         seen: dict = {}
 
         async def run_sql(sql: str) -> dict:
@@ -77,7 +83,8 @@ class TestDbsqlFlowing:
             return {"data": []}
 
         assert await pf._dbsql_flowing(run_sql, "pharma", "zerobus", 10) is False
-        assert "iot_pharma.zerobus.iot_sensor_data" in seen["sql"]
+        # One-schema prefixed FQN (Task 5).
+        assert f"{_UC_CATALOG}.{_UC_SCHEMA}.pharma_zerobus" in seen["sql"]
 
     @pytest.mark.asyncio
     async def test_error_is_not_flowing(self):

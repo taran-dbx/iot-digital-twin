@@ -783,6 +783,10 @@ class TestSssAggregates:
 # DBSQL time-series — mode-aware per-mode table selection (the raw.sensor_data
 # bug fix: realtime/microbatch/zerobus each land in their own schema/table).
 # ---------------------------------------------------------------------------
+_UC_CATALOG = "classic_stable_realtime_demos_catalog"
+_UC_SCHEMA = "rtm_lakets_zb"
+
+
 def _patch_dbsql_timeseries_deps(
     catalog: str | None = "iot_pharmaceutical",
     warehouse_id: str | None = "wh-1",
@@ -791,6 +795,7 @@ def _patch_dbsql_timeseries_deps(
     is_admin: bool = False,
 ):
     """Build the standard patch set for /api/pipeline/{id}/dbsql-timeseries tests."""
+    import os
     exec_mock = (
         AsyncMock(side_effect=exec_side_effect)
         if exec_side_effect is not None
@@ -801,76 +806,81 @@ def _patch_dbsql_timeseries_deps(
         patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value=warehouse_id)),
         patch("routes.sensor_data.execute_dbsql", exec_mock),
         patch("services.app_permissions.is_admin", return_value=is_admin),
+        patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
     ], exec_mock
 
 
 @pytest.mark.asyncio
 class TestDbsqlTimeseries:
-    async def test_realtime_mode_queries_cdf_synced_table(self) -> None:
+    async def test_realtime_mode_queries_one_schema_prefixed_table(self) -> None:
+        """After Task 5 the realtime cold-tier table is {industry}_realtime in the
+        shared one-schema catalog, NOT iot_<industry>.realtime.lb__shadow_…."""
         db = _mock_db()
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=realtime"
+                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=realtime&industry=pharmaceutical"
                 )
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "realtime"
-        assert body["table"] == "iot_pharmaceutical.realtime.lb__shadow_sensor_readings_history"
+        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_realtime"
+        assert body["table"] == expected_table
         sql = exec_mock.await_args_list[0].args[0]
-        assert "iot_pharmaceutical.realtime.lb__shadow_sensor_readings_history" in sql
-        # The persisted timestamp column is `event_time` (SSOT schema), not `timestamp`.
+        assert expected_table in sql
         assert "event_time" in sql
-        assert "raw.sensor_data" not in sql
 
-    async def test_microbatch_mode_queries_microbatch_sensor_data(self) -> None:
+    async def test_microbatch_mode_queries_one_schema_prefixed_table(self) -> None:
         db = _mock_db()
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=microbatch"
+                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=microbatch&industry=pharmaceutical"
                 )
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "microbatch"
-        assert body["table"] == "iot_pharmaceutical.microbatch.sensor_data"
+        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_microbatch"
+        assert body["table"] == expected_table
         sql = exec_mock.await_args_list[0].args[0]
-        assert "iot_pharmaceutical.microbatch.sensor_data" in sql
+        assert expected_table in sql
 
-    async def test_zerobus_mode_queries_zerobus_iot_sensor_data(self) -> None:
+    async def test_zerobus_mode_queries_one_schema_prefixed_table(self) -> None:
         db = _mock_db()
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=zerobus"
+                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=zerobus&industry=pharmaceutical"
                 )
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "zerobus"
-        assert body["table"] == "iot_pharmaceutical.zerobus.iot_sensor_data"
+        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_zerobus"
+        assert body["table"] == expected_table
         sql = exec_mock.await_args_list[0].args[0]
-        assert "iot_pharmaceutical.zerobus.iot_sensor_data" in sql
+        assert expected_table in sql
 
     async def test_mode_inferred_from_pipeline_when_not_supplied(self) -> None:
         # No `mode` query param — falls back to `_infer_mode` on the pipeline row.
+        # Without an `industry` param, uses the legacy catalog path.
         db = _mock_db()
         db.fetchrow = AsyncMock(return_value={"source_type": "zerobus", "source_config": {}})
         state = _state_with_db(db)
@@ -878,13 +888,14 @@ class TestDbsqlTimeseries:
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipeline/pipe-1/dbsql-timeseries?minutes=60")
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "zerobus"
+        # Legacy path (no industry param): iot_pharmaceutical.zerobus.iot_sensor_data
         assert body["table"] == "iot_pharmaceutical.zerobus.iot_sensor_data"
 
     async def test_mode_defaults_to_microbatch_when_inference_fails(self) -> None:
@@ -896,7 +907,7 @@ class TestDbsqlTimeseries:
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipeline/pipe-1/dbsql-timeseries?minutes=60")
 
@@ -913,13 +924,13 @@ class TestDbsqlTimeseries:
         patches, exec_mock = _patch_dbsql_timeseries_deps(
             exec_side_effect=Exception(
                 "[TABLE_OR_VIEW_NOT_FOUND] The table or view "
-                "`iot_pharmaceutical`.`zerobus`.`iot_sensor_data` cannot be found"
+                f"`{_UC_CATALOG}`.`{_UC_SCHEMA}`.`pharmaceutical_zerobus` cannot be found"
             )
         )
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=zerobus"
+                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=zerobus&industry=pharmaceutical"
                 )
 
         assert resp.status_code == 200
@@ -937,22 +948,23 @@ class TestDbsqlTimeseries:
         patches, exec_mock = _patch_dbsql_timeseries_deps(
             exec_side_effect=Exception("connection reset by peer")
         )
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=microbatch"
+                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=microbatch&industry=pharmaceutical"
                 )
 
         assert resp.status_code == 500
 
     async def test_pipeline_unknown_returns_404(self) -> None:
+        # Without industry, the legacy catalog lookup returning None → 404.
         db = _mock_db()
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps(catalog=None)
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=realtime"
@@ -967,25 +979,24 @@ class TestDbsqlTimeseries:
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps(warehouse_id="")
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=realtime"
+                    "/api/pipeline/pipe-1/dbsql-timeseries?minutes=60&mode=realtime&industry=pharmaceutical"
                 )
 
         assert resp.status_code == 400
 
-    async def test_industry_param_resolves_catalog_directly(self) -> None:
-        # Industry-first pipelines have no legacy `pipelines` row/catalog, so the
-        # `industry` param resolves iot_<industry> directly — even when the
-        # legacy per-pipeline catalog lookup returns nothing.
+    async def test_industry_param_resolves_one_schema_table_directly(self) -> None:
+        """Industry-first pipelines: ``industry`` param drives the one-schema FQN,
+        no legacy ``pipelines`` row needed (legacy catalog lookup skipped)."""
         db = _mock_db()
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
         patches, exec_mock = _patch_dbsql_timeseries_deps(catalog=None)
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/pipeline/none/dbsql-timeseries?minutes=60&mode=microbatch&industry=energy"
@@ -993,6 +1004,7 @@ class TestDbsqlTimeseries:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert body["table"] == "iot_energy.microbatch.sensor_data"
+        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.energy_microbatch"
+        assert body["table"] == expected_table
         sql = exec_mock.await_args_list[0].args[0]
-        assert "iot_energy.microbatch.sensor_data" in sql
+        assert expected_table in sql

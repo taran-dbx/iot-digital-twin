@@ -19,6 +19,48 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+# ---------------------------------------------------------------------------
+# Pre-mock databricks.sdk to prevent architecture-mismatch ImportError.
+#
+# On this machine the cryptography/cffi packages in the SYSTEM site-packages
+# are arm64 binaries, but the Python interpreter runs as x86_64 (Rosetta).
+# Any import that transitively reaches `databricks.sdk` (e.g. `routes.pipelines`
+# via `routes/__init__.py`) triggers the broken chain:
+#   databricks.sdk → google.auth.impersonated_credentials → cryptography → ❌
+#
+# Mocking the SDK at sys.modules level before any route imports happen lets
+# the unit tests (which mock every SDK call anyway) run cleanly. The
+# integration fixture `app_backend_conn` wraps its SDK import in try/except
+# and calls `pytest.skip(...)` on failure, so the mock is transparent there.
+# ---------------------------------------------------------------------------
+def _pre_mock_sdk() -> None:
+    """Inject lightweight mocks for modules that fail to import on this host."""
+    _stub = MagicMock()
+    for _name in (
+        "_cffi_backend",
+        "cffi",
+        "cryptography",
+        "cryptography.exceptions",
+        "cryptography.hazmat",
+        "cryptography.hazmat.bindings",
+        "cryptography.hazmat.bindings._rust",
+        "google.auth.crypt.es",
+        "google.auth.crypt",
+        "google.auth.iam",
+        "google.auth.impersonated_credentials",
+        "google.auth",
+        "google",
+        "databricks.sdk.credentials_provider",
+        "databricks.sdk.config",
+        "databricks.sdk.core",
+        "databricks.sdk",
+        "databricks",
+    ):
+        sys.modules.setdefault(_name, _stub)
+
+
+_pre_mock_sdk()
+
 from core.state import AppState
 
 

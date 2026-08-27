@@ -3,19 +3,19 @@
 Two industry-scoped endpoints feed the dashboard's latency/throughput tiles:
 
   * ``GET /api/latency/streaming?industry=&mode=realtime|microbatch`` reads the
-    latest row of the per-mode streaming-metrics Delta table
-    (``iot_<industry>.metrics.streaming_metrics_<mode>`` — see
-    ``models.metrics_schema``) via DBSQL and surfaces the e2e / processing /
-    queuing p50+p99 percentiles, input/processed rows-per-sec, trigger interval
-    and the latest batch id/timestamp, plus a short ascending series for a
-    sparkline.
-  * ``GET /api/latency/zerobus?industry=`` derives ingest KPIs for the pharma
-    zerobus target (``iot_<industry>.zerobus.iot_sensor_data``) from the system
-    table ``system.lakeflow.zerobus_ingest``: commit freshness (seconds since
-    the last commit), throughput (records/min + totals), committed bytes and
-    any recent ingest error messages. Zerobus is not a Spark stream, so there
-    are no p50/p99 percentiles — freshness + throughput + error count are the
-    "latency/health" signals.
+    latest rows of the **shared** ``{industry}_metrics`` managed Delta table
+    (``{UC_CATALOG}.{UC_SCHEMA}.{industry}_metrics`` — see
+    ``services.industry_catalog_service.industry_table``) filtered by
+    ``mode``, surfacing the e2e / processing / queuing p50+p99 percentiles,
+    input/processed rows-per-sec, trigger interval, latest batch id/timestamp,
+    and a short ascending series for a sparkline.  Both tiles (latency KPIs)
+    and charts (``/api/pipeline/{id}/streaming-metrics``) now read this same
+    table.
+  * ``GET /api/latency/zerobus?industry=`` derives ingest KPIs for the zerobus
+    target (``{UC_CATALOG}.{UC_SCHEMA}.{industry}_zerobus``) from the system
+    table ``system.lakeflow.zerobus_ingest``: commit freshness, throughput,
+    committed bytes and any recent ingest error messages.  Zerobus is not a
+    Spark stream, so there are no p50/p99 percentiles.
 
 Both endpoints are defensive: a catalog/schema/table that hasn't been
 provisioned yet, a window with no rows, or an inaccessible system table
@@ -35,7 +35,7 @@ from fastapi.responses import JSONResponse
 
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
-from models import metrics_schema
+from models import metrics_schema  # noqa: F401 — kept for backward compat; new code uses _icat
 from services import industry_catalog_service as _icat
 from services.dbsql_service import (
     execute_dbsql,
@@ -45,11 +45,6 @@ from services.dbsql_service import (
 
 logger = logging.getLogger("iot_digital_twin.routes.streaming_latency")
 router = APIRouter()
-
-# Zerobus target table (schema.table) relative to the industry catalog — mirrors
-# the layout in ``services/industry_catalog_service.py`` and the selection in
-# ``routes/sensor_data.py::_DBSQL_MODE_TABLES``.
-_ZEROBUS_TABLE = "zerobus.iot_sensor_data"
 
 
 def _is_missing_table_error(exc: Exception) -> bool:
@@ -131,13 +126,16 @@ async def get_streaming_latency(
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
-    """Latest latency + throughput KPIs from ``streaming_metrics_<mode>``.
+    """Latest latency + throughput KPIs from the shared ``{industry}_metrics`` table.
 
-    Reads the latest rows of the per-mode metrics Delta table, surfacing the
-    latest non-null e2e/processing/queuing p50+p99, input/processed rps, trigger
-    interval, num_input_rows and the latest batch id/timestamp, plus a short
-    ascending series for a sparkline. Missing table / no rows → 200 with a
-    nulled payload (never 500).
+    Reads the latest rows of the managed per-industry metrics Delta table
+    (``{UC_CATALOG}.{UC_SCHEMA}.{industry}_metrics``) filtered by ``mode``,
+    surfacing the latest non-null e2e/processing/queuing p50+p99, input/processed
+    rps, trigger interval, num_input_rows and the latest batch id/timestamp, plus
+    a short ascending series for a sparkline.  Both this tile path AND the charts
+    path (``/api/pipeline/{id}/streaming-metrics``) read the same table.
+
+    Missing table / no rows → 200 with a nulled payload (never 500).
     """
     normalized_mode = (mode or "").strip().lower()
     if normalized_mode not in metrics_schema.ALL_METRIC_MODES:
@@ -149,13 +147,11 @@ async def get_streaming_latency(
         )
 
     try:
-        catalog = _icat.catalog_name(industry)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Invalid industry"})
-    if not validate_catalog(catalog):
+        table = _icat.industry_table(industry, "metrics")
+    except (ValueError, RuntimeError) as exc:
+        return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
+    if not validate_catalog(table.split(".")[0]):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
-
-    table = metrics_schema.metrics_table_fqn(catalog, normalized_mode)
 
     warehouse_id = await resolve_warehouse_id(state.db, state.db_available, user_email)
     if not warehouse_id:
@@ -166,7 +162,8 @@ async def get_streaming_latency(
                trigger_ms, e2e_p50, e2e_p99, processing_p50, processing_p99,
                queuing_p50, queuing_p99
         FROM {table}
-        WHERE timestamp >= TIMESTAMPADD(MINUTE, -{int(minutes)}, CURRENT_TIMESTAMP())
+        WHERE mode = '{normalized_mode}'
+          AND timestamp >= TIMESTAMPADD(MINUTE, -{int(minutes)}, CURRENT_TIMESTAMP())
         ORDER BY timestamp DESC, batch_id DESC
         LIMIT 60
     """
@@ -261,22 +258,21 @@ async def get_zerobus_latency(
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
-    """Zerobus ingest latency/health KPIs for ``iot_<industry>.zerobus.iot_sensor_data``.
+    """Zerobus ingest latency/health KPIs for ``{industry}_zerobus``.
 
-    Derives commit freshness (``seconds_since_commit`` from ``MAX(commit_time)``),
-    throughput (``committed_records_total`` / ``records_per_min`` /
-    ``committed_bytes_total``), a recent error count and up to 3 recent error
-    messages from ``system.lakeflow.zerobus_ingest``. Inaccessible system table
-    or an empty window → 200 with a zeroed payload (never 500).
+    Resolves the target table as ``{UC_CATALOG}.{UC_SCHEMA}.{industry}_zerobus``
+    via ``industry_table(industry, "zerobus")``.  Derives commit freshness,
+    throughput (committed_records_total / records_per_min / committed_bytes_total),
+    a recent error count and up to 3 recent error messages from
+    ``system.lakeflow.zerobus_ingest``.  Inaccessible system table or an empty
+    window → 200 with a zeroed payload (never 500).
     """
     try:
-        catalog = _icat.catalog_name(industry)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Invalid industry"})
-    if not validate_catalog(catalog):
+        target_table = _icat.industry_table(industry, "zerobus")
+    except (ValueError, RuntimeError) as exc:
+        return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
+    if not validate_catalog(target_table.split(".")[0]):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
-
-    target_table = f"{catalog}.{_ZEROBUS_TABLE}"
 
     warehouse_id = await resolve_warehouse_id(state.db, state.db_available, user_email)
     if not warehouse_id:
