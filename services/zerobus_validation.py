@@ -222,31 +222,50 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 # Driver-side (app-process) auth / reachability probe — no cluster needed.
 # ---------------------------------------------------------------------------
-def _resolve_zerobus_secret(
-    client_secret: str | None, secret_scope: str | None, secret_key: str | None
-) -> tuple[str | None, str | None]:
-    """Resolve the Zerobus client secret: explicit arg > env > UC secret scope.
+def _resolve_zerobus_creds(
+    client_id: str | None,
+    client_secret: str | None,
+    secret_scope: str | None,
+    secret_key: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve Zerobus client-id and client-secret, returning ``(id, secret, error)``.
 
-    Mirrors the exact resolution order ``services/simulator_service.py``
-    already uses for the deployed producer path, so this probe reflects
-    reality rather than inventing a new lookup order.  Returns
-    ``(secret, error)``.
+    Resolution order (applied independently to each credential):
+
+    1. Explicit argument if passed.
+    2. ``DATABRICKS_CLIENT_ID`` / ``DATABRICKS_CLIENT_SECRET`` — the app SP's
+       own OAuth creds injected by Databricks Apps (the primary path in the
+       single-SP model).
+    3. ``ZEROBUS_CLIENT_ID`` / ``ZEROBUS_CLIENT_SECRET`` env — backward-compat
+       for deployments that set these legacy vars explicitly.
+    4. UC secret scope / key (client_secret only) — backward-compat for
+       deployments that store the secret in a UC secret scope.
+
+    In the deployed app ``DATABRICKS_CLIENT_ID``/``DATABRICKS_CLIENT_SECRET``
+    are always present, so steps 3-4 are only exercised in dev/legacy contexts.
+    Returns ``(resolved_id, resolved_secret, error)``; ``error`` is non-None
+    only when a UC secret lookup was attempted and failed.
     """
-    if client_secret:
-        return client_secret, None
-    env_secret = os.getenv("ZEROBUS_CLIENT_SECRET")
-    if env_secret:
-        return env_secret, None
-    if secret_scope and secret_key:
+    resolved_id = (
+        client_id
+        or os.getenv("DATABRICKS_CLIENT_ID")
+        or os.getenv("ZEROBUS_CLIENT_ID")
+    )
+    resolved_secret = (
+        client_secret
+        or os.getenv("DATABRICKS_CLIENT_SECRET")
+        or os.getenv("ZEROBUS_CLIENT_SECRET")
+    )
+    if not resolved_secret and secret_scope and secret_key:
         try:
             from databricks.sdk import WorkspaceClient
 
             w = WorkspaceClient()
             resp = w.secrets.get_secret(scope=secret_scope, key=secret_key)
-            return base64.b64decode(resp.value).decode(), None
+            resolved_secret = base64.b64decode(resp.value).decode()
         except Exception as exc:  # pragma: no cover — depends on live workspace
-            return None, str(exc)[:200]
-    return None, None
+            return resolved_id, None, str(exc)[:200]
+    return resolved_id, resolved_secret, None
 
 
 def auth_probe(
@@ -266,7 +285,9 @@ def auth_probe(
     :func:`zerobus_produce_snippet`):
 
     1. DNS + TCP(:443) reachability of ``server_endpoint`` (the gRPC host).
-    2. If a client_id/client_secret is resolvable (explicit args > env
+    2. If a client_id/client_secret is resolvable via
+       :func:`_resolve_zerobus_creds` (explicit args >
+       ``DATABRICKS_CLIENT_ID``/``DATABRICKS_CLIENT_SECRET`` >
        ``ZEROBUS_CLIENT_ID``/``ZEROBUS_CLIENT_SECRET`` > UC secret
        ``secret_scope``/``secret_key``), perform the **same** downscoped OAuth
        token exchange the Zerobus SDK's ``get_zerobus_token()`` does — POST
@@ -306,14 +327,18 @@ def auth_probe(
         detail["tcp_error"] = str(exc)
         return False, detail
 
-    resolved_id = client_id or os.getenv("ZEROBUS_CLIENT_ID")
-    resolved_secret, secret_error = _resolve_zerobus_secret(client_secret, secret_scope, secret_key)
+    resolved_id, resolved_secret, secret_error = _resolve_zerobus_creds(
+        client_id, client_secret, secret_scope, secret_key
+    )
     if secret_error:
         detail["secret_error"] = secret_error
 
     if not resolved_id or not resolved_secret:
         detail["token_ok"] = None
-        detail["token_skipped"] = "no client_id/client_secret resolvable"
+        detail["token_skipped"] = (
+            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or "
+            "ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+        )
         return True, detail  # reachability alone passes when creds are absent
 
     parts = table_fqn.split(".")
@@ -389,8 +414,10 @@ def produce(
 ) -> tuple[bool, dict[str, Any]]:
     """Driver-side (in-process) Zerobus ingest producer — no cluster needed.
 
-    Authenticates exactly as :func:`auth_probe` does (explicit args >
-    env ``ZEROBUS_CLIENT_ID``/``ZEROBUS_CLIENT_SECRET`` > UC secret
+    Authenticates exactly as :func:`auth_probe` does via
+    :func:`_resolve_zerobus_creds` (explicit args >
+    ``DATABRICKS_CLIENT_ID``/``DATABRICKS_CLIENT_SECRET`` >
+    ``ZEROBUS_CLIENT_ID``/``ZEROBUS_CLIENT_SECRET`` > UC secret
     ``secret_scope``/``secret_key``), then ingests ``num_records`` SSOT sensor
     rows into ``table_fqn`` via the Zerobus SDK's sync client.
 
@@ -416,13 +443,18 @@ def produce(
         detail["error"] = f"zerobus SDK not importable: {exc}"
         return False, detail
 
-    # Resolve credentials — same order and helper as auth_probe uses.
-    resolved_id = client_id or os.getenv("ZEROBUS_CLIENT_ID")
-    resolved_secret, secret_error = _resolve_zerobus_secret(client_secret, secret_scope, secret_key)
+    # Resolve credentials — same resolver as auth_probe uses, ensuring both
+    # probe and producer authenticate with identical creds.
+    resolved_id, resolved_secret, secret_error = _resolve_zerobus_creds(
+        client_id, client_secret, secret_scope, secret_key
+    )
     if secret_error:
         detail["secret_error"] = secret_error
     if not resolved_id or not resolved_secret:
-        detail["error"] = "no ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+        detail["error"] = (
+            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or "
+            "ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+        )
         return False, detail
 
     # Ensure scheme — a bare host fails the OAuth token exchange (module

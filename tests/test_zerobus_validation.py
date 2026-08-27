@@ -127,6 +127,78 @@ def test_snippet_uses_secret_scope_and_keys(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _resolve_zerobus_creds — unified credential resolver
+# ---------------------------------------------------------------------------
+def test_resolve_creds_uses_databricks_env_when_only_app_sp_set(monkeypatch):
+    """With only DATABRICKS_CLIENT_ID/CLIENT_SECRET in env (the single-SP
+    Databricks Apps deployment model), the resolver must return those values —
+    not an error — so both auth_probe and produce succeed."""
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-client-id")
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "app-sp-client-secret")
+    # No ZEROBUS_* vars, no UC scope.
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
+        None, None, None, None
+    )
+    assert resolved_id == "app-sp-client-id"
+    assert resolved_secret == "app-sp-client-secret"
+    assert error is None
+
+
+def test_resolve_creds_explicit_arg_beats_databricks_env(monkeypatch):
+    """Explicit client_id/client_secret arguments take priority over all env vars."""
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-client-id")
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "app-sp-client-secret")
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
+        "explicit-id", "explicit-secret", None, None
+    )
+    assert resolved_id == "explicit-id"
+    assert resolved_secret == "explicit-secret"
+    assert error is None
+
+
+def test_resolve_creds_databricks_env_beats_zerobus_env(monkeypatch):
+    """DATABRICKS_* env takes precedence over the legacy ZEROBUS_* env vars."""
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "db-id")
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "db-secret")
+    monkeypatch.setenv("ZEROBUS_CLIENT_ID", "zb-id")
+    monkeypatch.setenv("ZEROBUS_CLIENT_SECRET", "zb-secret")
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
+        None, None, None, None
+    )
+    assert resolved_id == "db-id"
+    assert resolved_secret == "db-secret"
+    assert error is None
+
+
+def test_resolve_creds_falls_back_to_zerobus_env_when_no_databricks(monkeypatch):
+    """Legacy ZEROBUS_* env vars still work when DATABRICKS_* are absent."""
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("DATABRICKS_CLIENT_SECRET", raising=False)
+    monkeypatch.setenv("ZEROBUS_CLIENT_ID", "zb-id")
+    monkeypatch.setenv("ZEROBUS_CLIENT_SECRET", "zb-secret")
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
+        None, None, None, None
+    )
+    assert resolved_id == "zb-id"
+    assert resolved_secret == "zb-secret"
+    assert error is None
+
+
+def test_resolve_creds_returns_none_when_no_creds_set(monkeypatch):
+    """When no env vars or explicit args are set, resolver returns (None, None, None)."""
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("DATABRICKS_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ZEROBUS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("ZEROBUS_CLIENT_SECRET", raising=False)
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
+        None, None, None, None
+    )
+    assert resolved_id is None
+    assert resolved_secret is None
+    assert error is None
+
+
+# ---------------------------------------------------------------------------
 # auth_probe — driver-side reachability/credential probe (mocked network)
 # ---------------------------------------------------------------------------
 def test_auth_probe_empty_endpoint_fails_fast():
@@ -169,6 +241,8 @@ def test_auth_probe_reachable_no_credentials_skips_token_check():
     assert detail["tcp"] is True
     assert detail["token_ok"] is None
     assert "token_skipped" in detail
+    # Error message must mention the DATABRICKS_* vars (now the primary path).
+    assert "DATABRICKS_CLIENT_ID" in detail["token_skipped"]
 
 
 def test_auth_probe_token_exchange_success():
