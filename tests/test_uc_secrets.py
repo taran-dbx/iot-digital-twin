@@ -55,6 +55,20 @@ class TestPutSecret:
         assert "cat.sch.app_sp_oauth" in update_call.args[1]
         assert res["status"] in ("updated", "created", "ok")
 
+    @pytest.mark.asyncio
+    async def test_update_path_failure_is_not_fatal(self) -> None:
+        # Both the create POST (already-exists) and the update PATCH raise; the
+        # helper must return status="failed" rather than propagating, so a
+        # teardown->re-provision re-run never hard-fails provisioning.
+        ws = MagicMock()
+        ws.api_client.do = MagicMock(side_effect=[
+            Exception("secret already exists"),
+            Exception("PERMISSION_DENIED: cannot update secret"),
+        ])
+        res = await uc_secrets.put_secret("cat", "sch", "app_sp_oauth", "v3", ws=ws)
+        assert res["status"] == "failed"
+        assert "PERMISSION_DENIED" in res["error"]
+
 
 class TestGetSecret:
     @pytest.mark.asyncio

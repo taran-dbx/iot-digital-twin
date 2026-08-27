@@ -55,13 +55,19 @@ def _put_sync(ws: Any, catalog: str, schema: str, name: str, value: str) -> dict
     except Exception as exc:
         if not _is_already_exists(exc):
             return {"resource": f"UC secret '{fqn}'", "status": "failed", "error": str(exc)[:200]}
-        # Already present — update the value in place.
-        ws.api_client.do(
-            "PATCH",
-            f"{_SECRETS_PATH}/{fqn}",
-            query={"update_mask": "value"},
-            body={"secret_info": {"value": value}},
-        )
+        # Already present — update the value in place.  Best-effort: a failing
+        # PATCH (wrong API form, permission denied, network blip) must NOT hard-
+        # fail provisioning on a teardown→re-provision re-run, so mirror the
+        # POST path's contract and surface the error instead of raising.
+        try:
+            ws.api_client.do(
+                "PATCH",
+                f"{_SECRETS_PATH}/{fqn}",
+                query={"update_mask": "value"},
+                body={"secret_info": {"value": value}},
+            )
+        except Exception as update_exc:
+            return {"resource": f"UC secret '{fqn}'", "status": "failed", "error": str(update_exc)[:200]}
         return {"resource": f"UC secret '{fqn}'", "status": "updated"}
 
 
