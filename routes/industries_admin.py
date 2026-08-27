@@ -398,12 +398,18 @@ async def provision_industry_endpoint(
             detail=f"no pipeline setup for industry '{industry}' — create one first",
         )
 
+    # Only provision the realtime Lakebase branch when the setup actually
+    # enables the realtime mode — a zerobus/microbatch-only industry must not
+    # touch the realtime Lakebase project (which may not exist on this workspace).
+    enable_realtime = "realtime" in (setup.get("enabled_modes") or [])
+
     try:
         summary = await industry_provisioning_service.provision_industry(
             industry,
             setup["id"],
             db=db,
             warehouse_id=setup.get("warehouse_id"),
+            enable_realtime=enable_realtime,
         )
     except RuntimeError as exc:  # failed pre-flight is a clean 409 for the admin
         raise HTTPException(status_code=409, detail=str(exc)) from exc

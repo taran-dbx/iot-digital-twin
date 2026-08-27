@@ -117,49 +117,63 @@ async def provision_industry(
     _section("uc_secret", secret_result)
 
     # 5. Real-time Lakebase branch + LakeTS setup on the branch.
+    # The whole realtime Lakebase block is best-effort: a zerobus/micro-batch-only
+    # industry never enters it (``enable_realtime=False``), and even when enabled a
+    # missing realtime Lakebase project (e.g. ``PIPELINES_LAKEBASE_PROJECT`` blank on
+    # this workspace) must NOT hard-fail provisioning — it is recorded as a failed
+    # section like every other phase.
     if enable_realtime:
-        branch_result = await pps.provision_industry_branch(
-            industry, ws=ws, db=db, setup_id=setup_id,
-        )
-        _section("lakebase_branch", branch_result)
-        branch = branch_result["branch"]
-        summary["branch"] = branch
-
-        # 5b. Register the SINGLE app SP as an OAuth Postgres role on THIS
-        #     industry branch so the realtime consumer's LakebaseWriter can
-        #     authenticate + write as that SP (one role, not a separate SP).
         try:
-            sp_role_result = await provisioning_service.provision_lakebase_role(
-                sp_client_id=principal,
-                project_id=branch_result["project"],
-                branch_id=branch,
-                ws=ws,
+            branch_result = await pps.provision_industry_branch(
+                industry, ws=ws, db=db, setup_id=setup_id,
             )
-            _section("lakebase_sp_role", sp_role_result)
-        except Exception as exc:  # pragma: no cover - best-effort
+            _section("lakebase_branch", branch_result)
+            branch = (branch_result or {}).get("branch")
+            if not branch:
+                raise RuntimeError(f"realtime branch provisioning returned no branch: {branch_result!r}")
+            summary["branch"] = branch
+
+            # 5b. Register the SINGLE app SP as an OAuth Postgres role on THIS
+            #     industry branch so the realtime consumer's LakebaseWriter can
+            #     authenticate + write as that SP (one role, not a separate SP).
+            try:
+                sp_role_result = await provisioning_service.provision_lakebase_role(
+                    sp_client_id=principal,
+                    project_id=branch_result.get("project"),
+                    branch_id=branch,
+                    ws=ws,
+                )
+                _section("lakebase_sp_role", sp_role_result)
+            except Exception as exc:  # pragma: no cover - best-effort
+                logger.warning(
+                    "App SP Lakebase role registration on branch '%s' failed "
+                    "(non-fatal): %s", branch, exc,
+                )
+                _section("lakebase_sp_role", {"status": "failed", "error": str(exc)[:200]})
+
+            write_mgr = None
+            try:
+                write_mgr = await pps.get_write_conn(branch, ws=ws)
+                lakets_result = await setup.setup_lakets_on_branch(
+                    branch, conn=write_mgr, ws=ws,
+                    project_id=branch_result.get("project"),
+                    deploy_ops_jobs=deploy_ops_jobs,
+                    lakets_sql_path=lakets_sql_path,
+                    db=db, setup_id=setup_id,
+                )
+                _section("lakets_setup", lakets_result)
+            finally:
+                if write_mgr is not None:
+                    try:
+                        await write_mgr.close()
+                    except Exception:  # pragma: no cover - best-effort
+                        pass
+        except Exception as exc:
             logger.warning(
-                "App SP Lakebase role registration on branch '%s' failed "
-                "(non-fatal): %s", branch, exc,
+                "Realtime Lakebase provisioning for industry '%s' failed "
+                "(non-fatal): %s", industry, exc,
             )
-            _section("lakebase_sp_role", {"status": "failed", "error": str(exc)[:200]})
-
-        write_mgr = None
-        try:
-            write_mgr = await pps.get_write_conn(branch, ws=ws)
-            lakets_result = await setup.setup_lakets_on_branch(
-                branch, conn=write_mgr, ws=ws,
-                project_id=branch_result["project"],
-                deploy_ops_jobs=deploy_ops_jobs,
-                lakets_sql_path=lakets_sql_path,
-                db=db, setup_id=setup_id,
-            )
-            _section("lakets_setup", lakets_result)
-        finally:
-            if write_mgr is not None:
-                try:
-                    await write_mgr.close()
-                except Exception:  # pragma: no cover - best-effort
-                    pass
+            _section("lakebase_branch", {"status": "failed", "error": str(exc)[:200]})
 
     # 6. Grants for the SINGLE app SP on the schema (incl. READ SECRET).
     grants_result = await cat.grant_app_sp(

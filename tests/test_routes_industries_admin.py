@@ -249,6 +249,43 @@ class TestProvision:
         assert args[1] == "s1"
         assert kwargs["warehouse_id"] == "wh1"
 
+    async def test_zerobus_only_setup_passes_enable_realtime_false(self) -> None:
+        # A zerobus-only setup must NOT trigger realtime Lakebase branch
+        # provisioning (which may not exist on this workspace) — the route
+        # gates enable_realtime on enabled_modes.
+        setup = {"id": "s1", "industry": "pharmaceutical", "warehouse_id": "wh1",
+                 "enabled_modes": ["zerobus"]}
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+            AsyncMock(return_value=setup),
+        ), patch(
+            f"{MOD}.industry_provisioning_service.provision_industry",
+            AsyncMock(return_value={"sections": []}),
+        ) as prov_mock, patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ):
+            async with _client(_state()) as c:
+                resp = await c.post("/api/admin/industries/pharmaceutical/provision")
+        assert resp.status_code == 200
+        assert prov_mock.call_args.kwargs["enable_realtime"] is False
+
+    async def test_realtime_setup_passes_enable_realtime_true(self) -> None:
+        setup = {"id": "s1", "industry": "pharmaceutical", "warehouse_id": "wh1",
+                 "enabled_modes": ["zerobus", "realtime"]}
+        with _admin(True), patch(
+            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+            AsyncMock(return_value=setup),
+        ), patch(
+            f"{MOD}.industry_provisioning_service.provision_industry",
+            AsyncMock(return_value={"sections": []}),
+        ) as prov_mock, patch(
+            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        ):
+            async with _client(_state()) as c:
+                resp = await c.post("/api/admin/industries/pharmaceutical/provision")
+        assert resp.status_code == 200
+        assert prov_mock.call_args.kwargs["enable_realtime"] is True
+
     async def test_failed_preflight_returns_409(self) -> None:
         setup = {"id": "s1", "industry": "pharmaceutical"}
         with _admin(True), patch(

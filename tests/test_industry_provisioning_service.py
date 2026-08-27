@@ -125,6 +125,27 @@ async def test_orchestrator_raises_on_failed_preflight() -> None:
 
 
 @pytest.mark.asyncio
+async def test_realtime_branch_failure_is_recorded_not_propagated() -> None:
+    # On a workspace with no realtime Lakebase project, provision_industry_branch
+    # raises — provisioning must stay best-effort: record a failed lakebase_branch
+    # section and still reach the grants phase, never a 500.
+    patches, _ = _patch_all()
+    with patches["preflight_checks"], patches["provision_industry_catalog"], \
+         patches["put_secret"], patches["grant_app_sp"], \
+         patch.object(ips.pps, "provision_industry_branch",
+                      new=AsyncMock(side_effect=RuntimeError("Project 'iot-pipelines' not found"))):
+        summary = await ips.provision_industry(
+            "spiketest", "s1", ws=MagicMock(), enable_realtime=True,
+        )
+    sections = {s["phase"]: s["result"] for s in summary["sections"]}
+    assert sections["lakebase_branch"]["status"] == "failed"
+    assert "iot-pipelines" in sections["lakebase_branch"]["error"]
+    # Grants still ran despite the realtime failure.
+    assert "grants" in sections
+    assert "branch" not in summary
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_skips_realtime_when_disabled() -> None:
     patches, _ = _patch_all()
     with patches["preflight_checks"], patches["provision_industry_catalog"], \
