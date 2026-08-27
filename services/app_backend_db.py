@@ -1,19 +1,25 @@
-"""Second, additive Lakebase connection manager for the ``iot-app-backend`` project.
+"""Sole Lakebase connection manager for the ``iot-app-backend`` project.
 
 The app-backend metadata model (``pipeline_setup`` / ``pipeline_deployment`` /
-``provisioned_resource`` — see ``models/app_schema.py``) lives in a *separate*
-Lakebase project (``iot-app-backend``) from the legacy demo/streaming project
-(``iot-lakets-demo``) that the existing ``backend.LakebaseConnectionManager``
-serves via ``PGHOST`` / ``LAKEBASE_ENDPOINT``.
-
-This module is **purely additive**: it constructs a second
-``LakebaseConnectionManager`` bound to the app-backend endpoint and never touches
-``PGHOST``, ``LAKEBASE_ENDPOINT``, ``app.yaml``, or the existing connection.
+``provisioned_resource`` / ``pipelines`` / ``user_settings`` / ``source_bindings``
+— see ``models/app_schema.py`` and ``backend.py``) all live in the single
+``iot-app-backend`` Lakebase project.  ``build_app_backend_manager()`` returns
+the one connection manager used by the entire application: the lifespan assigns it
+to BOTH ``state.db`` and ``state.app_backend_db`` so existing callsites on either
+field keep working without modification.
 
 Credentials always go through the Databricks SDK OAuth path
-(``w.postgres.generate_database_credential`` for the app-backend *endpoint*), so
-a static ``PGUSER``/``PGPASSWORD`` pair injected for the *legacy* project can
-never accidentally pin this pool to the wrong host.
+(``w.postgres.generate_database_credential`` for the ``iot-app-backend`` endpoint),
+so any ``PGUSER``/``PGPASSWORD`` pair injected by the platform cannot accidentally
+override the OAuth flow.
+
+Connection coordinates (host, endpoint, database) are resolved from env vars
+at module import time for fast path re-use across calls to
+``build_app_backend_manager()``, but can be overridden per the table below:
+
+  PGHOST          (or APP_BACKEND_PGHOST)    → pool host
+  LAKEBASE_ENDPOINT (or APP_BACKEND_LAKEBASE_ENDPOINT) → credential endpoint
+  PGDATABASE      (or APP_BACKEND_PGDATABASE) → database name (default: databricks_postgres)
 """
 
 from __future__ import annotations

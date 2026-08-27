@@ -44,9 +44,11 @@ async def shutdown(state: AppState) -> None:
         except asyncio.TimeoutError:
             logger.warning("Lakebase pool close timed out")
 
-    # Close the additive app-backend metadata pool (iot-app-backend project).
+    # Close the app-backend metadata pool — only if it is NOT the same object as
+    # state.db (they are the same manager since Task 2; closing twice would be a
+    # no-op but would produce a spurious log line).
     app_backend_db = getattr(state, "app_backend_db", None)
-    if app_backend_db:
+    if app_backend_db and app_backend_db is not state.db:
         try:
             await asyncio.wait_for(app_backend_db.close(), timeout=2)
         except asyncio.TimeoutError:

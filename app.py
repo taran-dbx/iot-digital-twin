@@ -25,7 +25,6 @@ from routes.industries_admin import router as industries_admin_router
 from routes.validation_admin import router as validation_admin_router
 from routes.static_files import router as static_files_router
 from services.simulator_service import run_simulator
-from services.retention_service import run_retention_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,20 +50,28 @@ async def lifespan(application: FastAPI):
     logger.info("DATABRICKS_CLIENT_ID=%s", os.getenv("DATABRICKS_CLIENT_ID", "(not set)"))
     logger.info("INDUSTRIES=%s", INDUSTRIES)
 
-    # --- Database ---
+    # --- Single Lakebase connection (iot-app-backend, OAuth) ---
+    # One AppBackendConnectionManager serves both state.db and state.app_backend_db
+    # so existing callsites on either field keep working without modification.
     if os.getenv("PGHOST"):
         try:
-            from backend import LakebaseConnectionManager
+            from services.app_backend_db import build_app_backend_manager
+            from models import app_schema
 
-            db = LakebaseConnectionManager()
-            await db.initialize()
-            state.db = db
+            app_db = build_app_backend_manager()
+            await app_db.initialize()
+            state.db = app_db
+            state.app_backend_db = app_db
             state.db_available = True
+            state.app_backend_available = True
             state.db_error = None
-            logger.info("Lakebase connection pool ready")
-            await db.ensure_pipelines_table()
-            await db.ensure_user_settings_table()
-            await db.ensure_source_bindings_table()
+            state.app_backend_error = None
+            logger.info("Lakebase connection pool ready (iot-app-backend)")
+            await app_schema.ensure_app_schema(app_db)
+            await app_db.ensure_pipelines_table()
+            await app_db.ensure_user_settings_table()
+            await app_db.ensure_source_bindings_table()
+            logger.info("App-backend schema ensured")
         except Exception as exc:
             err_msg = f"{type(exc).__name__}: {exc}"
             logger.warning(
@@ -73,73 +80,20 @@ async def lifespan(application: FastAPI):
                 traceback.format_exc(),
             )
             state.db_available = False
+            state.app_backend_available = False
             state.db_error = err_msg
+            state.app_backend_error = err_msg
             state.db = None
+            state.app_backend_db = None
     else:
         logger.info("PGHOST not set — Lakebase features disabled, WebSocket-only mode")
         state.db_available = False
         state.db_error = "PGHOST not set"
-
-    # --- App-backend metadata DB (additive; separate iot-app-backend project) ---
-    # Guarded like the DB block above: any failure is swallowed/logged so it can
-    # never break boot. Does NOT touch PGHOST / LAKEBASE_ENDPOINT / the existing
-    # iot-lakets-demo connection above.
-    try:
-        from services.app_backend_db import build_app_backend_manager
-        from models import app_schema
-
-        app_db = build_app_backend_manager()
-        await app_db.initialize()
-        state.app_backend_db = app_db
-        state.app_backend_available = True
-        state.app_backend_error = None
-        await app_schema.ensure_app_schema(app_db)
-        logger.info("app-backend metadata DB ready — schema ensured")
-    except Exception as exc:
-        err_msg = f"{type(exc).__name__}: {exc}"
-        logger.warning(
-            "app-backend DB init failed (additive; app continues): %s\n%s",
-            exc,
-            traceback.format_exc(),
-        )
-        state.app_backend_db = None
         state.app_backend_available = False
-        state.app_backend_error = err_msg
+        state.app_backend_error = "PGHOST not set"
 
     # --- Simulator background task ---
     state.simulator_task = asyncio.create_task(run_simulator(state))
-
-    # --- Materialized view refresh task ---
-    if state.db_available and state.db:
-        db_ref = state.db
-
-        async def refresh_materialized_views():
-            while True:
-                await asyncio.sleep(30)
-                try:
-                    exists = await db_ref.fetch(
-                        "SELECT matviewname FROM pg_matviews "
-                        "WHERE matviewname IN ('sensor_1m', 'sensor_5m')"
-                    )
-                    view_names = {r["matviewname"] for r in exists}
-                    if "sensor_1m" in view_names:
-                        await db_ref.execute(
-                            "REFRESH MATERIALIZED VIEW CONCURRENTLY sensor_1m"
-                        )
-                    if "sensor_5m" in view_names:
-                        await db_ref.execute(
-                            "REFRESH MATERIALIZED VIEW CONCURRENTLY sensor_5m"
-                        )
-                    if view_names:
-                        logger.debug("Materialized views refreshed: %s", view_names)
-                except Exception as exc:
-                    logger.warning("Materialized view refresh failed: %s", exc)
-
-        state.refresh_task = asyncio.create_task(refresh_materialized_views())
-
-    # --- Retention auto-purge task ---
-    if state.db_available and state.db:
-        state.retention_task = asyncio.create_task(run_retention_loop(state.db))
 
     logger.info("=== IoT Digital Twin started (db=%s) ===", state.db_available)
     yield

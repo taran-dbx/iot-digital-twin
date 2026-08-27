@@ -11,9 +11,9 @@ env:
     value: "rtm_lakets_zb"
 
   # ── Lakebase app-backend project (fevm-classic-stable-realtime-demos,
-  #    eu-central-1).  PGHOST is left blank until Task 2 creates the project. ─
+  #    eu-central-1).  Primary endpoint host for iot-app-backend. ─
   - name: PGHOST
-    value: ""
+    value: "ep-cool-mountain-d7anzhv5.database.eu-central-1.cloud.databricks.com"
   - name: PGDATABASE
     value: "databricks_postgres"
   - name: PGPORT
