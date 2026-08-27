@@ -179,6 +179,11 @@ def _is_not_found(exc: Exception) -> bool:
     return "not_found" in s or "not found" in s or "does not exist" in s
 
 
+def _is_permission_denied(msg: str) -> bool:
+    s = msg.lower()
+    return "permission_denied" in s or "permission denied" in s
+
+
 # --- Warehouse resolution --------------------------------------------------
 def resolve_warehouse_id(ws: Any, warehouse_id: str | None = None) -> str:
     """Return a usable SQL warehouse id (explicit arg wins, else first listed)."""
@@ -441,10 +446,23 @@ async def grant_app_sp(
     schema_fqn = f"{catalog}.{schema}"
     for label, sql in _app_sp_grant_statements(catalog, schema, principal):
         res = await _run_sql(sql, wh)
+        # The catalog-level USE CATALOG grant fails with PERMISSION_DENIED when the
+        # deployer SP does not own the catalog; the deployer applies it out-of-band.
+        # Record it as skipped (not failed) so it never blocks provisioning.
+        if (
+            label == "USE CATALOG"
+            and res.get("status") == "failed"
+            and _is_permission_denied(res.get("error", ""))
+        ):
+            res = {
+                "status": "skipped",
+                "reason": "catalog-level grant is applied out-of-band by the deployer",
+            }
         results.append({
             "resource": f"GRANT {label} → {principal}",
             "status": res["status"],
             **({"error": res["error"]} if res.get("error") else {}),
+            **({"reason": res["reason"]} if res.get("reason") else {}),
         })
         if res["status"] != "failed":
             await _record(

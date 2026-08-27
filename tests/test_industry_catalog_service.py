@@ -187,6 +187,45 @@ class TestGrants:
         assert res["principal"] is None
         assert res["results"][0]["status"] == "skipped"
 
+    @pytest.mark.asyncio
+    async def test_catalog_level_permission_denied_is_skipped_not_failed(self) -> None:
+        """PERMISSION_DENIED on USE CATALOG must be recorded as 'skipped', not 'failed'.
+
+        The app SP is not the catalog owner — the deployer grants USE CATALOG
+        out-of-band.  A PERMISSION_DENIED on the catalog-level grant must never
+        block provisioning; schema-level grants must still run and succeed.
+        """
+        ws = _make_ws()
+
+        call_count = 0
+
+        async def _exec_mock(sql: str, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if "USE CATALOG ON CATALOG" in sql:
+                raise Exception("PERMISSION_DENIED: User does not have MANAGE on Catalog")
+            # All other grants succeed (return None)
+
+        with patch.object(ics, "execute_dbsql", new=_exec_mock):
+            res = await ics.grant_app_sp("pharmaceutical", ws=ws, principal="app-sp-id")
+
+        # Catalog-level grant → skipped (not failed)
+        catalog_result = next(
+            r for r in res["results"] if "USE CATALOG" in r["resource"]
+        )
+        assert catalog_result["status"] == "skipped", (
+            f"Expected 'skipped', got {catalog_result['status']!r}: {catalog_result}"
+        )
+        assert "out-of-band" in catalog_result.get("reason", "")
+
+        # Schema-level grants must still have run and succeeded
+        schema_results = [r for r in res["results"] if "USE CATALOG" not in r["resource"]]
+        assert schema_results, "No schema-level grant results recorded"
+        for r in schema_results:
+            assert r["status"] != "failed", (
+                f"Schema-level grant unexpectedly failed: {r}"
+            )
+
     def test_resolve_app_principal_prefers_client_id(self, monkeypatch) -> None:
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "cid-123")
         assert ics.resolve_app_principal(MagicMock()) == "cid-123"
