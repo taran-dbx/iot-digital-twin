@@ -98,6 +98,7 @@ __all__ = [
     "FAIL_SENTINEL",
     "zerobus_produce_snippet",
     "auth_probe",
+    "produce",
 ]
 
 OK_SENTINEL = "VALIDATION_OK"
@@ -368,4 +369,108 @@ def auth_probe(
     except Exception as exc:
         detail["token_ok"] = False
         detail["token_error"] = str(exc)[:500]
+        return False, detail
+
+
+# ---------------------------------------------------------------------------
+# Driver-side (app-process) bounded producer — no cluster needed.
+# ---------------------------------------------------------------------------
+def produce(
+    *,
+    workspace_url: str,
+    server_endpoint: str,
+    table_fqn: str,
+    num_records: int = 100,
+    source: str = "validation",
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    secret_scope: str | None = None,
+    secret_key: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Driver-side (in-process) Zerobus ingest producer — no cluster needed.
+
+    Authenticates exactly as :func:`auth_probe` does (explicit args >
+    env ``ZEROBUS_CLIENT_ID``/``ZEROBUS_CLIENT_SECRET`` > UC secret
+    ``secret_scope``/``secret_key``), then ingests ``num_records`` SSOT sensor
+    rows into ``table_fqn`` via the Zerobus SDK's sync client.
+
+    Each row is keyed by the Delta **column** names (not record field names —
+    see module docstring point 1) and uses epoch-microseconds for ``event_time``
+    (module docstring point 2).  Every row is tagged ``source=source`` so
+    ``dbsql_read`` and ``cleanup`` can scope their count / delete to this run's
+    data only.
+
+    Returns:
+        ``(ok, detail)`` — ``detail`` has ``produced`` on success or ``error``
+        on failure; never raises.
+    """
+    import random
+    import time
+
+    detail: dict[str, Any] = {"table": table_fqn, "server_endpoint": server_endpoint}
+
+    try:
+        from zerobus.sdk.shared import RecordType, StreamConfigurationOptions, TableProperties
+        from zerobus.sdk.sync import ZerobusSdk
+    except ImportError as exc:
+        detail["error"] = f"zerobus SDK not importable: {exc}"
+        return False, detail
+
+    # Resolve credentials — same order and helper as auth_probe uses.
+    resolved_id = client_id or os.getenv("ZEROBUS_CLIENT_ID")
+    resolved_secret, secret_error = _resolve_zerobus_secret(client_secret, secret_scope, secret_key)
+    if secret_error:
+        detail["secret_error"] = secret_error
+    if not resolved_id or not resolved_secret:
+        detail["error"] = "no ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+        return False, detail
+
+    # Ensure scheme — a bare host fails the OAuth token exchange (module
+    # docstring point 2; same guard as in zerobus_produce_snippet).
+    ws_url = workspace_url if workspace_url.startswith("http") else f"https://{workspace_url}"
+
+    # Derive industry from catalog name (iot_<industry>).
+    catalog_part = table_fqn.split(".")[0]
+    industry = catalog_part.removeprefix("iot_") if catalog_part.startswith("iot_") else catalog_part
+
+    try:
+        table_props = TableProperties(table_fqn)
+        options = StreamConfigurationOptions(record_type=RecordType.JSON)
+        sdk = ZerobusSdk(server_endpoint, ws_url)
+        stream = sdk.create_stream(resolved_id, resolved_secret, table_props, options)
+
+        sensors = _SENSOR_NAMES
+        acks = []
+        for i in range(num_records):
+            s = sensors[i % len(sensors)]
+            rec = {
+                _col("sensor_name"): s,
+                _col("industry"): industry,
+                _col("value"): round(random.uniform(20, 100), 2),
+                _col("unit"): "C",
+                _col("sensor_type"): "temperature",
+                # Epoch microseconds int — module docstring point 2.
+                _col("timestamp"): int(time.time() * 1_000_000),
+                _col("min_value"): 0.0,
+                _col("max_value"): 120.0,
+                _col("nominal_value"): 60.0,
+                _col("fault_active"): False,
+                _col("metadata"): {"source": source},
+            }
+            acks.append(stream.ingest_record(rec))
+
+        for a in acks:
+            # wait_for_ack signature varies across SDK versions — try bounded,
+            # fall back to no-arg (mirrors the same guard in zerobus_produce_snippet).
+            try:
+                a.wait_for_ack(timeout_sec=30)
+            except TypeError:
+                a.wait_for_ack()
+
+        stream.close()
+        detail["produced"] = num_records
+        return True, detail
+
+    except Exception as exc:
+        detail["error"] = str(exc)[:500]
         return False, detail

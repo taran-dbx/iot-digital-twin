@@ -762,9 +762,10 @@ async def auth_probe(ctx: StepContext) -> StepResult:
 
 
 async def produce_test(ctx: StepContext) -> StepResult:
-    # Bounded serverless-capable Zerobus ingest producer → wait_for_ack (§1.10
-    # zerobus). Runs the real ZerobusSdk producer on the validation cluster; the
-    # subsequent zerobus:dbsql_read asserts the rows actually landed.
+    # Driver-side Zerobus ingest — no cluster needed (zerobus pipelines have no
+    # interactive cluster by design). zbv.produce() authenticates exactly as
+    # auth_probe does and runs the ZerobusSdk ingest in-process via asyncio.to_thread;
+    # the subsequent zerobus:dbsql_read asserts the rows actually landed.
     import os
 
     cfg = _cfg(ctx)
@@ -773,12 +774,21 @@ async def produce_test(ctx: StepContext) -> StepResult:
     table_fqn = cat.industry_table(cfg["industry"], "zerobus")
     if not server_endpoint:
         return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
-    snippet = zbv.zerobus_produce_snippet(
-        industry=cfg["industry"], catalog=cfg["catalog"], table_fqn=table_fqn,
-        workspace_url=workspace_url, server_endpoint=server_endpoint,
-        num_records=100, source=VALIDATION_SOURCE,
+    ok, detail = await asyncio.to_thread(
+        zbv.produce,
+        workspace_url=workspace_url,
+        server_endpoint=server_endpoint,
+        table_fqn=table_fqn,
+        num_records=100,
+        source=VALIDATION_SOURCE,
+        secret_scope=get_secret_scope(),
+        secret_key=os.getenv("ZEROBUS_SECRET_KEY", "zerobus-client-secret"),
     )
-    return await _run_on_cluster(ctx, snippet, timeout_s=180)
+    return StepResult(
+        sm.PASSED if ok else sm.FAILED,
+        error=None if ok else str(detail.get("error", detail))[:400],
+        data=detail,
+    )
 
 
 # ---------------------------------------------------------------------------

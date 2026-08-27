@@ -340,20 +340,46 @@ async def test_write_test_microbatch_passes_metrics_params(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_zerobus_produce_test_runs_real_snippet(monkeypatch):
-    captured = {}
+async def test_zerobus_produce_test_driver_side_no_cluster(monkeypatch):
+    """produce_test must call zbv.produce driver-side (NOT _run_on_cluster).
 
-    async def fake_run(ctx, code, *, timeout_s=300):
-        captured["code"] = code
-        return StepResult(sm.PASSED, data={})
-
-    monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
-    monkeypatch.setattr(vs.zbv, "zerobus_produce_snippet", lambda **kw: f"ZB::{kw['table_fqn']}")
+    Zerobus pipelines have no interactive cluster — the SDK produces in-process
+    via asyncio.to_thread, authenticated the same way auth_probe does.
+    """
+    # Pin UC env so industry_table() resolves without raising RuntimeError.
+    monkeypatch.setenv("UC_CATALOG", "iot_test_catalog")
+    monkeypatch.setenv("UC_SCHEMA", "rtm_test_schema")
     monkeypatch.setenv("DATABRICKS_HOST", "https://x.databricks.com")
     monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "x.zerobus.us-east-1.cloud.databricks.com")
+
+    cluster_calls: list = []
+
+    async def fake_run_on_cluster(ctx, code, *, timeout_s=300):
+        cluster_calls.append(code)
+        return StepResult(sm.PASSED, data={})
+
+    produce_calls: list = []
+
+    def fake_produce(**kw):
+        produce_calls.append(kw)
+        return (True, {"produced": 100, "table": kw.get("table_fqn", "")})
+
+    monkeypatch.setattr(vs, "_run_on_cluster", fake_run_on_cluster)
+    monkeypatch.setattr(vs.zbv, "produce", fake_produce)
+
     result = await vs.produce_test(_ctx("zerobus"))
+
     assert result.status == sm.PASSED
-    assert captured["code"].startswith("ZB::iot_pharmaceutical.zerobus.iot_sensor_data")
+    # The cluster path must NOT have been touched — no cluster for zerobus.
+    assert cluster_calls == [], "produce_test must not call _run_on_cluster for zerobus"
+    # The driver-side producer must have been called exactly once.
+    assert len(produce_calls) == 1
+    call_kw = produce_calls[0]
+    assert call_kw["workspace_url"] == "https://x.databricks.com"
+    assert call_kw["server_endpoint"] == "x.zerobus.us-east-1.cloud.databricks.com"
+    assert "pharmaceutical" in call_kw["table_fqn"]
+    assert call_kw["num_records"] == 100
+    assert call_kw["source"] == vs.VALIDATION_SOURCE
 
 
 @pytest.mark.asyncio
