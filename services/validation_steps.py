@@ -108,7 +108,7 @@ def _cfg(ctx: StepContext) -> dict:
         "metric_mode": metric_mode,
         "metrics_table_fqn": metrics_table_fqn(catalog, metric_mode),
         "metrics_table_location": metrics_table_location(
-            catalog, cat.SHARED_STORAGE_BASE, metric_mode
+            catalog, cat._storage_base(), metric_mode
         ),
     }
 

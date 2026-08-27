@@ -135,7 +135,7 @@ def zerobus_produce_snippet(
     server_endpoint: str,
     num_records: int = 100,
     source: str = "validation",
-    secret_scope: str = "iot-secrets",
+    secret_scope: str = os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
     client_id_key: str = "zerobus-client-id",
     client_secret_key: str = "zerobus-client-secret",
 ) -> str:

@@ -264,7 +264,9 @@ async def ensure_streaming_sp(
 # ---------------------------------------------------------------------------
 
 SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
-SHARED_STREAMING_SP_SECRET_SCOPE = "iot-secrets"
+# Read from env so each workspace can name its own secret scope;
+# falls back to "iot-secrets" for workspaces that pre-date this config.
+SHARED_STREAMING_SP_SECRET_SCOPE: str = os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")
 SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
 SHARED_STREAMING_SP_SECRET_KEY = "sss-industries-client-secret"
 # Distinct Lakebase role_id for the shared streaming SP so it can be registered

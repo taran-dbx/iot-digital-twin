@@ -62,6 +62,13 @@ async def app_defaults():
         "lakebase_project_id": lakebase_project_id,
         "lakebase_branch_id": lakebase_branch_id,
         "lakebase_database": os.getenv("PGDATABASE", ""),
+        # Workspace-specific values consumed by the TS notebook generators so
+        # they never contain hardcoded workspace names or resource identifiers.
+        "service_credential": os.getenv("UC_SERVICE_CREDENTIAL", "iot-rtm-sc"),
+        "pipelines_project": os.getenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines"),
+        "storage_base": os.getenv("UC_STORAGE_BASE", ""),
+        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
+        "msk_bootstrap": os.getenv("MSK_BOOTSTRAP_SERVERS", ""),
     }
 
 

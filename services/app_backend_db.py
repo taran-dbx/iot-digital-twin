@@ -28,15 +28,14 @@ logger = logging.getLogger("iot_digital_twin.services.app_backend_db")
 # ---------------------------------------------------------------------------
 # app-backend project coordinates (overridable via env, but never via PGHOST)
 # ---------------------------------------------------------------------------
-APP_BACKEND_PROJECT = "iot-app-backend"
+APP_BACKEND_PROJECT = os.getenv("LAKEBASE_PROJECT", "iot-app-backend")
 APP_BACKEND_ENDPOINT = os.getenv(
     "APP_BACKEND_LAKEBASE_ENDPOINT",
-    "projects/iot-app-backend/branches/production/endpoints/primary",
+    os.getenv("LAKEBASE_ENDPOINT", ""),
 )
-APP_BACKEND_HOST = os.getenv(
-    "APP_BACKEND_PGHOST",
-    "ep-mute-scene-d2cvnr0v.database.us-east-1.cloud.databricks.com",
-)
+# Host resolved from APP_BACKEND_PGHOST; falls back to PGHOST but never to a
+# workspace-specific literal — missing host causes initialize() to raise clearly.
+APP_BACKEND_HOST = os.getenv("APP_BACKEND_PGHOST") or os.getenv("PGHOST", "")
 APP_BACKEND_DATABASE = os.getenv("APP_BACKEND_PGDATABASE", "databricks_postgres")
 
 

@@ -4,47 +4,71 @@ command:
   - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
 
 env:
-  # ── Lakebase (fe-vm-shared-interop / us-east-1).  iot-lakets-demo serves
-  #    as both the app backend and the demo streaming target. ──
+  # ── Unity Catalog ──────────────────────────────────────────────────────────
+  - name: UC_CATALOG
+    value: "classic_stable_realtime_demos_catalog"
+  - name: UC_SCHEMA
+    value: "rtm_lakets_zb"
+
+  # ── Lakebase app-backend project (fevm-classic-stable-realtime-demos,
+  #    eu-central-1).  PGHOST is left blank until Task 2 creates the project. ─
   - name: PGHOST
-    value: "ep-fancy-king-d2l9rua6.database.us-east-1.cloud.databricks.com"
+    value: ""
   - name: PGDATABASE
     value: "databricks_postgres"
   - name: PGPORT
     value: "5432"
+  - name: LAKEBASE_PROJECT
+    value: "iot-app-backend"
   - name: LAKEBASE_ENDPOINT
-    value: "projects/iot-lakets-demo/branches/production/endpoints/primary"
+    value: "projects/iot-app-backend/branches/production/endpoints/primary"
+
+  # ── SQL Warehouse ──────────────────────────────────────────────────────────
+  - name: DATABRICKS_SQL_WAREHOUSE_ID
+    value: "0864d7304e74ad76"
 
   # ── Zerobus: enables UI panel + SP catalog grants.
   #    TABLE_NAME left empty so the legacy in-app sink stays OFF;
   #    the real ingest path is the per-pipeline producer notebook. ──
   - name: ZEROBUS_SERVER_ENDPOINT
-    value: "332040261549026.zerobus.us-east-1.cloud.databricks.com"
+    value: "7474659563748021.zerobus.eu-central-1.cloud.databricks.com"
   - name: ZEROBUS_TABLE_NAME
     value: ""
   - name: ZEROBUS_CLIENT_ID
-    value: "01329a59-2dff-480c-ab9f-29a4e87f3bbd"
+    value: "7c59807d-7f0d-47ab-8e83-6d91add2f35c"
   - name: ZEROBUS_SECRET_SCOPE
     value: "iot-secrets"
   - name: ZEROBUS_SECRET_KEY
     value: "zerobus-client-secret"
 
-  # ── Unity Catalog: let create_catalog default to metastore-managed
-  #    storage — setting UC_STORAGE_ROOT to the metastore's own root
-  #    collides with its default managed-storage region
-  #    ("overlaps with managed storage within CreateCatalog").  The SP
-  #    already has CREATE_MANAGED_STORAGE on the default location. ──
-  - name: UC_STORAGE_ROOT
+  # ── UC external storage for per-industry external metrics Delta tables.
+  #    Blank = use metastore-managed storage (this workspace has no shared
+  #    S3 external location equivalent to taran-shared-interop).
+  #    Set UC_STORAGE_BASE and UC_EXTERNAL_LOCATION once the external location
+  #    is created in this workspace. ──
+  - name: UC_STORAGE_BASE
+    value: ""
+  - name: UC_EXTERNAL_LOCATION
     value: ""
 
-  # Industry-first UI. Thin slice ships pharmaceutical only;
-  # expand to "manufacturing,pharmaceutical,energy,automotive" once verified.
+  # ── UC service credential for MSK-IAM (maps to the IAM role on MSK). ──
+  - name: UC_SERVICE_CREDENTIAL
+    value: "iot-rtm-sc"
+
+  # ── Streaming Lakebase project (per-industry branches; created in Task 3). ─
+  - name: PIPELINES_LAKEBASE_PROJECT
+    value: "iot-pipelines"
+
+  # ── MSK bootstrap — leave blank; pipelines configure their own bootstrap
+  #    servers in the setup wizard. ──
+  - name: MSK_BOOTSTRAP_SERVERS
+    value: ""
+
+  # Industry-first UI.  Expand once provisioning is verified.
   - name: INDUSTRIES
-    value: "pharmaceutical"
+    value: "pharmaceutical,manufacturing"
 
   # Admin gate for the industry-first UI (services/app_permissions.is_admin).
-  # Members of this Databricks group see provisioning internals + add-industry;
-  # everyone else gets the end-user view. Shared streaming SP: iot-sss-industries.
   - name: ADMIN_GROUP
     value: "iot-admins"
 

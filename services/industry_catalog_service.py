@@ -32,6 +32,7 @@ wiring, or the legacy ``iot-lakets-demo`` project.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -53,17 +54,31 @@ from services.resource_ledger import record_resource
 logger = logging.getLogger("iot_digital_twin.services.industry_catalog")
 
 # --- Constants -------------------------------------------------------------
-# Shared external location the metastore is bound to (us-east-1).
-SHARED_STORAGE_BASE = "s3://taran-shared-interop"
-EXTERNAL_LOCATION_NAME = "taran-shared-interop"
-
 # Canonical schema set + checkpoint volume (spec §2.5).
 CANONICAL_SCHEMAS = ("realtime", "microbatch", "zerobus", "metrics", "checkpoints")
 CHECKPOINT_SCHEMA = "checkpoints"
 CHECKPOINT_VOLUME = "stream_checkpoints"
 
-# Fallback SP application id (spec §2.5) if the SP can't be resolved by name.
-FALLBACK_SP_APP_ID = "9927a7fa-2427-4b6a-97b6-cd41b878d405"
+
+# --- Env-resolved workspace values -----------------------------------------
+# Read at call time (not import time) so tests can monkeypatch freely.
+
+def _storage_base() -> str:
+    """S3 base URI for external metrics tables (UC_STORAGE_BASE env var).
+
+    Returns an empty string when not configured — callers treat empty as
+    "use metastore-managed storage" and omit the MANAGED LOCATION clause.
+    """
+    return os.getenv("UC_STORAGE_BASE", "")
+
+
+def _external_location_name() -> str:
+    """UC external location name matching the S3 storage base (UC_EXTERNAL_LOCATION).
+
+    Returns an empty string when not configured — the pre-flight check is
+    skipped gracefully when no external location is needed.
+    """
+    return os.getenv("UC_EXTERNAL_LOCATION", "")
 
 # Ledger teardown_order.  Higher = deleted earlier (reverse-dependency order).
 # ``DROP CATALOG ... CASCADE`` removes schemas/tables/volume, so the per-object
@@ -94,8 +109,13 @@ def catalog_name(industry: str) -> str:
 
 
 def catalog_managed_location(catalog: str) -> str:
-    """Return the MANAGED LOCATION S3 URI for ``catalog``."""
-    return f"{SHARED_STORAGE_BASE}/{catalog}"
+    """Return the MANAGED LOCATION S3 URI for ``catalog``.
+
+    Returns an empty string when ``UC_STORAGE_BASE`` is not configured, which
+    signals callers to use metastore-managed storage instead.
+    """
+    base = _storage_base()
+    return f"{base}/{catalog}" if base else ""
 
 
 def _new_ws() -> Any:
@@ -135,23 +155,34 @@ def preflight_checks(*, ws: Any | None = None, warehouse_id: str | None = None) 
     ws = ws or _new_ws()
     checks: list[dict] = []
 
-    # 1. External location the MANAGED LOCATION lives under must exist.
-    try:
-        ws.external_locations.get(name=EXTERNAL_LOCATION_NAME)
+    # 1. External location the MANAGED LOCATION lives under must exist (only
+    #    checked when UC_EXTERNAL_LOCATION is configured; otherwise the workspace
+    #    uses metastore-managed storage and no external location is required).
+    ext_loc = _external_location_name()
+    storage_base = _storage_base()
+    if ext_loc:
+        try:
+            ws.external_locations.get(name=ext_loc)
+            checks.append({
+                "check": f"External location '{ext_loc}'",
+                "status": "pass",
+                "detail": "present",
+            })
+        except Exception as exc:
+            checks.append({
+                "check": f"External location '{ext_loc}'",
+                "status": "fail",
+                "detail": (
+                    f"Not found ({str(exc)[:120]}). CREATE CATALOG needs an explicit "
+                    f"MANAGED LOCATION under {storage_base}; the external "
+                    f"location '{ext_loc}' must exist and be writable."
+                ),
+            })
+    else:
         checks.append({
-            "check": f"External location '{EXTERNAL_LOCATION_NAME}'",
+            "check": "External location",
             "status": "pass",
-            "detail": "present",
-        })
-    except Exception as exc:
-        checks.append({
-            "check": f"External location '{EXTERNAL_LOCATION_NAME}'",
-            "status": "fail",
-            "detail": (
-                f"Not found ({str(exc)[:120]}). CREATE CATALOG needs an explicit "
-                f"MANAGED LOCATION under {SHARED_STORAGE_BASE}; the external "
-                f"location '{EXTERNAL_LOCATION_NAME}' must exist and be writable."
-            ),
+            "detail": "UC_EXTERNAL_LOCATION not configured — using metastore-managed storage",
         })
 
     # 2. A SQL warehouse must be available for external-table DDL + grants.
@@ -215,9 +246,13 @@ async def provision_industry_catalog(
     managed_location = catalog_managed_location(catalog)
     results: list[dict] = []
 
-    # 1. Catalog with explicit MANAGED LOCATION (metastore has no storage root).
+    # 1. Catalog — pass MANAGED LOCATION only when UC_STORAGE_BASE is configured;
+    #    otherwise let the metastore use its default managed-storage location.
     try:
-        ws.catalogs.create(name=catalog, storage_root=managed_location)
+        if managed_location:
+            ws.catalogs.create(name=catalog, storage_root=managed_location)
+        else:
+            ws.catalogs.create(name=catalog)
         results.append({"resource": f"UC catalog '{catalog}'", "status": "created"})
     except Exception as exc:
         if _is_already_exists(exc):
@@ -297,10 +332,11 @@ async def provision_industry_catalog(
     wh = resolve_warehouse_id(ws, warehouse_id)
     metrics_fqns: dict[str, str] = {}
     metrics_locs: dict[str, str] = {}
+    storage_base = _storage_base()
     for mode in ALL_METRIC_MODES:
         metrics_fqn = metrics_table_fqn(catalog, mode)
-        metrics_loc = metrics_table_location(catalog, SHARED_STORAGE_BASE, mode)
-        ddl = metrics_external_table_ddl(catalog, SHARED_STORAGE_BASE, mode)
+        metrics_loc = metrics_table_location(catalog, storage_base, mode)
+        ddl = metrics_external_table_ddl(catalog, storage_base, mode)
         res = await _run_sql(ddl, wh)
         if res["status"] == "failed":
             results.append({
@@ -337,7 +373,8 @@ def resolve_streaming_sp_principal(ws: Any) -> str:
     """Return the streaming SP's grant principal (application id).
 
     Grants to a service principal in UC SQL use the SP's *application id*.
-    Falls back to the known shared SP app id if lookup fails.
+    Falls back to the app SP's own client id (``DATABRICKS_CLIENT_ID``) when
+    the streaming SP cannot be resolved by display name.
     """
     try:
         sp = _find_sp_by_display_name(ws, SHARED_STREAMING_SP_DISPLAY_NAME)
@@ -345,7 +382,7 @@ def resolve_streaming_sp_principal(ws: Any) -> str:
             return sp.application_id
     except Exception as exc:
         logger.warning("Could not resolve streaming SP by name (non-fatal): %s", exc)
-    return FALLBACK_SP_APP_ID
+    return os.getenv("DATABRICKS_CLIENT_ID", "")
 
 
 def _grant_statements(catalog: str, principal: str) -> list[tuple[str, str]]:

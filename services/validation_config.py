@@ -18,6 +18,7 @@ configs the Phase-0/Phase-1 spikes VERIFIED on ``fe-vm-shared-interop`` (spec
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Any
 
@@ -50,7 +51,7 @@ __all__ = [
 # to this pinned DBR 18.2 GA (Spark 4.1.0; verified on service creds + single-user)
 # only if that lookup fails.
 VALIDATION_DBR = "18.2.x-scala2.13"
-SERVICE_CREDENTIAL = "iot-rtm-sc"
+SERVICE_CREDENTIAL: str = os.getenv("UC_SERVICE_CREDENTIAL", "iot-rtm-sc")
 DEFAULT_REGION = "us-east-1"
 
 MSK_PUBLIC_PORT = 9198   # reachable from fe-vm-shared-interop

@@ -54,22 +54,37 @@ class TestNames:
         with pytest.raises(ValueError):
             ics.catalog_name("  ")
 
-    def test_managed_location(self) -> None:
+    def test_managed_location_with_storage_base(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_STORAGE_BASE", "s3://taran-shared-interop")
         assert ics.catalog_managed_location("iot_spiketest") == (
             "s3://taran-shared-interop/iot_spiketest"
         )
+
+    def test_managed_location_empty_when_no_storage_base(self, monkeypatch) -> None:
+        monkeypatch.delenv("UC_STORAGE_BASE", raising=False)
+        assert ics.catalog_managed_location("iot_spiketest") == ""
 
 
 # ---------------------------------------------------------------------------
 # Pre-flight
 # ---------------------------------------------------------------------------
 class TestPreflight:
-    def test_all_pass(self) -> None:
+    def test_all_pass_with_external_location(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_EXTERNAL_LOCATION", "taran-shared-interop")
+        monkeypatch.setenv("UC_STORAGE_BASE", "s3://taran-shared-interop")
         checks = ics.preflight_checks(ws=_make_ws())
         assert all(c["status"] == "pass" for c in checks)
         ics.raise_on_failed_preflight(checks)  # no raise
 
-    def test_missing_external_location_fails(self) -> None:
+    def test_all_pass_without_external_location(self, monkeypatch) -> None:
+        """No external location configured → skip the check (metastore-managed)."""
+        monkeypatch.delenv("UC_EXTERNAL_LOCATION", raising=False)
+        checks = ics.preflight_checks(ws=_make_ws(ext_loc=False))
+        assert all(c["status"] == "pass" for c in checks)
+        ics.raise_on_failed_preflight(checks)  # no raise
+
+    def test_missing_external_location_fails_when_configured(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_EXTERNAL_LOCATION", "taran-shared-interop")
         checks = ics.preflight_checks(ws=_make_ws(ext_loc=False))
         assert any(c["status"] == "fail" and "External location" in c["check"] for c in checks)
         with pytest.raises(RuntimeError, match="Pre-flight"):
@@ -85,7 +100,8 @@ class TestPreflight:
 # ---------------------------------------------------------------------------
 class TestProvisionCatalog:
     @pytest.mark.asyncio
-    async def test_creates_catalog_with_managed_location(self) -> None:
+    async def test_creates_catalog_with_managed_location(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_STORAGE_BASE", "s3://taran-shared-interop")
         ws = _make_ws()
         with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})):
             res = await ics.provision_industry_catalog("spiketest", ws=ws)
@@ -93,6 +109,18 @@ class TestProvisionCatalog:
         _, kwargs = ws.catalogs.create.call_args
         assert kwargs["name"] == "iot_spiketest"
         assert kwargs["storage_root"] == "s3://taran-shared-interop/iot_spiketest"
+
+    @pytest.mark.asyncio
+    async def test_creates_catalog_without_managed_location(self, monkeypatch) -> None:
+        """When UC_STORAGE_BASE is unset, catalog is created with no storage_root."""
+        monkeypatch.delenv("UC_STORAGE_BASE", raising=False)
+        ws = _make_ws()
+        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})):
+            res = await ics.provision_industry_catalog("spiketest", ws=ws)
+        assert res["catalog"] == "iot_spiketest"
+        args, kwargs = ws.catalogs.create.call_args
+        assert kwargs["name"] == "iot_spiketest"
+        assert "storage_root" not in kwargs
 
     @pytest.mark.asyncio
     async def test_creates_five_schemas_and_volume(self) -> None:
@@ -188,10 +216,12 @@ class TestGrants:
             )
         assert recorded and all(r["resource_type"] == "grant" for r in recorded)
 
-    def test_resolve_principal_falls_back(self) -> None:
+    def test_resolve_principal_falls_back(self, monkeypatch) -> None:
+        """Falls back to DATABRICKS_CLIENT_ID when SP lookup returns None."""
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "fallback-sp-id")
         ws = MagicMock()
         with patch.object(ics, "_find_sp_by_display_name", return_value=None):
-            assert ics.resolve_streaming_sp_principal(ws) == ics.FALLBACK_SP_APP_ID
+            assert ics.resolve_streaming_sp_principal(ws) == "fallback-sp-id"
 
     @pytest.mark.asyncio
     async def test_app_backend_read_grants_catalog_wide_select(self) -> None:

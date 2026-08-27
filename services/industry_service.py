@@ -16,6 +16,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 from typing import Any
 
 from core.state import AppState
@@ -510,7 +511,7 @@ async def _provision_lakebase_branch(
         "lb_branch_id": "production",
         "lb_database": "databricks_postgres",
         "table_name": "sensor_readings",
-        "secret_scope": "iot-secrets",
+        "secret_scope": os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets"),
         "industry": industry,
     }
     return await setup_pipeline_lakebase(state, params)

@@ -10,6 +10,7 @@ status in its ``steps`` list.
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -74,7 +75,7 @@ async def post_setup_pipeline_lakebase(
         "lb_branch_id": (body.get("lb_branch_id") or "production").strip(),
         "lb_database": (body.get("lb_database") or "databricks_postgres").strip(),
         "table_name": (body.get("table_name") or "sensor_readings").strip(),
-        "secret_scope": (body.get("secret_scope") or "iot-secrets").strip(),
+        "secret_scope": (body.get("secret_scope") or os.getenv("ZEROBUS_SECRET_SCOPE", "iot-secrets")).strip(),
         "industry": body.get("industry"),
         "tiering": tiering,
         "retention": body.get("retention"),

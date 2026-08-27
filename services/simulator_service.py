@@ -91,7 +91,7 @@ async def run_simulator(state: AppState) -> None:
         try:
             from iot_simulator.sinks.zerobus import ZerobusSink
 
-            zb_host = os.getenv("DATABRICKS_HOST", "https://e2-demo-field-eng.cloud.databricks.com")
+            zb_host = os.getenv("DATABRICKS_HOST", "")
             if zb_host and not zb_host.startswith("http"):
                 zb_host = f"https://{zb_host}"
 

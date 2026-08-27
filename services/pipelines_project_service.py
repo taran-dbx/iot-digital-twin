@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from backend import LakebaseConnectionManager
@@ -35,7 +36,9 @@ from services.resource_ledger import record_resource
 logger = logging.getLogger("iot_digital_twin.services.pipelines_project")
 
 # --- Constants -------------------------------------------------------------
-PIPELINES_PROJECT = "iot-pipelines"
+# Read from env so any workspace can configure its own streaming Lakebase project.
+# Old deployments that do not set PIPELINES_LAKEBASE_PROJECT keep the original name.
+PIPELINES_PROJECT: str = os.getenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines")
 PG_DATABASE = "databricks_postgres"
 
 PRIMARY_ENDPOINT_ID = "primary"
