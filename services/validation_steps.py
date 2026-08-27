@@ -26,7 +26,7 @@ from datetime import timedelta
 from typing import Any
 
 from core.workspace_config import get_secret_scope
-from models.metrics_schema import ALL_METRIC_MODES, metrics_table_fqn, metrics_table_location
+from models.metrics_schema import ALL_METRIC_MODES, metrics_table_location
 from services import industry_catalog_service as cat
 from services import lakets_service as lakets_svc
 from services import pipelines_project_service as pps
@@ -107,7 +107,7 @@ def _cfg(ctx: StepContext) -> dict:
         "branch": industry,  # per-industry Lakebase branch name = industry
         "project_id": pps.get_pipelines_project(),
         "metric_mode": metric_mode,
-        "metrics_table_fqn": metrics_table_fqn(catalog, metric_mode),
+        "metrics_table_fqn": cat.industry_table(industry, "metrics"),
         "metrics_table_location": metrics_table_location(
             catalog, cat._storage_base(), metric_mode
         ),
@@ -468,7 +468,7 @@ async def write_test(ctx: StepContext) -> StepResult:
     checkpoint = _checkpoint(cfg["catalog"], ctx.mode or "realtime")
     if ctx.mode == "microbatch":
         topic = vc.topic_name(cfg["industry"], "microbatch")
-        delta = f"{cfg['catalog']}.microbatch.sensor_data"
+        delta = cat.industry_table(cfg["industry"], "microbatch")
         # cfg metrics_table_fqn/location resolve to the per-mode MICRO-BATCH table
         # (ctx.mode == "microbatch"), so the listener lands micro-batch metrics.
         code = snip.microbatch_write_test(
@@ -642,16 +642,14 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
     if not wh:
         return StepResult(sm.FAILED, error="no warehouse_id configured for DBSQL read")
     if ctx.mode == "microbatch":
-        table = f"{cfg['catalog']}.microbatch.sensor_data"
+        table = cat.industry_table(cfg["industry"], "microbatch")
     elif ctx.mode == "zerobus":
-        table = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+        table = cat.industry_table(cfg["industry"], "zerobus")
     else:
-        # Realtime data lands in the Lakebase ChronoTable, not a UC Delta table —
-        # it reaches UC only through the managed CDF sync, which writes a Delta
-        # table named lb_<shadow>_history (Lakebase CDF convention) in the sync's
-        # destination `realtime` schema. So DBSQL-read the SYNCED table, not the
-        # (nonexistent) realtime.sensor_readings.
-        table = f"{cfg['catalog']}.realtime.{CDF_SYNCED_TABLE}"
+        # Realtime data is synced by the managed CDF path into the one-schema
+        # {industry}_realtime Delta table (one-schema layout, provisioned by
+        # industry_catalog_service).
+        table = cat.industry_table(cfg["industry"], "realtime")
     res = await execute_dbsql(f"SELECT count(*) AS n FROM {table}", wh)
     n = _dbsql_count(res)
     if n <= 0:
@@ -667,14 +665,15 @@ async def metrics_check(ctx: StepContext) -> StepResult:
     wh = cfg["warehouse_id"]
     if not wh:
         return StepResult(sm.FAILED, error="no warehouse_id configured for metrics check")
-    # Per-mode metrics table (streaming_metrics_<mode>); cfg resolves it from ctx.mode.
+    # One managed {industry}_metrics table with a leading `mode` column; filter
+    # by mode so each mode's check only sees its own rows (§1.11 one-schema layout).
     table = cfg["metrics_table_fqn"]
     # Verify the Databricks-only latency percentiles landed (proves the delta-rs
-    # external-table metrics write path end-to-end, §1.11 S6).
+    # metrics write path end-to-end, §1.11 S6).
     sql = (
         f"SELECT count(*) AS n, "
         f"count(e2e_p50) AS have_e2e, count(processing_p99) AS have_proc "
-        f"FROM {table}"
+        f"FROM {table} WHERE mode = '{cfg['metric_mode']}'"
     )
     res = await execute_dbsql(sql, wh)
     n = _dbsql_count(res)
@@ -736,7 +735,7 @@ async def create_table(ctx: StepContext) -> StepResult:
         return StepResult(sm.FAILED, error="no warehouse_id configured for zerobus table create")
     from models.sensor_schema import delta_table_ddl
 
-    fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+    fqn = cat.industry_table(cfg["industry"], "zerobus")
     await execute_dbsql(delta_table_ddl(fqn), wh)
     return StepResult(sm.PASSED, data={"table": fqn})
 
@@ -750,7 +749,7 @@ async def auth_probe(ctx: StepContext) -> StepResult:
     cfg = _cfg(ctx)
     workspace_url = os.getenv("DATABRICKS_HOST", "")
     server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
-    table_fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+    table_fqn = cat.industry_table(cfg["industry"], "zerobus")
     if not server_endpoint:
         return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
     ok, detail = await asyncio.to_thread(
@@ -771,7 +770,7 @@ async def produce_test(ctx: StepContext) -> StepResult:
     cfg = _cfg(ctx)
     workspace_url = os.getenv("DATABRICKS_HOST", "")
     server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
-    table_fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+    table_fqn = cat.industry_table(cfg["industry"], "zerobus")
     if not server_endpoint:
         return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
     snippet = zbv.zerobus_produce_snippet(
