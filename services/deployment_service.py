@@ -546,7 +546,10 @@ async def _deploy_zerobus_pipeline(
         environment_key=env_key,
         base_parameters=base_parameters,
     )
-    environments = [JobEnvironment(environment_key=env_key, spec=Environment(client="1"))]
+    # client="4": Unity-Catalog secrets via `dbutils.secrets.get(catalog=…,
+    # schema=…, key=…)` require serverless environment version ≥ 4.
+    # The zerobus producer reads `app_sp_oauth` from the UC secret at runtime.
+    environments = [JobEnvironment(environment_key=env_key, spec=Environment(client="4"))]
     job_name = job_display_name(industry, "zerobus")
     job_id, action = _create_or_reset_serverless_job(w, job_name, task, environments)
 

@@ -15,10 +15,10 @@ Verified invariants asserted here:
     the LakeTS ChronoTable via ``w.postgres.generate_database_credential``.
   * Micro-batch writer: Delta ``.foreachBatch(write_micro_batch)`` (saveAsTable)
     on ``.trigger(processingTime="15 seconds")``.
-  * Metrics: buffered Spark listener (queue + daemon thread + Spark
-    ``.write...save(LOCATION)`` via native UC credential vending; NO
-    ``saveAsTable`` and NO delta-rs / temp-table-creds — that API is prohibited
-    on network-restricted workspaces; ``progress`` STRING).
+  * Metrics: buffered Zerobus listener (queue + daemon thread + Zerobus SDK
+    ``ingest_record`` into ``{industry}_metrics`` managed table; NO
+    ``saveAsTable`` and NO Spark write / delta-rs; ``mode`` STRING column;
+    timestamp as epoch-µs INT; progress blob dropped — Task 4).
   * Parse schema = all 11 SSOT fields (models/sensor_schema.py).
 """
 
@@ -61,15 +61,18 @@ def _ssot_schema_block() -> str:
 
 
 def _metrics_listener_block() -> str:
-    """Region from the buffered-metrics header to addListener()."""
+    """Region from the Zerobus-metrics header to addListener()."""
     text = _ts()
     m = re.search(
-        r"# Streaming metrics — buffered async SPARK write.*?"
+        r"# Streaming metrics — buffered async Zerobus push.*?"
         r"spark\.streams\.addListener\(BufferedDeltaMetricsListener\(\)\)",
         text,
         re.DOTALL,
     )
-    assert m is not None, "could not locate buffered metrics listener block"
+    assert m is not None, (
+        "could not locate Zerobus metrics listener block in notebook-template.ts — "
+        "expected header '# Streaming metrics — buffered async Zerobus push'"
+    )
     return m.group(0)
 
 
@@ -244,35 +247,43 @@ class TestBufferedDeltaMetricsListener:
         # callback enqueues only — no Spark work.
         assert "_metrics_q.put" in block
 
-    def test_flushes_via_spark_save_to_location(self) -> None:
-        # The daemon thread flushes with Spark (createDataFrame → .save(LOCATION)),
-        # NOT delta-rs — delta-rs needed temp-table-creds, which are prohibited on
-        # network-restricted workspaces.
+    def test_flushes_via_zerobus_not_spark_save(self) -> None:
+        # Task 4: the daemon thread flushes via Zerobus SDK ingest_record(),
+        # NOT Spark .save(LOCATION) and NOT delta-rs.
         block = _metrics_listener_block()
-        assert "spark.createDataFrame(" in block
-        assert 'mode("append")' in block
-        assert ".save(METRICS_TABLE_LOCATION)" in block
+        assert "_zb_metrics_stream.ingest_record(rec)" in block
+        assert ".save(METRICS_TABLE_LOCATION)" not in block
+        assert ".save(" not in block
+        assert "spark.createDataFrame(" not in block
         assert "write_deltalake" not in block
 
     def test_never_uses_saveastable(self) -> None:
-        # saveAsTable from the listener launches a contending Spark job (§1.11);
-        # the metrics write uses .save(LOCATION), never saveAsTable.
+        # saveAsTable from the listener launches a contending Spark job (§1.11).
+        # The Zerobus write path must never use saveAsTable.
         block = _metrics_listener_block()
         assert ".saveAsTable(" not in block
 
-    def test_uses_native_uc_vending_no_temp_creds_or_keys(self) -> None:
-        # Spark's native UC credential vending — no generate_temporary_table_credentials
-        # CALL, no static AWS keys. (The header comment may name the API to explain
-        # why it's avoided; the actual call form must not appear.)
+    def test_no_static_aws_keys(self) -> None:
         block = _metrics_listener_block()
-        assert "generate_temporary_table_credentials(" not in block
         assert "AWS_ACCESS_KEY_ID" not in block
         assert "AWS_SECRET_ACCESS_KEY" not in block
 
-    def test_progress_stored_as_string(self) -> None:
+    def test_mode_column_present(self) -> None:
+        # Task 4: managed table carries a `mode` column; the writer must include it.
         block = _metrics_listener_block()
-        # progress kept as STRING (delta-rs can't VARIANT); parse_json at read.
-        assert '"progress": progress_json' in block
+        assert '"mode": MODE' in block
+
+    def test_timestamp_is_epoch_microseconds(self) -> None:
+        # Task 4: timestamp is epoch-µs INT (Zerobus maps to TIMESTAMP column),
+        # NOT a Python datetime object.
+        block = _metrics_listener_block()
+        assert "timestamp() * 1_000_000" in block
+
+    def test_no_raw_progress_blob(self) -> None:
+        # Task 4: raw progress blob dropped (managed table; no delta-rs STRING
+        # constraint). The key '"progress": progress_json' must not appear.
+        block = _metrics_listener_block()
+        assert '"progress": progress_json' not in block
 
 
 class TestPipInstall:
@@ -284,4 +295,5 @@ class TestPipInstall:
         for cmd in pip_cmds:
             assert "boto3" not in cmd
         assert "databricks-sdk==0.120.0" in text
-        assert "deltalake" in text
+        # Task 4: deltalake replaced by databricks-zerobus-ingest-sdk for metrics write.
+        assert "databricks-zerobus-ingest-sdk" in text

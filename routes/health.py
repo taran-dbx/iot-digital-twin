@@ -70,6 +70,10 @@ async def app_defaults():
         "storage_base": os.getenv("UC_STORAGE_BASE", ""),
         "secret_scope": get_secret_scope(),
         "msk_bootstrap": os.getenv("MSK_BOOTSTRAP_SERVERS", ""),
+        # One-schema layout (Task 3/4): pre-existing catalog + single schema for
+        # all industry-prefixed managed tables (e.g. {industry}_zerobus, {industry}_metrics).
+        "uc_catalog": os.getenv("UC_CATALOG", ""),
+        "uc_schema": os.getenv("UC_SCHEMA", ""),
     }
 
 
