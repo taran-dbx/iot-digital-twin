@@ -20,23 +20,31 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # ---------------------------------------------------------------------------
-# Pre-mock databricks.sdk to prevent architecture-mismatch ImportError.
+# Conditionally pre-mock databricks.sdk to prevent architecture-mismatch
+# ImportError on hosts where the crypto/cffi packages are built for the wrong
+# architecture (arm64 binaries run under Rosetta x86_64, or vice-versa).
 #
-# On this machine the cryptography/cffi packages in the SYSTEM site-packages
-# are arm64 binaries, but the Python interpreter runs as x86_64 (Rosetta).
-# Any import that transitively reaches `databricks.sdk` (e.g. `routes.pipelines`
-# via `routes/__init__.py`) triggers the broken chain:
-#   databricks.sdk → google.auth.impersonated_credentials → cryptography → ❌
+# When the real SDK is importable (e.g. the .venv interpreter) we skip all
+# mocking so submodules like databricks.sdk.service.* resolve correctly.
 #
-# Mocking the SDK at sys.modules level before any route imports happen lets
-# the unit tests (which mock every SDK call anyway) run cleanly. The
-# integration fixture `app_backend_conn` wraps its SDK import in try/except
-# and calls `pytest.skip(...)` on failure, so the mock is transparent there.
+# When the real SDK is NOT importable we install lightweight stub mocks, but
+# also register every submodule path that production code imports so they
+# resolve as packages rather than causing "not a package" errors.
 # ---------------------------------------------------------------------------
 def _pre_mock_sdk() -> None:
-    """Inject lightweight mocks for modules that fail to import on this host."""
+    """Inject lightweight mocks only when the real SDK cannot be imported."""
+    try:
+        import databricks.sdk.service.jobs  # noqa: F401
+        # Real SDK is available — do not override anything.
+        return
+    except Exception:
+        pass
+
+    # Real SDK is broken on this interpreter.  Register stubs for every module
+    # path the production code imports so `from databricks.sdk.service.X import Y`
+    # resolves to a MagicMock attribute rather than raising ModuleNotFoundError.
     _stub = MagicMock()
-    for _name in (
+    _submodule_names = (
         "_cffi_backend",
         "cffi",
         "cryptography",
@@ -44,19 +52,29 @@ def _pre_mock_sdk() -> None:
         "cryptography.hazmat",
         "cryptography.hazmat.bindings",
         "cryptography.hazmat.bindings._rust",
-        "google.auth.crypt.es",
+        "google",
+        "google.auth",
         "google.auth.crypt",
+        "google.auth.crypt.es",
         "google.auth.iam",
         "google.auth.impersonated_credentials",
-        "google.auth",
-        "google",
-        "databricks.sdk.credentials_provider",
+        "databricks",
+        "databricks.sdk",
         "databricks.sdk.config",
         "databricks.sdk.core",
-        "databricks.sdk",
-        "databricks",
-    ):
-        sys.modules.setdefault(_name, _stub)
+        "databricks.sdk.credentials_provider",
+        "databricks.sdk.errors",
+        "databricks.sdk.service",
+        "databricks.sdk.service.apps",
+        "databricks.sdk.service.catalog",
+        "databricks.sdk.service.compute",
+        "databricks.sdk.service.jobs",
+        "databricks.sdk.service.postgres",
+        "databricks.sdk.service.sql",
+        "databricks.sdk.service.workspace",
+    )
+    for _name in _submodule_names:
+        sys.modules.setdefault(_name, MagicMock())
 
 
 _pre_mock_sdk()
