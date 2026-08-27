@@ -1088,6 +1088,14 @@ async def get_streaming_metrics(
 
     normalized_mode = (mode or "").strip().lower() or None
 
+    # Allowlist-validate mode before it is ever interpolated into SQL.
+    # An unsanitised string here would be a direct SQL-injection vector.
+    if normalized_mode and normalized_mode not in _DBSQL_MODES:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"invalid mode {mode!r}; must be one of {sorted(_DBSQL_MODES)}"},
+        )
+
     try:
         if industry:
             # One-schema columnar table: typed columns, leading ``mode`` column.

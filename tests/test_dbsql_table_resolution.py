@@ -222,3 +222,132 @@ class TestMetricsTableResolution:
         assert f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics" in captured["sql"]
         assert "mode" in captured["sql"]
         assert "realtime" in captured["sql"]
+
+
+# ---------------------------------------------------------------------------
+# 4. get_streaming_metrics mode allowlist (SQL injection guard)
+# ---------------------------------------------------------------------------
+class TestStreamingMetricsModeValidation:
+    """Bad ``mode`` values must be rejected with 400 and must never reach SQL.
+
+    The guard must match the sibling ``get_streaming_latency`` endpoint which
+    validates against ``metrics_schema.ALL_METRIC_MODES``.  Since ``_DBSQL_MODES``
+    is the superset used in ``get_streaming_metrics`` the allowlist is at
+    least as strict.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bad_mode_returns_400_not_interpolated(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``mode=realtime'; DROP TABLE ...; --`` must yield 400, not execute."""
+        import sys
+        import importlib.util
+        from pathlib import Path
+
+        route_path = Path(__file__).parent.parent / "routes" / "sensor_data.py"
+        spec = importlib.util.spec_from_file_location("_test_sensor_data", str(route_path))
+        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["_test_sensor_data"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+        sql_calls: list[str] = []
+
+        async def mock_execute_dbsql(sql: str, warehouse_id: str) -> dict:
+            sql_calls.append(sql)
+            return {"data": [], "row_count": 0}
+
+        async def mock_get_pipeline_catalog(*a, **kw):  # noqa: ANN002
+            return None
+
+        async def mock_resolve_warehouse(db, db_available, user_email):  # noqa: ANN001
+            return "wh-test"
+
+        monkeypatch.setattr(mod, "execute_dbsql", mock_execute_dbsql)
+        monkeypatch.setattr(mod, "get_pipeline_catalog", mock_get_pipeline_catalog)
+        monkeypatch.setattr(mod, "resolve_warehouse_id", mock_resolve_warehouse)
+
+        from fastapi import FastAPI
+        from httpx import ASGITransport, AsyncClient
+        from core.state import AppState
+
+        state = AppState()
+        state.db = None
+        state.db_available = False
+
+        app = FastAPI()
+        app.state.app_state = state
+        app.include_router(mod.router)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/pipeline/pipe-1/streaming-metrics"
+                "?industry=pharmaceutical"
+                "&mode=realtime%27%3B+DROP+TABLE+foo%3B+--"
+            )
+
+        assert resp.status_code == 400
+        # The injected string must never have been sent to DBSQL.
+        assert sql_calls == [], f"execute_dbsql was called with: {sql_calls}"
+        body = resp.json()
+        assert "error" in body
+
+    @pytest.mark.asyncio
+    async def test_valid_mode_reaches_sql(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A valid ``mode=realtime`` must still work correctly."""
+        import sys
+        import importlib.util
+        from pathlib import Path
+
+        route_path = Path(__file__).parent.parent / "routes" / "sensor_data.py"
+        spec = importlib.util.spec_from_file_location("_test_sensor_data2", str(route_path))
+        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["_test_sensor_data2"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+        captured: dict = {}
+
+        async def mock_execute_dbsql(sql: str, warehouse_id: str) -> dict:
+            captured.setdefault("calls", []).append(sql)
+            return {"data": [], "row_count": 0}
+
+        async def mock_get_pipeline_catalog(*a, **kw):  # noqa: ANN002
+            return None
+
+        async def mock_resolve_warehouse(db, db_available, user_email):  # noqa: ANN001
+            return "wh-test"
+
+        monkeypatch.setattr(mod, "execute_dbsql", mock_execute_dbsql)
+        monkeypatch.setattr(mod, "get_pipeline_catalog", mock_get_pipeline_catalog)
+        monkeypatch.setattr(mod, "resolve_warehouse_id", mock_resolve_warehouse)
+
+        from fastapi import FastAPI
+        from httpx import ASGITransport, AsyncClient
+        from core.state import AppState
+
+        state = AppState()
+        state.db = None
+        state.db_available = False
+
+        app = FastAPI()
+        app.state.app_state = state
+        app.include_router(mod.router)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/pipeline/pipe-1/streaming-metrics?industry=pharmaceutical&mode=realtime"
+            )
+
+        assert resp.status_code == 200
+        # SQL was called and contains the safe allowlisted mode value.
+        assert captured.get("calls"), "execute_dbsql was never called"
+        combined = " ".join(captured["calls"])
+        assert "realtime" in combined
+        # Must NOT contain any SQL-injection sentinel characters from a crafted input.
+        assert "DROP" not in combined.upper()
