@@ -51,6 +51,31 @@ def test_build_sequence_realtime_lane_order():
     assert rt == list(sm.MODE_STEPS["realtime"])
 
 
+def test_build_sequence_zerobus_only_has_no_common_steps():
+    """Zerobus-only setup must not include Kafka/interactive-cluster common steps."""
+    seq = sm.build_sequence(["zerobus"])
+    for common in sm.COMMON_STEPS:
+        assert common not in seq, f"COMMON_STEP {common!r} must not appear in zerobus-only sequence"
+    # The zerobus lane and terminal steps must still be present.
+    assert "zerobus:create_table" in seq
+    assert "zerobus:cleanup" in seq
+    assert list(sm.TERMINAL_STEPS) == seq[-len(sm.TERMINAL_STEPS):]
+
+
+def test_build_sequence_realtime_and_zerobus_includes_common_steps():
+    """When realtime (Kafka) is selected alongside zerobus, common steps are included."""
+    seq = sm.build_sequence(["realtime", "zerobus"])
+    for common in sm.COMMON_STEPS:
+        assert common in seq, f"COMMON_STEP {common!r} must appear when realtime is enabled"
+    # Both lanes present.
+    assert any(k.startswith("realtime:") for k in seq)
+    assert any(k.startswith("zerobus:") for k in seq)
+    # Common steps precede any lane steps.
+    first_lane_idx = next(i for i, k in enumerate(seq) if ":" in k)
+    for common in sm.COMMON_STEPS:
+        assert seq.index(common) < first_lane_idx
+
+
 def test_initial_state_all_pending():
     state = sm.initial_state(["realtime", "microbatch"])
     assert state["enabled_modes"] == ["realtime", "microbatch"]

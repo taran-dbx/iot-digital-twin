@@ -163,11 +163,18 @@ def _blank_step() -> dict:
 def build_sequence(enabled_modes: Iterable[str]) -> list[str]:
     """Return the ordered flat step sequence for the enabled modes.
 
-    Common steps first, then each enabled lane in :data:`MODE_ORDER`, then the
-    terminal steps.  Unknown / disabled modes are ignored.
+    Common steps (``provision_cluster``, ``source_connectivity``,
+    ``topics_created``, ``schema_conformance``) are Kafka / interactive-cluster
+    steps — they are included **only** when ``realtime`` or ``microbatch`` is
+    enabled.  A zerobus-only setup skips them entirely (zerobus is serverless
+    and uses no interactive cluster).
+
+    Lane steps follow in :data:`MODE_ORDER` order; terminal steps are last.
+    Unknown / disabled modes are silently ignored.
     """
     enabled = set(enabled_modes or ())
-    seq = list(COMMON_STEPS)
+    needs_cluster = bool(enabled & {"realtime", "microbatch"})
+    seq: list[str] = list(COMMON_STEPS) if needs_cluster else []
     for mode in MODE_ORDER:
         if mode in enabled:
             seq += [step_key(mode, s) for s in MODE_STEPS[mode]]
