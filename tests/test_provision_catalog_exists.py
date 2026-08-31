@@ -57,6 +57,17 @@ class TestIndustryTable:
 
 class TestProvisionSchemaAndTables:
     @pytest.mark.asyncio
+    async def test_hyphenated_catalog_sql_is_quoted(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_CATALOG", "taran-interop")
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            await ics.provision_industry_catalog("pharmaceutical", ws=ws)
+        all_sql = "\n".join(c.args[0] for c in exec_mock.call_args_list)
+        assert "CREATE SCHEMA IF NOT EXISTS `taran-interop`.rtm_lakets_zb" in all_sql
+        assert "CREATE TABLE IF NOT EXISTS `taran-interop`.rtm_lakets_zb.pharmaceutical_zerobus" in all_sql
+
+    @pytest.mark.asyncio
     async def test_creates_schema_if_not_exists_never_catalog(self) -> None:
         ws = _make_ws()
         exec_mock = AsyncMock(return_value={})
@@ -99,6 +110,17 @@ class TestProvisionSchemaAndTables:
 
 
 class TestSingleSpGrants:
+    @pytest.mark.asyncio
+    async def test_hyphenated_catalog_grant_sql_is_quoted(self, monkeypatch) -> None:
+        monkeypatch.setenv("UC_CATALOG", "taran-interop")
+        ws = _make_ws()
+        exec_mock = AsyncMock(return_value={})
+        with patch.object(ics, "execute_dbsql", new=exec_mock):
+            await ics.grant_app_sp("pharmaceutical", ws=ws, principal=APP_SP)
+        sqls = "\n".join(c.args[0] for c in exec_mock.call_args_list)
+        assert "USE CATALOG ON CATALOG `taran-interop`" in sqls
+        assert "ON SCHEMA `taran-interop`.rtm_lakets_zb" in sqls
+
     @pytest.mark.asyncio
     async def test_grants_only_the_app_sp_on_the_schema(self) -> None:
         ws = _make_ws()

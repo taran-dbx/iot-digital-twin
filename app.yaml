@@ -4,80 +4,68 @@ command:
   - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
 
 env:
-  # ── Unity Catalog ──────────────────────────────────────────────────────────
   - name: UC_CATALOG
-    value: "classic_stable_realtime_demos_catalog"
+    value: "taran-interop"
+
   - name: UC_SCHEMA
     value: "rtm_lakets_zb"
 
-  # ── Lakebase app-backend project (fevm-classic-stable-realtime-demos,
-  #    eu-central-1).  Primary endpoint host for iot-app-backend. ─
   - name: PGHOST
-    value: "ep-cool-mountain-d7anzhv5.database.eu-central-1.cloud.databricks.com"
+    value: "ep-lucky-firefly-d2xaldy5.database.us-east-1.cloud.databricks.com"
+
   - name: PGDATABASE
     value: "databricks_postgres"
+
   - name: PGPORT
     value: "5432"
+
   - name: LAKEBASE_PROJECT
-    value: "iot-app-backend"
+    value: "iot-app-backend-interop"
+
   - name: LAKEBASE_ENDPOINT
-    value: "projects/iot-app-backend/branches/production/endpoints/primary"
+    value: "projects/iot-app-backend-interop/branches/production/endpoints/primary"
 
-  # ── SQL Warehouse ──────────────────────────────────────────────────────────
   - name: DATABRICKS_SQL_WAREHOUSE_ID
-    value: "0864d7304e74ad76"
+    value: "31df823c0f824066"
 
-  # ── Zerobus: enables UI panel + SP catalog grants.
-  #    TABLE_NAME left empty so the legacy in-app sink stays OFF;
-  #    the real ingest path is the per-pipeline producer notebook. ──
   - name: ZEROBUS_SERVER_ENDPOINT
-    value: "7474659563748021.zerobus.eu-central-1.cloud.databricks.com"
+    value: "332040261549026.zerobus.us-east-1.cloud.databricks.com"
+
   - name: ZEROBUS_TABLE_NAME
     value: ""
-  - name: ZEROBUS_CLIENT_ID
-    value: "7c59807d-7f0d-47ab-8e83-6d91add2f35c"
-  - name: ZEROBUS_SECRET_SCOPE
-    value: "iot-secrets"
-  - name: ZEROBUS_SECRET_KEY
-    value: "zerobus-client-secret"
 
-  # ── UC external storage for per-industry external metrics Delta tables.
-  #    Blank = use metastore-managed storage (this workspace has no shared
-  #    S3 external location equivalent to taran-shared-interop).
-  #    Set UC_STORAGE_BASE and UC_EXTERNAL_LOCATION once the external location
-  #    is created in this workspace. ──
+  - name: ZEROBUS_CLIENT_ID
+    value: "6ce122f2-9f0e-4939-ba31-a8d66e1d1f16"
+
+  - name: ZEROBUS_SECRET_SCOPE
+    value: ""
+
+  - name: ZEROBUS_SECRET_KEY
+    value: ""
+
   - name: UC_STORAGE_BASE
     value: ""
+
   - name: UC_EXTERNAL_LOCATION
     value: ""
 
-  # ── UC service credential for MSK-IAM.
-  #    Blank until the service credential is provisioned in a later task. ──
   - name: UC_SERVICE_CREDENTIAL
-    value: ""
+    value: "iot-rtm-sc"
 
-  # ── Streaming Lakebase project (per-industry branches).
-  #    Blank until the project is provisioned in a later task. ──
   - name: PIPELINES_LAKEBASE_PROJECT
-    value: ""
+    value: "iot-pipelines-interop"
 
-  # ── MSK bootstrap — leave blank; pipelines configure their own bootstrap
-  #    servers in the setup wizard. ──
   - name: MSK_BOOTSTRAP_SERVERS
-    value: ""
+    value: "b-1-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198,b-2-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198,b-3-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198"
 
-  # Industry-first UI.  Expand once provisioning is verified.
   - name: INDUSTRIES
     value: "pharmaceutical,manufacturing"
 
-  # Admin gate for the industry-first UI (services/app_permissions.is_admin).
   - name: ADMIN_GROUP
     value: "iot-admins"
 
-  # Explicit admin emails (CSV) — granted admin regardless of group membership.
   - name: ADMIN_EMAILS
     value: "taranpreetsingh.grover@databricks.com"
 
-  # ── LakeTS source — vendored; Apps runtime has no git egress ──
   - name: LAKETS_SQL_PATH
     value: "/app/python/source_code/databricks/vendor/lakets.sql"

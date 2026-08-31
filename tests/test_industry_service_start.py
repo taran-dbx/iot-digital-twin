@@ -1,6 +1,30 @@
 import asyncio
 
+import pytest
+
 import services.industry_service as isvc
+
+UC_CATALOG = "test_catalog"
+UC_SCHEMA = "test_schema"
+PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+
+
+@pytest.fixture(autouse=True)
+def _one_schema_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin one-schema UC + pipelines project env for deterministic helpers."""
+    monkeypatch.setenv("UC_CATALOG", UC_CATALOG)
+    monkeypatch.setenv("UC_SCHEMA", UC_SCHEMA)
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", PIPELINES_LAKEBASE_PROJECT)
+
+
+@pytest.fixture(autouse=True)
+def _event_loop() -> None:
+    """Sync tests call ``get_event_loop().run_until_complete`` — ensure a loop exists."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield
+    loop.close()
+    asyncio.set_event_loop(None)
 
 
 def _run(c):

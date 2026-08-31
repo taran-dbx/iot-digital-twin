@@ -1,0 +1,21 @@
+{
+  "UC_CATALOG": "classic_stable_realtime_demos_catalog",
+  "UC_SCHEMA": "rtm_lakets_zb",
+  "PGHOST": "ep-cool-mountain-d7anzhv5.database.eu-central-1.cloud.databricks.com",
+  "LAKEBASE_PROJECT": "iot-app-backend",
+  "LAKEBASE_ENDPOINT": "projects/iot-app-backend/branches/production/endpoints/primary",
+  "DATABRICKS_SQL_WAREHOUSE_ID": "0864d7304e74ad76",
+  "ZEROBUS_SERVER_ENDPOINT": "7474659563748021.zerobus.eu-central-1.cloud.databricks.com",
+  "ZEROBUS_CLIENT_ID": "7c59807d-7f0d-47ab-8e83-6d91add2f35c",
+  "ZEROBUS_SECRET_SCOPE": "iot-secrets",
+  "ZEROBUS_SECRET_KEY": "zerobus-client-secret",
+  "UC_STORAGE_BASE": "",
+  "UC_EXTERNAL_LOCATION": "",
+  "UC_SERVICE_CREDENTIAL": "",
+  "PIPELINES_LAKEBASE_PROJECT": "",
+  "MSK_BOOTSTRAP_SERVERS": "",
+  "INDUSTRIES": "pharmaceutical,manufacturing",
+  "ADMIN_GROUP": "iot-admins",
+  "ADMIN_EMAILS": "taranpreetsingh.grover@databricks.com",
+  "LAKETS_SQL_PATH": "/app/python/source_code/databricks/vendor/lakets.sql"
+}

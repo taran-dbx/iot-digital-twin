@@ -40,6 +40,7 @@ from models.metrics_schema import metrics_managed_table_ddl
 from models.sensor_schema import delta_table_ddl
 from services.dbsql_service import execute_dbsql
 from core.workspace_config import get_secret_scope
+from services.uc_ident import sql_fqn, sql_ident
 from services.provisioning_service import (
     SHARED_STREAMING_SP_DISPLAY_NAME,
     _find_sp_by_display_name,
@@ -75,9 +76,9 @@ def _external_location_name() -> str:
     """
     return os.getenv("UC_EXTERNAL_LOCATION", "")
 
-# Ledger teardown_order.  Higher = deleted earlier (reverse-dependency order).
-# ``DROP CATALOG ... CASCADE`` removes schemas/tables/volume, so the per-object
-# rows are recorded for inventory/health; the catalog drop does the real work.
+# Ledger teardown_order. Higher = considered earlier during teardown. Catalog
+# and schema rows are inventory only: per-pipeline deletion always preserves
+# those shared namespace containers.
 TEARDOWN_ORDER_SP = 1              # shared — never torn down per-industry
 TEARDOWN_ORDER_SECRET_SCOPE = 2    # shared — never torn down per-industry
 TEARDOWN_ORDER_SECRET = 3          # shared — never torn down per-industry
@@ -143,6 +144,16 @@ def _uc_schema() -> str:
     if not schema:
         raise RuntimeError("UC_SCHEMA must be set — it names the single schema to provision.")
     return schema
+
+
+def uc_catalog_name() -> str:
+    """Return the configured pre-existing one-schema catalog."""
+    return _uc_catalog()
+
+
+def uc_schema_name() -> str:
+    """Return the configured schema containing industry-prefixed tables."""
+    return _uc_schema()
 
 
 def _sanitize_industry(industry: str) -> str:
@@ -306,13 +317,14 @@ async def provision_industry_catalog(
     catalog = _uc_catalog()
     schema = _uc_schema()
     schema_fqn = f"{catalog}.{schema}"
+    sql_schema_fqn = sql_fqn(catalog, schema)
     wh = resolve_warehouse_id(ws, warehouse_id)
     results: list[dict] = []
     tables: dict[str, str] = {}
 
     # 1. Schema — the catalog pre-exists (owned by another SP), so only ever
     #    create the schema.  Managed tables need no external storage.
-    res = await _run_sql(f"CREATE SCHEMA IF NOT EXISTS {schema_fqn}", wh)
+    res = await _run_sql(f"CREATE SCHEMA IF NOT EXISTS {sql_schema_fqn}", wh)
     results.append({
         "resource": f"Schema '{schema_fqn}'",
         "status": "created" if res["status"] == "ok" else res["status"],
@@ -334,7 +346,12 @@ async def provision_industry_catalog(
     # 2. Managed, industry-prefixed Delta tables (no LOCATION).
     for kind in TABLE_KINDS:
         fqn = industry_table(industry, kind)
-        ddl = metrics_managed_table_ddl(fqn) if kind == "metrics" else delta_table_ddl(fqn)
+        sql_fqn_table = sql_fqn(*fqn.split("."))
+        ddl = (
+            metrics_managed_table_ddl(sql_fqn_table)
+            if kind == "metrics"
+            else delta_table_ddl(sql_fqn_table)
+        )
         res = await _run_sql(ddl, wh)
         results.append({
             "resource": f"Table '{fqn}'",
@@ -404,14 +421,15 @@ def _app_sp_grant_statements(
     UC secret the Zerobus notebooks authenticate with.
     """
     q = f"`{principal}`"
-    schema_fqn = f"{catalog}.{schema}"
+    sql_catalog = sql_ident(catalog)
+    sql_schema_fqn = sql_fqn(catalog, schema)
     return [
-        ("USE CATALOG", f"GRANT USE CATALOG ON CATALOG {catalog} TO {q}"),
+        ("USE CATALOG", f"GRANT USE CATALOG ON CATALOG {sql_catalog} TO {q}"),
         (
             "USE SCHEMA, CREATE TABLE, MODIFY, SELECT on schema",
-            f"GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA {schema_fqn} TO {q}",
+            f"GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA {sql_schema_fqn} TO {q}",
         ),
-        ("READ SECRET on schema", f"GRANT READ SECRET ON SCHEMA {schema_fqn} TO {q}"),
+        ("READ SECRET on schema", f"GRANT READ SECRET ON SCHEMA {sql_schema_fqn} TO {q}"),
     ]
 
 

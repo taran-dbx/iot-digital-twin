@@ -79,7 +79,23 @@ The app deploys to the `iot-digital-twin` Databricks App via `databricks sync` +
 SNAPSHOT deployment. Full runbook, prerequisites, and troubleshooting:
 **[`docs/deployment-playbook.md`](docs/deployment-playbook.md)**.
 
+### Workspace profiles
+
+Workspace-specific values live in `config/workspaces/<name>.profile` (JSON, no secrets).
+Render `app.yaml` before syncing:
+
+```bash
+# fe-vm-shared-interop (current target)
+python scripts/render_app_yaml.py fe-vm-shared-interop
+
+# classic-stable (eu-central-1)
+python scripts/render_app_yaml.py classic-stable
+
+# verify without writing
+python scripts/render_app_yaml.py fe-vm-shared-interop --check
+```
+
 `databricks sync` honors `.gitignore` and `.databricksignore`. Only `static/dist`,
 `databricks/vendor/lakets.sql`, the wheels, and the Python backend ship to the deployed
-app — `client/` source, `mockups/`, `design-ref/`, `scripts/`, and `docs/` are dev-only
-(excluded via `.databricksignore`).
+app — `client/` source, `mockups/`, `design-ref/`, `scripts/`, `config/`, and `docs/`
+are dev-only (excluded via `.databricksignore`).

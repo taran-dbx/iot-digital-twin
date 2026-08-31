@@ -20,6 +20,19 @@ from services import validation_state_machine as sm
 from services import validation_steps as vs
 from services.validation_service import StepContext, StepResult
 
+UC_CATALOG = "test_catalog"
+UC_SCHEMA = "test_schema"
+PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+
+
+@pytest.fixture(autouse=True)
+def _one_schema_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin one-schema UC + pipelines project env for validation_steps._cfg()."""
+    monkeypatch.setenv("UC_CATALOG", UC_CATALOG)
+    monkeypatch.setenv("UC_SCHEMA", UC_SCHEMA)
+    monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", PIPELINES_LAKEBASE_PROJECT)
+
+
 _SETUP = {
     "industry": "pharmaceutical",
     "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9198",
@@ -76,7 +89,7 @@ async def test_realtime_write_test_produces_then_consumes(monkeypatch):
     kw = produced["consumer_kw"]
     assert kw["table"] == "sensor_readings"
     assert "/validation/realtime" in kw["checkpoint_path"]
-    assert kw["metrics_table_fqn"] == "iot_pharmaceutical.metrics.streaming_metrics_realtime"
+    assert kw["metrics_table_fqn"] == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
     assert "streaming_metrics_realtime/" in kw["metrics_table_location"]
 
 
@@ -251,9 +264,8 @@ async def test_cdf_manual_parks_even_if_shadow_prep_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dbsql_read_realtime_targets_cdf_synced_table(monkeypatch):
-    """Realtime data reaches UC only via the CDF-synced Delta table
-    (lb__shadow_sensor_readings_history) — NOT realtime.sensor_readings, which
-    doesn't exist (realtime writes land in the Lakebase ChronoTable)."""
+    """Realtime dbsql_read must query the one-schema {industry}_realtime Delta
+    table — NOT the retired per-industry realtime.sensor_readings layout."""
     captured = {}
 
     async def fake_dbsql(sql, wh):
@@ -263,8 +275,9 @@ async def test_dbsql_read_realtime_targets_cdf_synced_table(monkeypatch):
     monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
     result = await vs.dbsql_read(_ctx("realtime"))
     assert result.status == sm.PASSED
-    assert "lb__shadow_sensor_readings_history" in captured["sql"]
+    assert f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_realtime" in captured["sql"]
     assert ".realtime.sensor_readings" not in captured["sql"]
+    assert "lb__shadow_sensor_readings_history" not in captured["sql"]
 
 
 @pytest.mark.asyncio
@@ -278,7 +291,8 @@ async def test_dbsql_read_microbatch_targets_sensor_data(monkeypatch):
     monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
     result = await vs.dbsql_read(_ctx("microbatch"))
     assert result.status == sm.PASSED
-    assert ".microbatch.sensor_data" in captured["sql"]
+    assert f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_microbatch" in captured["sql"]
+    assert ".microbatch.sensor_data" not in captured["sql"]
 
 
 @pytest.mark.asyncio
@@ -316,7 +330,9 @@ async def test_metrics_check_reads_per_mode_table_and_passes(monkeypatch):
     result = await vs.metrics_check(_ctx("microbatch"))
     assert result.status == sm.PASSED
     assert result.data["rows"] == 7
-    assert "streaming_metrics_microbatch" in captured["sql"]
+    assert f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics" in captured["sql"]
+    assert "mode = 'microbatch'" in captured["sql"]
+    assert "streaming_metrics_microbatch" not in captured["sql"]
 
 
 @pytest.mark.asyncio
@@ -334,8 +350,8 @@ async def test_write_test_microbatch_passes_metrics_params(monkeypatch):
     monkeypatch.setattr(vs.snip, "microbatch_write_test", fake_mb)
     result = await vs.write_test(_ctx("microbatch"))
     assert result.status == sm.PASSED
-    # Micro-batch metrics now captured to the per-mode microbatch table.
-    assert captured["metrics_table_fqn"] == "iot_pharmaceutical.metrics.streaming_metrics_microbatch"
+    # Micro-batch metrics land in the shared {industry}_metrics table (mode column).
+    assert captured["metrics_table_fqn"] == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
     assert "streaming_metrics_microbatch/" in captured["metrics_table_location"]
 
 

@@ -35,6 +35,7 @@ from services import validation_config as vc
 from services import validation_snippets as snip
 from services import validation_state_machine as sm
 from services.dbsql_service import execute_dbsql
+from services.uc_ident import sql_fqn
 from services.validation_service import StepContext, StepResult
 
 # Source marker stamped on the RTM write-test rows so cleanup can purge exactly
@@ -659,7 +660,8 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
         # {industry}_realtime Delta table (one-schema layout, provisioned by
         # industry_catalog_service).
         table = cat.industry_table(cfg["industry"], "realtime")
-    sql = f"SELECT count(*) AS n FROM {table}"
+    sql_table = sql_fqn(*table.split("."))
+    sql = f"SELECT count(*) AS n FROM {sql_table}"
 
     if ctx.mode == "zerobus":
         # Bounded poll to absorb the Zerobus ingest→commit lag (see
@@ -701,12 +703,13 @@ async def metrics_check(ctx: StepContext) -> StepResult:
     # One managed {industry}_metrics table with a leading `mode` column; filter
     # by mode so each mode's check only sees its own rows (§1.11 one-schema layout).
     table = cfg["metrics_table_fqn"]
+    sql_table = sql_fqn(*table.split("."))
     # Verify the Databricks-only latency percentiles landed (proves the delta-rs
     # metrics write path end-to-end, §1.11 S6).
     sql = (
         f"SELECT count(*) AS n, "
         f"count(e2e_p50) AS have_e2e, count(processing_p99) AS have_proc "
-        f"FROM {table} WHERE mode = '{cfg['metric_mode']}'"
+        f"FROM {sql_table} WHERE mode = '{cfg['metric_mode']}'"
     )
     res = await execute_dbsql(sql, wh)
     n = _dbsql_count(res)
@@ -769,7 +772,7 @@ async def create_table(ctx: StepContext) -> StepResult:
     from models.sensor_schema import delta_table_ddl
 
     fqn = cat.industry_table(cfg["industry"], "zerobus")
-    await execute_dbsql(delta_table_ddl(fqn), wh)
+    await execute_dbsql(delta_table_ddl(sql_fqn(*fqn.split("."))), wh)
     return StepResult(sm.PASSED, data={"table": fqn})
 
 

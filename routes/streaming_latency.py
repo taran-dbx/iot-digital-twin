@@ -42,6 +42,7 @@ from services.dbsql_service import (
     resolve_warehouse_id,
     validate_catalog,
 )
+from services.uc_ident import sql_fqn
 
 logger = logging.getLogger("iot_digital_twin.routes.streaming_latency")
 router = APIRouter()
@@ -157,11 +158,12 @@ async def get_streaming_latency(
     if not warehouse_id:
         return JSONResponse(status_code=400, content={"error": "No SQL warehouse configured"})
 
+    sql_table = sql_fqn(*table.split("."))
     sql = f"""
         SELECT batch_id, timestamp, num_input_rows, input_rps, processed_rps,
                trigger_ms, e2e_p50, e2e_p99, processing_p50, processing_p99,
                queuing_p50, queuing_p99
-        FROM {table}
+        FROM {sql_table}
         WHERE mode = '{normalized_mode}'
           AND timestamp >= TIMESTAMPADD(MINUTE, -{int(minutes)}, CURRENT_TIMESTAMP())
         ORDER BY timestamp DESC, batch_id DESC
@@ -258,7 +260,7 @@ async def get_zerobus_latency(
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
-    """Zerobus ingest latency/health KPIs for ``{industry}_zerobus``.
+    """Zerobus commit-freshness/health KPIs for ``{industry}_zerobus``.
 
     Resolves the target table as ``{UC_CATALOG}.{UC_SCHEMA}.{industry}_zerobus``
     via ``industry_table(industry, "zerobus")``.  Derives commit freshness,

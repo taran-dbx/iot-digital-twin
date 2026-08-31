@@ -34,6 +34,7 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from services import industry_catalog_service as cat
 from services import pipeline_view as pv
+from services.uc_ident import sql_fqn
 
 logger = logging.getLogger("iot_digital_twin.services.pipeline_freshness")
 
@@ -113,8 +114,9 @@ async def _dbsql_flowing(
     shared across all three pipeline flavours.
     """
     fqn = cat.industry_table(industry, mode)
+    sql_table = sql_fqn(*fqn.split("."))
     sql = (
-        f"SELECT 1 FROM {fqn} "
+        f"SELECT 1 FROM {sql_table} "
         f"WHERE {_EVENT_TIME_COLUMN} > current_timestamp() - INTERVAL {int(window_minutes)} MINUTES "
         f"LIMIT 1"
     )
