@@ -53,12 +53,12 @@ async def app_defaults():
 
     return {
         "zerobus_endpoint": os.getenv("ZEROBUS_SERVER_ENDPOINT", ""),
-        "zerobus_client_id": os.getenv("ZEROBUS_CLIENT_ID", ""),
-        "zerobus_client_secret_set": bool(
-            os.getenv("ZEROBUS_CLIENT_SECRET")
-            or (os.getenv("ZEROBUS_SECRET_SCOPE") and os.getenv("ZEROBUS_SECRET_KEY"))
-        ),
+        # The UC secret `app_sp_oauth` stores DATABRICKS_CLIENT_SECRET, so the
+        # notebook must use the matching app service-principal client id.
+        "zerobus_client_id": os.getenv("DATABRICKS_CLIENT_ID", ""),
+        "zerobus_client_secret_set": bool(os.getenv("DATABRICKS_CLIENT_SECRET")),
         "workspace_url": workspace_url,
+        "warehouse_id": os.getenv("DATABRICKS_SQL_WAREHOUSE_ID", ""),
         "lakebase_endpoint": lakebase_endpoint,
         "lakebase_project_id": lakebase_project_id,
         "lakebase_branch_id": lakebase_branch_id,

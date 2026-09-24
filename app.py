@@ -21,7 +21,10 @@ from core.state import AppState
 from core.shutdown import install_sigterm_handler, shutdown
 from routes import create_api_router
 from routes.setup import router as setup_router
-from routes.industries_admin import router as industries_admin_router
+from routes.industries_admin import (
+    router as industries_admin_router,
+    start_industry_runtime_refresh,
+)
 from routes.validation_admin import router as validation_admin_router
 from routes.static_files import router as static_files_router
 from services.simulator_service import run_simulator
@@ -94,6 +97,7 @@ async def lifespan(application: FastAPI):
 
     # --- Simulator background task ---
     state.simulator_task = asyncio.create_task(run_simulator(state))
+    start_industry_runtime_refresh(state)
 
     logger.info("=== IoT Digital Twin started (db=%s) ===", state.db_available)
     yield

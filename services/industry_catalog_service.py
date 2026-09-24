@@ -39,12 +39,8 @@ from typing import Any
 from models.metrics_schema import metrics_managed_table_ddl
 from models.sensor_schema import delta_table_ddl
 from services.dbsql_service import execute_dbsql
-from core.workspace_config import get_secret_scope
+from core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_secret_scope
 from services.uc_ident import sql_fqn, sql_ident
-from services.provisioning_service import (
-    SHARED_STREAMING_SP_DISPLAY_NAME,
-    _find_sp_by_display_name,
-)
 from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.industry_catalog")
@@ -124,7 +120,7 @@ TABLE_KINDS: tuple[str, ...] = ("realtime", "microbatch", "zerobus", "metrics")
 
 # The single UC secret holding the app SP's own OAuth client-secret, read by the
 # Zerobus producer notebooks at runtime (they only need READ SECRET).
-APP_SP_OAUTH_SECRET = "app_sp_oauth"
+APP_SP_OAUTH_SECRET = APP_SP_OAUTH_SECRET_KEY
 
 
 def _uc_catalog() -> str:
@@ -378,20 +374,8 @@ async def provision_industry_catalog(
 
 # --- Grants ----------------------------------------------------------------
 def resolve_streaming_sp_principal(ws: Any) -> str:
-    """Return the grant principal (application id) for the single app SP.
-
-    Grants to a service principal in UC SQL use the SP's *application id*.
-    Resolves the app SP by its known display name, falling back to the app SP's
-    own client id (``DATABRICKS_CLIENT_ID``).  In the single-SP layout this is
-    the same identity used for every auth path.
-    """
-    try:
-        sp = _find_sp_by_display_name(ws, SHARED_STREAMING_SP_DISPLAY_NAME)
-        if sp is not None and getattr(sp, "application_id", None):
-            return sp.application_id
-    except Exception as exc:
-        logger.warning("Could not resolve SP by name (non-fatal): %s", exc)
-    return os.getenv("DATABRICKS_CLIENT_ID", "")
+    """Return the current app SP used by the single-principal deployment."""
+    return resolve_app_principal(ws) or ""
 
 
 def resolve_app_principal(ws: Any) -> str | None:
@@ -410,7 +394,7 @@ def resolve_app_principal(ws: Any) -> str | None:
 
 
 def _app_sp_grant_statements(
-    catalog: str, schema: str, principal: str,
+    catalog: str, schema: str, industry: str, principal: str,
 ) -> list[tuple[str, str]]:
     """Return ``(label, sql)`` GRANT statements for the SINGLE app SP.
 
@@ -423,11 +407,17 @@ def _app_sp_grant_statements(
     q = f"`{principal}`"
     sql_catalog = sql_ident(catalog)
     sql_schema_fqn = sql_fqn(catalog, schema)
+    sql_metrics_table = sql_fqn(catalog, schema, f"{_sanitize_industry(industry)}_metrics")
     return [
         ("USE CATALOG", f"GRANT USE CATALOG ON CATALOG {sql_catalog} TO {q}"),
         (
-            "USE SCHEMA, CREATE TABLE, MODIFY, SELECT on schema",
-            f"GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA {sql_schema_fqn} TO {q}",
+            "USE SCHEMA, EXTERNAL USE SCHEMA, CREATE TABLE, MODIFY, SELECT on schema",
+            f"GRANT USE SCHEMA, EXTERNAL USE SCHEMA, CREATE TABLE, MODIFY, SELECT "
+            f"ON SCHEMA {sql_schema_fqn} TO {q}",
+        ),
+        (
+            "explicit SELECT, MODIFY on metrics table for Zerobus",
+            f"GRANT SELECT, MODIFY ON TABLE {sql_metrics_table} TO {q}",
         ),
         ("READ SECRET on schema", f"GRANT READ SECRET ON SCHEMA {sql_schema_fqn} TO {q}"),
     ]
@@ -462,7 +452,7 @@ async def grant_app_sp(
     wh = resolve_warehouse_id(ws, warehouse_id)
     results: list[dict] = []
     schema_fqn = f"{catalog}.{schema}"
-    for label, sql in _app_sp_grant_statements(catalog, schema, principal):
+    for label, sql in _app_sp_grant_statements(catalog, schema, industry, principal):
         res = await _run_sql(sql, wh)
         # The catalog-level USE CATALOG grant fails with PERMISSION_DENIED when the
         # deployer SP does not own the catalog; the deployer applies it out-of-band.

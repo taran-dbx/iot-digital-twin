@@ -24,21 +24,29 @@ Additive only — does not touch ``app.yaml`` or ``backend.py`` live wiring.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
 
 from services import (
+    cdf_config_service,
+    cdf_reconciliation_service,
     industry_catalog_service as cat,
     industry_setup_service as setup,
     pipelines_project_service as pps,
     provisioning_service,
+    resource_ledger,
     uc_secrets,
 )
 from services.industry_catalog_service import APP_SP_OAUTH_SECRET, TEARDOWN_ORDER_SP
 from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.industry_provisioning")
+
+
+class _CdfProvisioningError(RuntimeError):
+    pass
 
 
 def _new_ws() -> Any:
@@ -156,6 +164,7 @@ async def provision_industry(
                 write_mgr = await pps.get_write_conn(branch, ws=ws)
                 lakets_result = await setup.setup_lakets_on_branch(
                     branch, conn=write_mgr, ws=ws,
+                    industry=industry,
                     project_id=branch_result.get("project"),
                     deploy_ops_jobs=deploy_ops_jobs,
                     lakets_sql_path=lakets_sql_path,
@@ -168,12 +177,94 @@ async def provision_industry(
                         await write_mgr.close()
                     except Exception:  # pragma: no cover - best-effort
                         pass
+
+            # 5c. Enable the managed Lakebase -> Delta CDF sync through the
+            # Postgres API as soon as LakeTS has prepared the lakets_cdf shadow.
+            # This is independent of the slow interactive validation cluster.
+            if (lakets_result or {}).get("cdf_shadow") not in {
+                "created", "already_exists", "migrated"
+            }:
+                failure = {
+                    "status": "failed",
+                    "error": (
+                        (lakets_result or {}).get("steps", [{}])[-1].get("error")
+                        or "LakeTS CDF shadow was not prepared"
+                    ),
+                }
+                _section("cdf_sync", failure)
+                raise _CdfProvisioningError(failure["error"])
+            else:
+                parent = cdf_config_service.database_parent(
+                    branch,
+                    project_id=branch_result.get("project"),
+                )
+                try:
+                    cdf_result = await asyncio.to_thread(
+                        cdf_config_service.ensure_cdf_config,
+                        parent,
+                        catalog=catalog,
+                        schema=schema,
+                        ws=ws,
+                    )
+                    _section("cdf_sync", cdf_result)
+                    if db is not None and setup_id is not None:
+                        cdf_config_id = cdf_result["cdf_config_id"]
+                        resources = await resource_ledger.list_resources(db, setup_id)
+                        if not any(
+                            resource.get("resource_type") == "cdf_sync"
+                            and resource.get("identifier") == cdf_result["name"]
+                            and resource.get("status") == "active"
+                            for resource in resources
+                        ):
+                            await record_resource(
+                                db,
+                                setup_id=setup_id,
+                                resource_type="cdf_sync",
+                                identifier=cdf_result["name"],
+                                parent_ref=pps.branch_resource_name(
+                                    branch, branch_result.get("project")
+                                ),
+                                teardown_order=cdf_config_service.TEARDOWN_ORDER,
+                                metadata={
+                                    "parent": parent,
+                                    "cdf_config_id": cdf_config_id,
+                                    "catalog": catalog,
+                                    "schema": schema,
+                                    "postgres_schema": cdf_result["postgres_schema"],
+                                    "database": pps.PG_DATABASE,
+                                    "source_table": (
+                                        "lakets_cdf."
+                                        f"{cdf_reconciliation_service.shadow_table_name(industry)}"
+                                    ),
+                                    "delta_table": cdf_reconciliation_service.delta_table_fqn(
+                                        industry,
+                                        catalog=catalog,
+                                        schema=schema,
+                                    ),
+                                    "force_delete_tables": False,
+                                },
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "CDF config enablement for industry '%s' failed: %s",
+                        industry,
+                        exc,
+                    )
+                    _section(
+                        "cdf_sync",
+                        {"status": "failed", "error": str(exc)[:200]},
+                    )
+                    raise _CdfProvisioningError(
+                        f"CDF configuration failed for {industry}: {exc}"
+                    ) from exc
         except Exception as exc:
             logger.warning(
                 "Realtime Lakebase provisioning for industry '%s' failed "
                 "(non-fatal): %s", industry, exc,
             )
             _section("lakebase_branch", {"status": "failed", "error": str(exc)[:200]})
+            if isinstance(exc, _CdfProvisioningError):
+                raise RuntimeError(str(exc)) from exc
 
     # 6. Grants for the SINGLE app SP on the schema (incl. READ SECRET).
     grants_result = await cat.grant_app_sp(

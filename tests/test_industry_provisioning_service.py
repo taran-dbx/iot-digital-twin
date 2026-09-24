@@ -56,7 +56,26 @@ def _patch_all(*, preflight_pass=True):
         ),
         "setup_lakets_on_branch": patch.object(
             ips.setup, "setup_lakets_on_branch",
-            new=AsyncMock(return_value={"branch": "spiketest", "steps": []}),
+            new=AsyncMock(return_value={
+                "branch": "spiketest",
+                "cdf_shadow": "created",
+                "steps": [],
+            }),
+        ),
+        "ensure_cdf_config": patch.object(
+            ips.cdf_config_service, "ensure_cdf_config",
+            return_value={
+                "name": (
+                    "projects/iot-pipelines/branches/spiketest/databases/"
+                    "databricks_postgres/cdf-configs/lakets_cdf"
+                ),
+                "cdf_config_id": "lakets_cdf",
+                "postgres_schema": "lakets_cdf",
+                "status": "created",
+            },
+        ),
+        "list_resources": patch.object(
+            ips.resource_ledger, "list_resources", new=AsyncMock(return_value=[])
         ),
         "grant_app_sp": patch.object(
             ips.cat, "grant_app_sp",
@@ -77,16 +96,18 @@ async def test_orchestrator_runs_all_phases_and_records_sp() -> None:
     with patches["preflight_checks"], patches["provision_industry_catalog"], \
          patches["put_secret"], patches["provision_industry_branch"], \
          patches["provision_lakebase_role"], patches["get_write_conn"], \
-         patches["setup_lakets_on_branch"], patches["grant_app_sp"], \
+         patches["setup_lakets_on_branch"], patches["ensure_cdf_config"], \
+         patches["list_resources"], \
+         patches["grant_app_sp"], \
          patch.object(ips, "record_resource", side_effect=_rec):
         summary = await ips.provision_industry(
-            "spiketest", "setup-1", db=MagicMock(), ws=MagicMock(),
+            "manufacturing", "setup-1", db=MagicMock(), ws=MagicMock(),
         )
 
     phases = [s["phase"] for s in summary["sections"]]
     for expected in (
         "preflight", "app_sp", "uc_catalog", "uc_secret",
-        "lakebase_branch", "lakets_setup", "grants",
+        "lakebase_branch", "lakets_setup", "cdf_sync", "grants",
     ):
         assert expected in phases, f"missing phase {expected}"
 
@@ -98,6 +119,8 @@ async def test_orchestrator_runs_all_phases_and_records_sp() -> None:
     # The single app SP is recorded (no separate shared/zerobus SP is minted).
     sp_rows = [r for r in recorded if r["resource_type"] == "service_principal"]
     assert sp_rows and sp_rows[0]["metadata"]["application_id"] == "app-xyz"
+    cdf_rows = [r for r in recorded if r["resource_type"] == "cdf_sync"]
+    assert cdf_rows and cdf_rows[0]["metadata"]["cdf_config_id"] == "lakets_cdf"
     write_mgr.close.assert_awaited_once()
 
 
@@ -159,3 +182,35 @@ async def test_orchestrator_skips_realtime_when_disabled() -> None:
     assert "lakebase_branch" not in phases
     assert "grants" in phases
     assert "uc_secret" in phases
+
+
+@pytest.mark.asyncio
+async def test_realtime_provisioning_surfaces_shadow_failure_c7246() -> None:
+    """Realtime provisioning cannot hide CDF preparation failure [C7246][defect][regression]."""
+    patches, _ = _patch_all()
+    with patches["preflight_checks"], patches["provision_industry_catalog"], \
+         patches["put_secret"], patches["provision_industry_branch"], \
+         patches["provision_lakebase_role"], patches["get_write_conn"], \
+         patches["setup_lakets_on_branch"] as setup_lakets, \
+         patches["ensure_cdf_config"] as ensure_cdf, patches["grant_app_sp"], \
+         patch.object(ips, "record_resource", new=AsyncMock()):
+        setup_lakets.return_value = {
+            "branch": "manufacturing",
+            "cdf_shadow": "failed",
+            "steps": [
+                {
+                    "step": "enable_sync",
+                    "status": "failed",
+                    "error": "shadow migration failed",
+                }
+            ],
+        }
+        with pytest.raises(RuntimeError, match="shadow migration failed"):
+            await ips.provision_industry(
+                "manufacturing",
+                "setup-1",
+                db=MagicMock(),
+                ws=MagicMock(),
+            )
+
+    ensure_cdf.assert_not_called()

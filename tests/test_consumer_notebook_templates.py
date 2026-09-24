@@ -35,6 +35,10 @@ NOTEBOOK_TS = (
     Path(__file__).resolve().parent.parent
     / "client" / "src" / "lib" / "notebook-template.ts"
 )
+DEPLOY_CONFIG_TS = (
+    Path(__file__).resolve().parent.parent
+    / "client" / "src" / "lib" / "industry-deploy-config.ts"
+)
 
 pytestmark = pytest.mark.skipif(
     not NOTEBOOK_TS.exists(), reason="notebook template not present (client/ gitignored)"
@@ -74,6 +78,18 @@ def _metrics_listener_block() -> str:
         "expected header '# Streaming metrics — buffered async Zerobus push'"
     )
     return m.group(0)
+
+
+def _lakebase_writer_block() -> str:
+    """Extract the generated Lakebase ForeachWriter template."""
+    text = _ts()
+    match = re.search(
+        r"const LAKEBASE_FOREACH_WRITER = `(.*?)`;",
+        text,
+        re.DOTALL,
+    )
+    assert match is not None, "could not locate LAKEBASE_FOREACH_WRITER"
+    return match.group(1)
 
 
 class TestKafkaRead:
@@ -120,6 +136,29 @@ class TestParseSchema:
 
 
 class TestRealtimeWriter:
+    def test_checkpoint_uses_configured_shared_uc_volume_c7216(self) -> None:
+        """Production checkpoints must use the shared UC schema [C7216][defect]."""
+        text = DEPLOY_CONFIG_TS.read_text()
+        assert (
+            "checkpointLocation(ucCatalog, ucSchema, industry, mode)"
+            in text
+        )
+        assert (
+            "/Volumes/${catalog}/${schema}/${CHECKPOINT_VOLUME}/${industry}/${suffix}"
+            in text
+        )
+        assert "/Volumes/${catalog}/${CHECKPOINT_SCHEMA}" not in text
+
+    def test_all_delta_targets_use_one_catalog_schema_c7217(self) -> None:
+        """Deploy targets must not recreate per-industry catalogs [C7217][regression]."""
+        text = DEPLOY_CONFIG_TS.read_text()
+        assert "industryCatalog(" not in text
+        assert "MICROBATCH_SCHEMA" not in text
+        assert (
+            "`${ucCatalog}.${ucSchema}.${catalogSlug(industry)}_microbatch`"
+            in text
+        )
+
     def test_writer_chain_is_verified_rtm_shape(self) -> None:
         text = _ts()
         assert '.outputMode("update")' in text
@@ -166,6 +205,64 @@ class TestRealtimeWriter:
         ):
             assert col in text, f"INSERT missing column {col}"
 
+    def test_batches_lakebase_commits_c7218(self) -> None:
+        """Lakebase writes must amortize acknowledgements [C7218][performance]."""
+        block = _lakebase_writer_block()
+        assert "execute_values(" in block
+        assert "self.conn.autocommit = False" in block
+        assert "self.conn.commit()" in block
+        assert "self.cur.execute(self.sql, params)" not in block
+        assert '"source) VALUES %s"' in block
+        assert (
+            '_INSERT_TEMPLATE = "(%s, %s, %s, %s, %s, %s, %s, %s, '
+            '%s, %s, %s, \'sss\')"'
+        ) in block
+
+    def test_flushes_by_size_age_and_clean_close_c7218(self) -> None:
+        """Batching must retain a sub-second flush bound [C7218][regression]."""
+        block = _lakebase_writer_block()
+        assert "BATCH_SIZE = 100" in block
+        assert "MAX_BATCH_AGE_S = 0.10" in block
+        assert "len(self.buffer) >= self.BATCH_SIZE" in block
+        assert "_lb_time.monotonic() - self._last_flush >= self.MAX_BATCH_AGE_S" in block
+        open_block = re.search(
+            r"    def open\(self, partition_id, epoch_id\):(.*?)"
+            r"\n    def process",
+            block,
+            re.DOTALL,
+        )
+        assert open_block is not None
+        assert open_block.group(1).index("self._connect()") < open_block.group(1).index(
+            "self._last_flush = _lb_time.monotonic()"
+        )
+        close_block = re.search(r"    def close\(self, error\):(.*)$", block, re.DOTALL)
+        assert close_block is not None
+        assert "if error is None:\n                self._flush()" in close_block.group(1)
+        assert "else:\n                self._rollback()" in close_block.group(1)
+
+    def test_batch_failure_rolls_back_and_retries_c7218(self) -> None:
+        """Failed commits must not be acknowledged as delivered [C7218][defect]."""
+        block = _lakebase_writer_block()
+        assert "self.conn.rollback()" in block
+        assert (
+            "except (psycopg2.OperationalError, psycopg2.InterfaceError):"
+            in block
+        )
+        assert "self._reconnect()" in block
+        assert "raise" in block
+        flush_block = re.search(
+            r"    def _flush\(self\):(.*?)\n    def open",
+            block,
+            re.DOTALL,
+        )
+        assert flush_block is not None
+        flush_body = flush_block.group(1)
+        assert flush_body.count("self.buffer = []") == 1
+        assert flush_body.rindex("self.buffer = []") > flush_body.rindex(
+            "except Exception:"
+        )
+        assert "ambiguous batch" in flush_body
+
 
 class TestRealtimeAppSseBridge:
     """The realtime consumer ALSO POSTs each batch to the app for the live SSE
@@ -186,12 +283,53 @@ class TestRealtimeAppSseBridge:
         assert "self.app = AppSseWriter()" in block
 
     def test_lakebase_gates_writer_sse_is_best_effort(self) -> None:
-        # Lakebase open() gates the writer (return lb_ok); the SSE write only
-        # runs when its own open() succeeded (self._app_ok) — a failed SSE token
-        # mint must never block the persisted Lakebase write.
+        """Only Lakebase may gate checkpoint progress [C7219][regression]."""
         block = self._sse_block()
-        assert "return lb_ok" in block
-        assert "if self._app_ok:" in block
+        dual_writer = block.split("class RealtimeDualWriter:", 1)[1]
+        assert "lb_ok = self.lakebase.open" in dual_writer
+        assert "return lb_ok" in dual_writer
+        assert "try:\n            self._app_ok = self.app.open" in dual_writer
+        assert "if self._app_ok:" in dual_writer
+
+    def test_process_only_enqueues_dashboard_rows_c7219(self) -> None:
+        """RTM process must perform no HTTP or OAuth I/O [C7219][performance]."""
+        block = self._sse_block()
+        app_writer = block.split("class AppSseWriter:", 1)[1].split(
+            "class RealtimeDualWriter:", 1
+        )[0]
+        process = re.search(
+            r"    def process\(self, row\):(.*?)\n    def _enqueue",
+            app_writer,
+            re.DOTALL,
+        )
+        assert process is not None
+        process_body = process.group(1)
+        assert "self._enqueue()" in process_body
+        assert "_post(" not in process_body
+        assert "urlopen(" not in process_body
+        assert "_mint_token(" not in process_body
+
+    def test_uses_bounded_daemon_sender_c7219(self) -> None:
+        """Dashboard delivery runs on a bounded daemon [C7219][regression]."""
+        block = self._sse_block()
+        assert "import queue as _sse_queue" in block
+        assert "import threading as _sse_threading" in block
+        assert "QUEUE_SIZE = 2" in block
+        assert "_sse_queue.Queue(maxsize=self.QUEUE_SIZE)" in block
+        assert "_sse_threading.Thread(" in block
+        assert "args=(self.queue,)" in block
+        assert "def _sender_loop(self, sender_queue):" in block
+        assert "batch = sender_queue.get()" in block
+        assert "daemon=True" in block
+        assert "self.sender.join(timeout=self.JOIN_TIMEOUT_S)" in block
+
+    def test_queue_full_is_nonblocking_and_best_effort_c7219(self) -> None:
+        """Stale dashboard batches are dropped, not backpressured [C7219][performance][regression]."""
+        block = self._sse_block()
+        assert "self.queue.put_nowait(batch)" in block
+        assert "except _sse_queue.Full:" in block
+        assert "self.queue.get_nowait()" in block
+        assert "oldest\n# stale dashboard batch is discarded" in block
 
     def test_posts_to_app_ingest_with_pipeline_id_header(self) -> None:
         block = self._sse_block()
@@ -204,17 +342,15 @@ class TestRealtimeAppSseBridge:
         assert "/oidc/v1/token" in block
         assert '"grant_type": "client_credentials"' in block
         assert '"scope": "all-apis"' in block
-        # creds come from the workspace secret scope, minted per open(). The
-        # realtime dual writer authenticates as the shared streaming SP (the
-        # principal registered as the Lakebase OAuth role), reused for the SSE
-        # callback token too — NOT the zerobus SP.
+        # The deploy service normalizes these legacy template references to the
+        # single app SP + UC secret immediately before upload.
         assert 'dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")' in _ts()
         assert "def open(self, partition_id, epoch_id):" in block
 
     def test_retries_once_on_401_403(self) -> None:
         block = self._sse_block()
-        assert "if e.code in (401, 403):" in block
-        assert "self.token = self._mint_token()" in block
+        assert "if error.code in (401, 403):" in block
+        assert "token = self._mint_token()" in block
 
     def test_config_cell_defines_app_url_and_pipeline_id(self) -> None:
         text = _ts()

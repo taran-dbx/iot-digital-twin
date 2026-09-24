@@ -46,8 +46,9 @@ __all__ = [
     "COMMON_STEPS", "MODE_STEPS", "MODE_ORDER", "TERMINAL_STEPS",
     "WAITING_ADMIN_STEPS", "CLEANUP_STEP", "SEP",
     "step_key", "bare_step", "mode_of", "is_terminal",
-    "build_sequence", "initial_state", "get_step", "set_step",
+    "build_sequence", "initial_state", "reconcile_modes", "get_step", "set_step",
     "mark_running", "next_runnable_step", "retry_from", "mark_cdf_enabled",
+    "reset_legacy_cdf_park",
     "current_step", "derive_phase",
     "PROVISION_CLUSTER_STEP", "PROVISIONING_CLUSTER_STATES",
     "PHASE_PROVISIONING", "PHASE_VALIDATING", "PHASE_WAITING_ADMIN",
@@ -107,8 +108,9 @@ MODE_ORDER: tuple[str, ...] = ("realtime", "microbatch", "zerobus")
 # Terminal steps after every lane — not counted toward the deploy gate.
 TERMINAL_STEPS: tuple[str, ...] = ("show_final_notebook", "done")
 
-# Steps that park in ``waiting_admin`` for a manual admin action.
-WAITING_ADMIN_STEPS: frozenset[str] = frozenset({"cdf_manual"})
+# No current step requires a manual admin action. ``WAITING_ADMIN`` remains a
+# valid persisted status so older validation states can be migrated safely.
+WAITING_ADMIN_STEPS: frozenset[str] = frozenset()
 
 # The data-purge step (its success proves test data was cleaned up — §1.13).
 CLEANUP_STEP = "cleanup"
@@ -193,6 +195,35 @@ def initial_state(enabled_modes: Iterable[str]) -> dict:
         "cluster_id": None,
         "run_ids": {},
     }
+
+
+def reconcile_modes(state: dict, enabled_modes: Iterable[str]) -> dict:
+    """Rebuild a state for a changed mode selection without re-running retained lanes.
+
+    Existing records are preserved for common steps and mode lanes that remain
+    enabled. Newly introduced steps start pending, removed lanes disappear, and
+    terminal presentation steps restart so the updated configuration gets a
+    fresh final review. This is the incremental add/remove-mode path; an
+    explicit re-run with an unchanged selection still uses :func:`initial_state`.
+    """
+    reconciled = initial_state(enabled_modes)
+    previous_steps = state.get("steps") or {}
+    for key in reconciled["sequence"]:
+        if key in TERMINAL_STEPS:
+            continue
+        if key in previous_steps:
+            reconciled["steps"][key] = copy.deepcopy(previous_steps[key])
+
+    if any(mode in reconciled["enabled_modes"] for mode in ("realtime", "microbatch")):
+        reconciled["cluster_id"] = state.get("cluster_id")
+
+    previous_run_ids = state.get("run_ids") or {}
+    reconciled["run_ids"] = {
+        key: run_id
+        for key, run_id in previous_run_ids.items()
+        if key in reconciled["steps"]
+    }
+    return reconciled
 
 
 # --- Accessors -------------------------------------------------------------
@@ -294,6 +325,15 @@ def mark_cdf_enabled(state: dict, mode: str = "realtime") -> dict:
     if key not in state.get("steps", {}):
         raise KeyError(f"no cdf_manual step for mode {mode!r}")
     return set_step(state, key, PASSED)
+
+
+def reset_legacy_cdf_park(state: dict) -> dict:
+    """Make a persisted pre-automation CDF park runnable through the API."""
+    key = step_key("realtime", "cdf_manual")
+    record = (state.get("steps") or {}).get(key)
+    if not record or record.get("status") != WAITING_ADMIN:
+        return state
+    return set_step(state, key, PENDING)
 
 
 # --- UI progress derivation (spec §1.12) -----------------------------------

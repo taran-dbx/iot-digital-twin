@@ -32,6 +32,7 @@ def _build_app(state: AppState) -> FastAPI:
 def _state() -> AppState:
     state = AppState()
     state.db = MagicMock()
+    state.db.fetchrow = AsyncMock(return_value={"exists": 1})
     state.db_available = True
     state.db_error = None
     return state
@@ -76,7 +77,7 @@ class TestStreamingLatency:
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
                 )
 
         expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_metrics"
@@ -94,6 +95,19 @@ class TestStreamingLatency:
         assert body["processed_rps"] == 480.0
         assert body["trigger_ms"] == 2000.0
         assert body["num_input_rows"] == 1000
+        # Summary tiles use explicit, semantically named aliases from this
+        # industry+mode-scoped metrics row. They must never fall back to the
+        # process-global /api/sources rolling counters.
+        assert body["rows_per_sec"] == 480.0
+        assert body["processing_latency_p50_ms"] == 40.0
+        assert body["processing_latency_p99_ms"] == 90.0
+        assert body["spark_e2e_latency_p99_ms"] == 350.0
+        assert body["throughput_basis"] == "spark_processed_rows_per_second"
+        assert body["e2e_basis"] == "spark_source_available_to_trigger_complete"
+        assert body["scope"] == {
+            "industry": "pharmaceutical",
+            "mode": "realtime",
+        }
         # Series is ascending (oldest → newest) with one entry per row.
         assert len(body["series"]) == 2
         assert body["series"][0]["batch_id"] == 41
@@ -126,7 +140,7 @@ class TestStreamingLatency:
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=energy&mode=microbatch"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy&mode=microbatch"
                 )
 
         assert resp.status_code == 200
@@ -147,13 +161,17 @@ class TestStreamingLatency:
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
                 )
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["has_data"] is False
         assert body["e2e_p50"] is None
+        assert body["rows_per_sec"] is None
+        assert body["processing_latency_p50_ms"] is None
+        assert body["processing_latency_p99_ms"] is None
+        assert body["spark_e2e_latency_p99_ms"] is None
         assert body["series"] == []
         assert "reason" in body
 
@@ -174,7 +192,7 @@ class TestStreamingLatency:
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
                 )
 
         assert resp.status_code == 200
@@ -195,7 +213,7 @@ class TestStreamingLatency:
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=pharmaceutical&mode=microbatch"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=microbatch"
                 )
 
         assert resp.status_code == 200
@@ -211,7 +229,7 @@ class TestStreamingLatency:
         with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=pharmaceutical&mode=zerobus"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=zerobus"
                 )
         assert resp.status_code == 400
 
@@ -222,7 +240,7 @@ class TestStreamingLatency:
         transport = ASGITransport(app=app)
         with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/streaming?industry=%21%21%21&mode=realtime")
+                resp = await client.get("/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=%21%21%21&mode=realtime")
         assert resp.status_code == 400
 
     async def test_no_warehouse_returns_400(self) -> None:
@@ -235,7 +253,7 @@ class TestStreamingLatency:
         ), patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
                 )
         assert resp.status_code == 400
 
@@ -270,7 +288,7 @@ class TestZerobusLatency:
         ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?industry=pharmaceutical&minutes=60")
+                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&minutes=60")
 
         expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_zerobus"
         assert resp.status_code == 200
@@ -299,7 +317,7 @@ class TestZerobusLatency:
         ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?industry=energy")
+                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -324,7 +342,7 @@ class TestZerobusLatency:
         ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?industry=pharmaceutical")
+                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -355,7 +373,7 @@ class TestZerobusLatency:
         ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?industry=energy&minutes=30")
+                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy&minutes=30")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -371,7 +389,7 @@ class TestZerobusLatency:
         transport = ASGITransport(app=app)
         with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?industry=%21%21%21")
+                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=%21%21%21")
         assert resp.status_code == 400
 
     async def test_no_warehouse_returns_400(self) -> None:
@@ -383,5 +401,5 @@ class TestZerobusLatency:
             "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
         ), patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?industry=pharmaceutical")
+                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical")
         assert resp.status_code == 400

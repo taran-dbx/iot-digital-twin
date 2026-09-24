@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import datetime as dt
+import json
 import os
 import subprocess
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -400,3 +404,467 @@ class TestRunRetention:
         result = await lakets_service.run_retention(pool)
         assert result["public.a"] == "error: locked"
         assert result["public.b"] == 3
+
+
+class TestLaketsDashboard:
+    """Unit contract for the consolidated LakeTS observability service."""
+
+    @pytest.mark.asyncio
+    async def test_rollup_series_values_are_json_serializable_c7226_regression(
+        self,
+    ) -> None:
+        """[C7226][regression] Preserve sensor rollup values in the dashboard map."""
+        bucket = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        refreshed_at = bucket + dt.timedelta(minutes=1)
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(return_value={
+            "name": "sensor_1m",
+            "rollup_table": "_rollup_sensor_1m",
+            "bucket": "00:01:00",
+            "watermark": bucket,
+            "last_refreshed_at": refreshed_at,
+            "refresh_age_seconds": Decimal("4.25"),
+            "pending_invalidations": 2,
+        })
+        pool.fetch = AsyncMock(return_value=[
+            {
+                "bucket": bucket,
+                "sensor_name": "temperature",
+                "sample_count": Decimal("60"),
+                "avg_value": Decimal("21.75"),
+                "min_value": Decimal("20.5"),
+                "max_value": Decimal("23.0"),
+                "stddev_value": Decimal("0.625"),
+            }
+        ])
+
+        section = await lakets_service._rollup_dashboard(pool)
+
+        assert section["value"]["series"] == [
+            {
+                "bucket": bucket.isoformat(),
+                "sensor_name": "temperature",
+                "sample_count": 60,
+                "avg_value": 21.75,
+                "min_value": 20.5,
+                "max_value": 23.0,
+                "stddev_value": 0.625,
+            }
+        ]
+        json.dumps(section)
+
+    @pytest.mark.asyncio
+    async def test_unavailable_probes_return_null_values_with_reasons_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Never invent dashboard values after probe failures."""
+        pool = MagicMock()
+        unavailable = RuntimeError("observability catalog unavailable")
+        pool.fetch = AsyncMock(side_effect=unavailable)
+        pool.fetchrow = AsyncMock(side_effect=unavailable)
+        pool.fetchval = AsyncMock(side_effect=unavailable)
+
+        result = await lakets_service.get_dashboard(pool)
+
+        expected_sections = {
+            "partitions",
+            "current_partition",
+            "tiering",
+            "rollup",
+            "query_comparison",
+            "data_quality",
+            "lvc",
+            "cdf",
+        }
+        assert set(result) == expected_sections
+        for name in expected_sections - {"query_comparison"}:
+            assert result[name]["value"] is None, name
+            assert result[name]["reason"].endswith("telemetry unavailable"), name
+            assert "observability catalog unavailable" not in result[name]["reason"], name
+        comparison = result["query_comparison"]
+        assert comparison["value"]["raw_rows"] is None
+        assert comparison["value"]["rollup_rows"] is None
+        assert comparison["reason"] == (
+            "Raw aggregate query unavailable; Rollup aggregate query unavailable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_partition_phases_and_json_serialization_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Serialize partition phases and numeric metadata."""
+        start = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        end = start + dt.timedelta(minutes=15)
+        pool = MagicMock()
+        pool.fetch = AsyncMock(return_value=[
+            {
+                "name": "public.sensor_readings_20260901_080000",
+                "range_start": start,
+                "range_end": end,
+                "phase": "current",
+                "status": "active",
+                "recorded_row_count": 12,
+                "recorded_size_bytes": 4096,
+                "active_count": 1,
+                "tiered_count": 0,
+                "dropped_count": 0,
+                "total_count": 600,
+                "is_current": True,
+                "live_row_count": 13,
+                "live_size_bytes": 8192,
+                "age_seconds": Decimal("30.5"),
+            }
+        ])
+
+        partitions, current = await lakets_service._partition_dashboard(pool)
+
+        assert partitions["value"]["timeline"][0]["phase"] == "current"
+        assert partitions["value"]["timeline"][0]["range_start"] == start.isoformat()
+        assert current["value"]["phase"] == "current"
+        assert current["value"]["age_seconds"] == 30.5
+        assert partitions["value"]["counts"]["total"] == 600
+        assert "LIMIT 500" in lakets_service._PARTITIONS_DASHBOARD_SQL
+        assert "PARTITION BY phase" in lakets_service._PARTITIONS_DASHBOARD_SQL
+        json.dumps({"partitions": partitions, "current_partition": current})
+
+    @pytest.mark.asyncio
+    async def test_no_policy_preserves_tier_counts_c7225_regression(self) -> None:
+        """[C7225][regression] Preserve tier counts without claiming eligibility."""
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(return_value={
+            "active": 4,
+            "age_eligible": 0,
+            "durable_eligible": 0,
+            "tiered": 2,
+            "dropped": 1,
+            "policy_type": None,
+            "policy": None,
+            "enabled": None,
+            "last_run_at": None,
+            "committed_lsn": None,
+        })
+
+        section = await lakets_service._tiering_dashboard(pool)
+
+        assert section["value"]["active"] == 4
+        assert section["value"]["tiered"] == 2
+        assert section["value"]["dropped"] == 1
+        assert section["value"]["eligible"] is None
+        assert "No tiering policy configured" in section["reason"]
+        tier_sql = lakets_service._TIERING_DASHBOARD_SQL
+        assert "'tiering', 'tiered_retention'" in tier_sql
+        assert "p.config->>'after'" in tier_sql
+        assert "p.config->>'tier_after'" in tier_sql
+        assert "enabled DESC NULLS LAST" in tier_sql
+
+    @pytest.mark.asyncio
+    async def test_data_quality_reports_exact_missing_buckets_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Report missing buckets without inventing samples."""
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(return_value={
+            "sensor_count": 2,
+            "expected_bucket_count": 60,
+            "observed_bucket_count": 57,
+            "missing_bucket_count": 3,
+            "missing_bucket_percentage": Decimal("5.00"),
+        })
+
+        section = await lakets_service._data_quality_dashboard(pool)
+
+        assert section["value"]["missing_bucket_count"] == 3
+        assert section["value"]["gapfilled_count"] is None
+        assert section["value"]["missing_sample_percentage"] is None
+        assert "generate_series" in lakets_service._DATA_QUALITY_DASHBOARD_SQL
+
+    @pytest.mark.asyncio
+    async def test_query_comparison_keeps_independent_failures_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Compare equivalent aggregates without hiding failures."""
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(
+            side_effect=[
+                RuntimeError("raw unavailable"),
+                {"aggregate_rows": 12, "source_rows": 120},
+            ]
+        )
+
+        section = await lakets_service._query_comparison_dashboard(pool)
+
+        assert section["value"]["raw_rows"] is None
+        assert section["value"]["rollup_rows"] == 12
+        assert section["value"]["raw_error"] == "Raw aggregate query unavailable"
+        assert section["value"]["source_event_rows"] is None
+        assert section["value"]["persisted_rollup_rows"] == 12
+        assert (
+            section["value"]["event_to_rollup_row_reduction_percentage"] is None
+        )
+        assert "GROUP BY bucket, sensor_name" in (
+            lakets_service._RAW_AGGREGATE_COUNT_SQL
+        )
+        assert "sample_count" in lakets_service._ROLLUP_AGGREGATE_COUNT_SQL
+
+    @pytest.mark.asyncio
+    async def test_query_comparison_runs_probes_concurrently_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Time raw and rollup probes in parallel."""
+        both_started = asyncio.Event()
+        started = 0
+
+        async def fetchrow(sql: str) -> dict[str, int]:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=0.2)
+            if sql == lakets_service._RAW_AGGREGATE_COUNT_SQL:
+                return {"aggregate_rows": 10, "source_rows": 100}
+            return {"aggregate_rows": 10, "source_rows": 100}
+
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(side_effect=fetchrow)
+
+        section = await lakets_service._query_comparison_dashboard(pool)
+
+        assert pool.fetchrow.await_count == 2
+        assert section["value"]["source_event_rows"] == 100
+        assert section["value"]["persisted_rollup_rows"] == 10
+        assert section["value"]["event_to_rollup_row_reduction_percentage"] == 90
+
+    @pytest.mark.asyncio
+    async def test_lvc_event_and_update_lag_are_json_safe_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Expose cache event lag and update age."""
+        event_time = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(side_effect=[
+            {
+                "enabled": True,
+                "cache_table_name": "_lvc_sensor_readings",
+                "key_columns": ["sensor_name"],
+                "value_columns": ["event_time", "value"],
+            },
+            {
+                "cached_series": 8,
+                "source_event_time": event_time,
+                "cache_event_time": event_time - dt.timedelta(seconds=2),
+                "cache_updated_at": event_time + dt.timedelta(seconds=1),
+                "source_to_cache_event_lag_seconds": Decimal("2.0"),
+                "cache_update_age_seconds": Decimal("4.5"),
+            },
+        ])
+
+        section = await lakets_service._lvc_dashboard(pool)
+
+        assert section["value"]["source_event_time"] == event_time.isoformat()
+        assert section["value"]["source_to_cache_event_lag_seconds"] == 2.0
+        assert section["value"]["cache_update_age_seconds"] == 4.5
+
+    @pytest.mark.asyncio
+    async def test_cdf_serializes_lsn_and_shadow_lag_c7225_regression(
+        self,
+    ) -> None:
+        """[C7225][regression] Serialize CDF positions and event lag."""
+
+        class PgLsn:
+            def __str__(self) -> str:
+                return "0/16B6C50"
+
+        hot_latest = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(return_value={
+            "hot_latest": hot_latest,
+            "sync_enabled": True,
+            "shadow_table_name": "_shadow_sensor_readings",
+            "committed_lsn": PgLsn(),
+            "wal_lag_bytes": Decimal("128"),
+        })
+        pool.fetchval = AsyncMock(
+            return_value=hot_latest - dt.timedelta(seconds=3)
+        )
+
+        section = await lakets_service._cdf_dashboard(pool)
+
+        assert "committed_lsn" not in section["value"]
+        assert section["value"]["wal_lag_bytes"] == 128
+        assert section["value"]["hot_to_shadow_event_lag_seconds"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_unique_shadow_migration_is_atomic_and_idempotent_c7238():
+    """Cutover precedes unlocked history copies [C7238][defect][regression]."""
+    pool = MagicMock()
+    target = "_shadow_manufacturing_sensor_readings"
+    pool.fetchrow = AsyncMock(
+        side_effect=[
+            {"shadow_table_name": "_shadow_sensor_readings", "sync_enabled": True},
+            {"backfill_complete": False, "index_valid": False},
+            {"backfill_complete": False, "index_valid": True},
+            {"shadow_table_name": target, "sync_enabled": True},
+            {"backfill_complete": True, "index_valid": True},
+        ]
+    )
+    pool.fetchval = AsyncMock(side_effect=[True, True, True])
+    pool.execute = AsyncMock(return_value="DO")
+
+    migrated = await lakets_service.reconcile_chronotable_shadow(
+        pool, shadow_table=target
+    )
+
+    assert migrated["status"] == "migrated"
+    sql_calls = [call.args[0] for call in pool.execute.await_args_list]
+    cutover_index = next(
+        index for index, sql in enumerate(sql_calls) if "DO $reconcile$" in sql
+    )
+    legacy_copy_index = next(
+        index
+        for index, sql in enumerate(sql_calls)
+        if "FROM lakets_cdf._shadow_sensor_readings AS source_rows" in sql
+    )
+    public_copy_index = next(
+        index
+        for index, sql in enumerate(sql_calls)
+        if "FROM public.sensor_readings AS source_rows" in sql
+    )
+    marker_index = next(
+        index
+        for index, sql in enumerate(sql_calls)
+        if "lakets-cdf-backfill-complete:v1" in sql
+    )
+    cutover_sql = sql_calls[cutover_index]
+    legacy_copy_sql = sql_calls[legacy_copy_index]
+    assert cutover_index < legacy_copy_index < public_copy_index < marker_index
+    assert "INSERT INTO" not in cutover_sql
+    assert "max(id)" not in cutover_sql
+    assert "LOCK TABLE public.sensor_readings" in cutover_sql
+    assert "CREATE OR REPLACE TRIGGER trg_lakets_sync" in cutover_sql
+    assert "source IS DISTINCT FROM 'validation'" in legacy_copy_sql
+    assert "ON CONFLICT (id) DO NOTHING" in legacy_copy_sql
+    assert "LOCK TABLE" not in legacy_copy_sql
+    assert any(
+        "DROP INDEX CONCURRENTLY IF EXISTS "
+        "lakets_cdf._shadow_manufacturing_sensor_readings_id_uidx" in sql
+        for sql in sql_calls
+    )
+    assert any(
+        "CREATE UNIQUE INDEX CONCURRENTLY "
+        "_shadow_manufacturing_sensor_readings_id_uidx" in sql
+        for sql in sql_calls
+    )
+    assert "DROP TABLE" not in "\n".join(sql_calls)
+    assert migrated["copy_sources"] == [
+        "lakets_cdf._shadow_sensor_readings",
+        "public.sensor_readings",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_completed_shadow_fast_path_has_no_writes_c7254():
+    """Durably completed migrations perform no writes [C7254][smoke][regression]."""
+    pool = MagicMock()
+    target = "_shadow_manufacturing_sensor_readings"
+    pool.fetchrow = AsyncMock(
+        side_effect=[
+            {"shadow_table_name": target, "sync_enabled": True},
+            {"backfill_complete": True, "index_valid": True},
+        ]
+    )
+    pool.fetchval = AsyncMock()
+    pool.execute = AsyncMock()
+
+    existing = await lakets_service.reconcile_chronotable_shadow(
+        pool, shadow_table=target
+    )
+
+    assert existing["status"] == "already_exists"
+    assert existing["copy_sources"] == []
+    pool.fetchval.assert_not_awaited()
+    pool.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_backfill_retries_after_cutover_c7255():
+    """Missing marker forces idempotent crash recovery [C7255][defect][regression]."""
+    target = "_shadow_manufacturing_sensor_readings"
+    first_pool = MagicMock()
+    first_pool.fetchrow = AsyncMock(
+        side_effect=[
+            {"shadow_table_name": "_shadow_sensor_readings", "sync_enabled": True},
+            {"backfill_complete": False, "index_valid": True},
+            {"shadow_table_name": target, "sync_enabled": True},
+        ]
+    )
+    first_pool.fetchval = AsyncMock(side_effect=[True, True, True])
+    first_sql: list[str] = []
+
+    async def fail_during_legacy_copy(sql):
+        first_sql.append(sql)
+        if "FROM lakets_cdf._shadow_sensor_readings AS source_rows" in sql:
+            raise RuntimeError("connection lost")
+        return "OK"
+
+    first_pool.execute = AsyncMock(side_effect=fail_during_legacy_copy)
+    interrupted = await lakets_service.reconcile_chronotable_shadow(
+        first_pool, shadow_table=target
+    )
+
+    assert interrupted["status"] == "failed"
+    assert any("DO $reconcile$" in sql for sql in first_sql)
+    assert not any("lakets-cdf-backfill-complete:v1" in sql for sql in first_sql)
+
+    retry_pool = MagicMock()
+    retry_pool.fetchrow = AsyncMock(
+        side_effect=[
+            {"shadow_table_name": target, "sync_enabled": True},
+            {"backfill_complete": False, "index_valid": True},
+            {"backfill_complete": False, "index_valid": True},
+            {"shadow_table_name": target, "sync_enabled": True},
+            {"backfill_complete": True, "index_valid": True},
+        ]
+    )
+    retry_pool.fetchval = AsyncMock(side_effect=[True, True, True])
+    retry_pool.execute = AsyncMock(return_value="OK")
+
+    recovered = await lakets_service.reconcile_chronotable_shadow(
+        retry_pool, shadow_table=target
+    )
+
+    assert recovered["status"] == "migrated"
+    retry_sql = "\n".join(
+        call.args[0] for call in retry_pool.execute.await_args_list
+    )
+    assert "FROM lakets_cdf._shadow_sensor_readings AS source_rows" in retry_sql
+    assert "FROM public.sensor_readings AS source_rows" in retry_sql
+    assert "lakets-cdf-backfill-complete:v1" in retry_sql
+
+
+@pytest.mark.asyncio
+async def test_new_shadow_without_legacy_copies_public_source_c7250():
+    """Fresh branches reconcile without a legacy shadow [C7250][smoke][regression]."""
+    pool = MagicMock()
+    target = "_shadow_energy_sensor_readings"
+    pool.fetchrow = AsyncMock(
+        side_effect=[
+            {"shadow_table_name": None, "sync_enabled": False},
+            {"backfill_complete": False, "index_valid": False},
+            {"backfill_complete": False, "index_valid": True},
+            {"shadow_table_name": target, "sync_enabled": True},
+            {"backfill_complete": True, "index_valid": True},
+        ]
+    )
+    pool.fetchval = AsyncMock(side_effect=[True, False])
+    pool.execute = AsyncMock(return_value="OK")
+
+    migrated = await lakets_service.reconcile_chronotable_shadow(
+        pool, shadow_table=target
+    )
+
+    assert migrated["status"] == "migrated"
+    assert migrated["copy_sources"] == ["public.sensor_readings"]
+    all_sql = "\n".join(call.args[0] for call in pool.execute.await_args_list)
+    assert "FROM public.sensor_readings AS source_rows" in all_sql
+    assert "FROM lakets_cdf._shadow_sensor_readings" not in all_sql

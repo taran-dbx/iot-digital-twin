@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "IoT Digital Twin — System Architecture",
+    "locale": "en",
+    "output": "iot-digital-twin.architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [1390, 780],
+    "views": [
+      {
+        "id": "app-experience",
+        "label": "App",
+        "focus": ["operator", "react-spa", "fastapi", "app-lakebase"],
+        "note": "The React SPA uses REST and SSE while FastAPI persists control-plane state in Lakebase."
+      },
+      {
+        "id": "realtime-path",
+        "label": "Real-time",
+        "focus": ["iot-producers", "amazon-msk", "spark-streaming", "lakets", "fastapi", "react-spa"],
+        "note": "Kafka events reach LakeTS and the live dashboard through Spark Real-Time Mode."
+      },
+      {
+        "id": "historical-path",
+        "label": "History",
+        "focus": ["lakets", "cdf-sync", "uc-delta", "dbsql", "fastapi", "react-spa"],
+        "note": "CDF moves aged LakeTS rows to Delta, where DBSQL serves historical analytics."
+      },
+      {
+        "id": "alternate-ingestion",
+        "label": "Alternates",
+        "focus": ["iot-producers", "amazon-msk", "spark-streaming", "zerobus", "uc-delta"],
+        "note": "Micro-batch uses Kafka and Spark; independently, the simulator feeds Zerobus."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "Operator",
+      "sublabel": "Browser",
+      "pos": [40, 80],
+      "size": [130, 64]
+    },
+    {
+      "id": "react-spa",
+      "type": "frontend",
+      "label": "React SPA",
+      "sublabel": "Dashboards · 3D twin",
+      "tag": "Vite + TypeScript",
+      "pos": [280, 80],
+      "size": [160, 64]
+    },
+    {
+      "id": "fastapi",
+      "type": "backend",
+      "label": "FastAPI App",
+      "sublabel": "REST · SSE · orchestration",
+      "tag": "Databricks App",
+      "pos": [572.5, 80],
+      "size": [170, 64]
+    },
+    {
+      "id": "app-lakebase",
+      "type": "database",
+      "label": "App Lakebase",
+      "sublabel": "Pipeline metadata · settings",
+      "tag": "OAuth asyncpg",
+      "pos": [880, 80],
+      "size": [180, 64]
+    },
+    {
+      "id": "iot-producers",
+      "type": "external",
+      "label": "IoT Producers",
+      "sublabel": "Simulated sensor events",
+      "pos": [40, 360],
+      "size": [150, 64]
+    },
+    {
+      "id": "amazon-msk",
+      "type": "messagebus",
+      "label": "Amazon MSK",
+      "sublabel": "Kafka topics",
+      "pos": [280, 360],
+      "size": [150, 64]
+    },
+    {
+      "id": "spark-streaming",
+      "type": "backend",
+      "label": "Spark Streaming",
+      "sublabel": "Real-time · micro-batch",
+      "tag": "Databricks Jobs",
+      "pos": [570, 360],
+      "size": [175, 64]
+    },
+    {
+      "id": "lakets",
+      "type": "database",
+      "label": "LakeTS",
+      "sublabel": "ChronoTable hot tier",
+      "tag": "sensor_readings",
+      "pos": [880, 360],
+      "size": [175, 64]
+    },
+    {
+      "id": "cdf-sync",
+      "type": "cloud",
+      "label": "Lakebase CDF",
+      "sublabel": "wal2delta sync",
+      "pos": [1175, 360],
+      "size": [155, 64]
+    },
+    {
+      "id": "zerobus",
+      "type": "backend",
+      "label": "Zerobus SDK",
+      "sublabel": "Direct ingest",
+      "pos": [570, 610],
+      "size": [175, 64]
+    },
+    {
+      "id": "uc-delta",
+      "type": "database",
+      "label": "UC Delta Tables",
+      "sublabel": "Cold history · metrics",
+      "tag": "Unity Catalog",
+      "pos": [880, 610],
+      "size": [175, 64]
+    },
+    {
+      "id": "dbsql",
+      "type": "cloud",
+      "label": "DBSQL Warehouse",
+      "sublabel": "Historical queries",
+      "pos": [1175, 610],
+      "size": [175, 64]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Databricks App runtime",
+      "wraps": ["react-spa", "fastapi"],
+      "pad": 30
+    },
+    {
+      "kind": "region",
+      "label": "Databricks data platform",
+      "wraps": ["fastapi", "app-lakebase", "spark-streaming", "lakets", "cdf-sync", "zerobus", "uc-delta", "dbsql"],
+      "pad": 36
+    }
+  ],
+  "connections": [
+    {
+      "id": "browser-loads-spa",
+      "from": "operator",
+      "to": "react-spa",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "spa-calls-api",
+      "from": "react-spa",
+      "to": "fastapi",
+      "label": "REST + SSE /api/events",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-stores-metadata",
+      "from": "fastapi",
+      "to": "app-lakebase",
+      "label": "SQL over OAuth"
+    },
+    {
+      "id": "producers-publish",
+      "from": "iot-producers",
+      "to": "amazon-msk",
+      "label": "Kafka events",
+      "variant": "emphasis"
+    },
+    {
+      "id": "msk-streams",
+      "from": "amazon-msk",
+      "to": "spark-streaming",
+      "label": "Structured Streaming",
+      "variant": "emphasis"
+    },
+    {
+      "id": "spark-writes-hot",
+      "from": "spark-streaming",
+      "to": "lakets",
+      "label": "Real-Time Mode writes",
+      "variant": "emphasis",
+      "labelDx": 120,
+      "labelDy": -34
+    },
+    {
+      "id": "spark-pushes-live",
+      "from": "spark-streaming",
+      "to": "fastapi",
+      "label": "POST /api/sss/ingest",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "straight"
+    },
+    {
+      "id": "api-queries-hot",
+      "from": "fastapi",
+      "to": "lakets",
+      "label": "LakeTS analytics"
+    },
+    {
+      "id": "lakets-emits-cdf",
+      "from": "lakets",
+      "to": "cdf-sync",
+      "label": "aged-row changes"
+    },
+    {
+      "id": "cdf-syncs-delta",
+      "from": "cdf-sync",
+      "to": "uc-delta",
+      "label": "synced history"
+    },
+    {
+      "id": "spark-writes-microbatch",
+      "from": "spark-streaming",
+      "to": "uc-delta",
+      "label": "15 s micro-batches",
+      "variant": "dashed"
+    },
+    {
+      "id": "zerobus-writes-delta",
+      "from": "zerobus",
+      "to": "uc-delta",
+      "label": "direct ingest",
+      "variant": "dashed",
+      "labelDy": 30
+    },
+    {
+      "id": "producers-feed-zerobus",
+      "from": "iot-producers",
+      "to": "zerobus",
+      "label": "simulated batches",
+      "variant": "dashed"
+    },
+    {
+      "id": "dbsql-reads-delta",
+      "from": "dbsql",
+      "to": "uc-delta",
+      "label": "SQL reads",
+      "labelDy": 30
+    },
+    {
+      "id": "api-queries-cold",
+      "from": "fastapi",
+      "to": "dbsql",
+      "label": "DBSQL queries",
+      "labelSegment": 2,
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [[780, 112], [780, 220], [1360, 220], [1360, 590], [1262.5, 590]]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Live experience",
+      "items": [
+        "Spark posts consumed batches to FastAPI",
+        "SSE updates KPIs, sensor stream, and the 3D twin"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Tiered history",
+      "items": [
+        "LakeTS serves low-latency hot analytics",
+        "CDF and Delta preserve cold historical data"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Three ingestion flavors",
+      "items": [
+        "Real-time: MSK → Spark → LakeTS + SSE",
+        "Micro-batch: MSK → Spark → Delta",
+        "Zerobus: SDK → Delta without Spark"
+      ]
+    }
+  ]
+}

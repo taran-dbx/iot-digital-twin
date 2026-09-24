@@ -85,6 +85,35 @@ def test_initial_state_all_pending():
     assert set(state["steps"]) == set(state["sequence"])
 
 
+def test_reconcile_modes_preserves_retained_mode_and_adds_new_mode_pending():
+    state = sm.initial_state(["realtime", "microbatch"])
+    for key in state["sequence"]:
+        state = sm.set_step(state, key, sm.PASSED)
+
+    reconciled = sm.reconcile_modes(state, ["realtime", "microbatch", "zerobus"])
+
+    assert reconciled["enabled_modes"] == ["realtime", "microbatch", "zerobus"]
+    assert reconciled["steps"]["realtime:write_test"]["status"] == sm.PASSED
+    assert reconciled["steps"]["microbatch:write_test"]["status"] == sm.PASSED
+    assert reconciled["steps"]["zerobus:create_table"]["status"] == sm.PENDING
+    assert reconciled["steps"]["show_final_notebook"]["status"] == sm.PENDING
+    assert reconciled["steps"]["done"]["status"] == sm.PENDING
+
+
+def test_reconcile_modes_removes_disabled_lane_without_resetting_retained_lane():
+    state = sm.initial_state(["realtime", "microbatch", "zerobus"])
+    for key in state["sequence"]:
+        state = sm.set_step(state, key, sm.PASSED)
+
+    reconciled = sm.reconcile_modes(state, ["zerobus"])
+
+    assert reconciled["enabled_modes"] == ["zerobus"]
+    assert reconciled["steps"]["zerobus:produce_test"]["status"] == sm.PASSED
+    assert not any(key.startswith("realtime:") for key in reconciled["steps"])
+    assert not any(key.startswith("microbatch:") for key in reconciled["steps"])
+    assert all(key not in reconciled["steps"] for key in sm.COMMON_STEPS)
+
+
 # ---------------------------------------------------------------------------
 # Transitions + immutability
 # ---------------------------------------------------------------------------
@@ -226,6 +255,16 @@ def test_mark_cdf_enabled_no_realtime_lane_raises():
     state = sm.initial_state(["microbatch"])
     with pytest.raises(KeyError):
         sm.mark_cdf_enabled(state, "realtime")
+
+
+def test_legacy_cdf_admin_park_becomes_api_runnable_c7209():
+    """Old persisted admin parks migrate to API automation [C7209][regression]."""
+    state = sm.initial_state(["realtime"])
+    state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
+
+    migrated = sm.reset_legacy_cdf_park(state)
+
+    assert migrated["steps"]["realtime:cdf_manual"]["status"] == sm.PENDING
 
 
 # ---------------------------------------------------------------------------

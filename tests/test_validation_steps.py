@@ -14,10 +14,14 @@ Focus (the Phase-7 design-gap fix):
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from services import validation_state_machine as sm
 from services import validation_steps as vs
+from services import health_checks as hc
 from services.validation_service import StepContext, StepResult
 
 UC_CATALOG = "test_catalog"
@@ -50,10 +54,95 @@ def _ctx(mode: str) -> StepContext:
     )
 
 
+def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
+    requested_names: list[str] = []
+
+    class FakePostgres:
+        def get_endpoint(self, *, name):
+            requested_names.append(name)
+            return SimpleNamespace(
+                status=SimpleNamespace(hosts=SimpleNamespace(host="pg.example.com"))
+            )
+
+        def generate_database_credential(self, *, endpoint):
+            assert endpoint == requested_names[-1]
+            return SimpleNamespace(token="pg-token")
+
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-client-id")
+    ctx = StepContext(
+        db=None,
+        setup=_SETUP,
+        state={"cluster_id": "c-1"},
+        key="realtime:x",
+        step="x",
+        mode="realtime",
+        ws=SimpleNamespace(postgres=FakePostgres()),
+    )
+
+    connection = vs._resolve_lakebase_write_conn(ctx, "pharmaceutical")
+
+    assert requested_names == [
+        "projects/test_pipelines/branches/pharmaceutical/endpoints/primary"
+    ]
+    assert connection == ("pg.example.com", "app-client-id", "pg-token")
+
+
+def test_cluster_failure_extracts_json_error_and_preserves_root_cause():
+    traceback = "Traceback (most recent call last):\n" + ("frame\n" * 100)
+    traceback += "pyspark.errors.exceptions.AnalysisException: unsupported sink"
+    output = f"{vs.snip.FAIL_SENTINEL} {json.dumps({'error': traceback})}"
+
+    extracted = vs._extract_fail(output)
+    compacted = vs._compact_error(extracted)
+
+    assert extracted is not None
+    assert extracted.startswith("Traceback")
+    assert len(compacted) == 500
+    assert compacted.startswith("Traceback")
+    assert compacted.endswith("AnalysisException: unsupported sink")
+
+
+def test_cluster_failure_preserves_structured_diagnostics():
+    error = "connection failed\n" + ("trace frame\n" * 100)
+    output = (
+        f"{vs.snip.FAIL_SENTINEL} "
+        f"{json.dumps({'error': error, 'public': {'tcp': False}, 'egress_ip': '203.0.113.1'})}"
+    )
+
+    extracted = vs._extract_fail(output)
+    compacted = vs._compact_error(extracted)
+
+    assert extracted is not None
+    assert len(compacted) <= 500
+    assert compacted.startswith("connection failed")
+    assert '"public": {"tcp": false}' in compacted
+    assert '"egress_ip": "203.0.113.1"' in compacted
+
+
 @pytest.mark.asyncio
-async def test_realtime_write_test_produces_then_consumes(monkeypatch):
+async def test_write_test_surfaces_metrics_flush_error_c7213(monkeypatch):
+    """A hidden metrics write failure must fail the producing step [C7213][defect]."""
+
+    async def fake_run(ctx, code, *, timeout_s=300):
+        output = (
+            f"{vs.snip.OK_SENTINEL} "
+            '{"metrics_written": 0, "recent_progress": 1, '
+            '"metrics_flush_error": "DeltaError: permission denied"}'
+        )
+        return StepResult(sm.PASSED, data={"output": output})
+
+    monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
+
+    result = await vs._run_write_test(_ctx("realtime"), "code")
+
+    assert result.status == sm.FAILED
+    assert result.error == "metrics flush failed: DeltaError: permission denied"
+
+
+@pytest.mark.asyncio
+async def test_realtime_write_test_produces_then_consumes_c7242(monkeypatch):
     """realtime write_test must first produce sample data, then run the RTM
-    consumer that lands rows (mirrors the proven MSK→RTM→Lakebase path)."""
+    consumer with the curated industry stamp [C7242][defect][regression]."""
     calls: list[str] = []
 
     async def fake_run(ctx, code, *, timeout_s=300):
@@ -64,6 +153,7 @@ async def test_realtime_write_test_produces_then_consumes(monkeypatch):
 
     def fake_produce(topic, bootstrap, region, cred, **kw):
         produced["topic"] = topic
+        produced["producer_kw"] = kw
         return f"PRODUCE::{topic}"
 
     def fake_write(topic, bootstrap, cred, **kw):
@@ -76,6 +166,9 @@ async def test_realtime_write_test_produces_then_consumes(monkeypatch):
     monkeypatch.setattr(
         vs, "_resolve_lakebase_write_conn", lambda ctx, branch: ("pg-host", "pg-user", "pg-token")
     )
+    monkeypatch.setenv("DATABRICKS_HOST", "https://workspace.example.com")
+    monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "workspace.zerobus.example.com")
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "configured-app-client")
 
     result = await vs.write_test(_ctx("realtime"))
 
@@ -84,13 +177,22 @@ async def test_realtime_write_test_produces_then_consumes(monkeypatch):
     assert len(calls) == 2
     assert calls[0].startswith("PRODUCE::")
     assert calls[1].startswith("CONSUME::")
+    assert produced["producer_kw"]["industry"] == "pharmaceutical"
+    assert produced["producer_kw"]["source"] == "validation"
     # The consumer is wired to the ChronoTable + a distinct validation checkpoint
     # + the buffered metrics listener target.
     kw = produced["consumer_kw"]
     assert kw["table"] == "sensor_readings"
-    assert "/validation/realtime" in kw["checkpoint_path"]
+    assert kw["checkpoint_path"] == (
+        f"/Volumes/{UC_CATALOG}/{UC_SCHEMA}/stream_checkpoints/"
+        "pharmaceutical/validation/realtime"
+    )
     assert kw["metrics_table_fqn"] == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
     assert "streaming_metrics_realtime/" in kw["metrics_table_location"]
+    assert kw["workspace_url"] == "https://workspace.example.com"
+    assert kw["zerobus_endpoint"] == "workspace.zerobus.example.com"
+    assert kw["zerobus_client_id"] == "configured-app-client"
+    assert kw["zerobus_secret_key"] == vs.cat.APP_SP_OAUTH_SECRET
 
 
 @pytest.mark.asyncio
@@ -213,14 +315,16 @@ async def test_cleanup_purges_rows_and_deletes_checkpoint(monkeypatch):
     assert "DELETE" in deleted["sql"].upper()
     assert "source" in deleted["sql"]
     assert removed["code"].startswith("RM::")
-    assert "/validation/realtime" in removed["code"]
+    assert removed["code"] == (
+        f"RM::/Volumes/{UC_CATALOG}/{UC_SCHEMA}/stream_checkpoints/"
+        "pharmaceutical/validation/realtime"
+    )
     assert result.data["checkpoint_deleted"] is True
 
 
 @pytest.mark.asyncio
-async def test_cdf_manual_ensures_shadow_then_parks(monkeypatch):
-    """cdf_manual must call enable_sync on sensor_readings (prep the CDC shadow)
-    before parking for the admin — the managed sync has nothing to sync otherwise."""
+async def test_cdf_manual_automates_api_enablement_c7206(monkeypatch):
+    """The compatibility step prepares the shadow and API config [C7206][smoke]."""
     called = {}
 
     class FakeConn:
@@ -231,41 +335,58 @@ async def test_cdf_manual_ensures_shadow_then_parks(monkeypatch):
         called["branch"] = branch
         return FakeConn()
 
-    async def fake_enable_sync(conn, table, *, schema="public"):
+    async def fake_enable_sync(
+        conn, *, shadow_table, table, schema="public"
+    ):
+        called["shadow_table"] = shadow_table
         called["table"] = table
         called["schema"] = schema
-        return {"status": "created"}
+        return {"status": "migrated"}
+
+    def fake_ensure(parent, **kwargs):
+        called["parent"] = parent
+        called["cdf_kwargs"] = kwargs
+        return {
+            "name": f"{parent}/cdf-configs/lakets_cdf",
+            "status": "created",
+        }
 
     monkeypatch.setattr(vs.pps, "get_write_conn", fake_write_conn)
-    monkeypatch.setattr(vs.lakets_svc, "enable_sync", fake_enable_sync)
+    monkeypatch.setattr(
+        vs.lakets_svc, "reconcile_chronotable_shadow", fake_enable_sync
+    )
+    monkeypatch.setattr(vs.cdf_config_service, "ensure_cdf_config", fake_ensure)
 
     result = await vs.cdf_manual(_ctx("realtime"))
-    assert result.status == sm.WAITING_ADMIN
+    assert result.status == sm.PASSED
     assert called["table"] == "sensor_readings"
     assert called["schema"] == "public"
-    assert result.data["cdf_shadow"] == "created"
-    assert result.data["shadow_table"] == "lakets_cdf._shadow_sensor_readings"
+    assert called["cdf_kwargs"]["catalog"] == UC_CATALOG
+    assert called["cdf_kwargs"]["schema"] == UC_SCHEMA
+    assert result.data["cdf_shadow"] == "migrated"
+    assert called["shadow_table"] == "_shadow_pharmaceutical_sensor_readings"
+    assert result.data["shadow_table"] == (
+        "lakets_cdf._shadow_pharmaceutical_sensor_readings"
+    )
     assert called.get("closed") is True
 
 
 @pytest.mark.asyncio
-async def test_cdf_manual_parks_even_if_shadow_prep_fails(monkeypatch):
-    """A shadow-prep failure is non-fatal — cdf_manual must still park for the
-    admin (surfacing the error) rather than failing the whole lane."""
+async def test_cdf_manual_fails_if_shadow_prep_fails_c7207(monkeypatch):
+    """API enablement cannot proceed without a shadow [C7207][regression]."""
     async def boom_conn(branch, *, ws=None):
         raise RuntimeError("branch auth failed")
 
     monkeypatch.setattr(vs.pps, "get_write_conn", boom_conn)
 
     result = await vs.cdf_manual(_ctx("realtime"))
-    assert result.status == sm.WAITING_ADMIN
-    assert "error" in str(result.data["cdf_shadow"])
+    assert result.status == sm.FAILED
+    assert "branch auth failed" in str(result.error)
 
 
 @pytest.mark.asyncio
-async def test_dbsql_read_realtime_targets_cdf_synced_table(monkeypatch):
-    """Realtime dbsql_read must query the one-schema {industry}_realtime Delta
-    table — NOT the retired per-industry realtime.sensor_readings layout."""
+async def test_dbsql_read_realtime_targets_cdf_synced_table_c7243(monkeypatch):
+    """Realtime validation is industry/source scoped [C7243][defect][regression]."""
     captured = {}
 
     async def fake_dbsql(sql, wh):
@@ -275,9 +396,13 @@ async def test_dbsql_read_realtime_targets_cdf_synced_table(monkeypatch):
     monkeypatch.setattr(vs, "execute_dbsql", fake_dbsql)
     result = await vs.dbsql_read(_ctx("realtime"))
     assert result.status == sm.PASSED
-    assert f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_realtime" in captured["sql"]
+    assert (
+        f"{UC_CATALOG}.{UC_SCHEMA}."
+        "lb__shadow_pharmaceutical_sensor_readings_history"
+    ) in captured["sql"]
     assert ".realtime.sensor_readings" not in captured["sql"]
-    assert "lb__shadow_sensor_readings_history" not in captured["sql"]
+    assert "industry = 'pharmaceutical'" in captured["sql"]
+    assert "source = 'validation'" in captured["sql"]
 
 
 @pytest.mark.asyncio
@@ -348,11 +473,18 @@ async def test_write_test_microbatch_passes_metrics_params(monkeypatch):
 
     monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
     monkeypatch.setattr(vs.snip, "microbatch_write_test", fake_mb)
+    monkeypatch.setenv("DATABRICKS_HOST", "https://workspace.example.com")
+    monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "workspace.zerobus.example.com")
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "configured-app-client")
     result = await vs.write_test(_ctx("microbatch"))
     assert result.status == sm.PASSED
     # Micro-batch metrics land in the shared {industry}_metrics table (mode column).
     assert captured["metrics_table_fqn"] == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
     assert "streaming_metrics_microbatch/" in captured["metrics_table_location"]
+    assert captured["workspace_url"] == "https://workspace.example.com"
+    assert captured["zerobus_endpoint"] == "workspace.zerobus.example.com"
+    assert captured["zerobus_client_id"] == "configured-app-client"
+    assert captured["zerobus_secret_key"] == vs.cat.APP_SP_OAUTH_SECRET
 
 
 @pytest.mark.asyncio
@@ -424,8 +556,6 @@ async def test_cdf_verify_checks_lakebase_not_cluster(monkeypatch):
     """cdf_verify must query CDF status on the branch Lakebase (wal2delta.tables
     lives in Postgres, not Spark) via the Tier-1 check keyed on THIS shadow — a
     spark.sql query on the cluster can never see wal2delta.tables."""
-    import services.health_checks as hc
-
     called = {}
 
     class FakeConn:
@@ -436,8 +566,8 @@ async def test_cdf_verify_checks_lakebase_not_cluster(monkeypatch):
         called["branch"] = branch
         return FakeConn()
 
-    async def fake_check(conn, *, table="sensor_readings", **kw):
-        called["table"] = table
+    async def fake_check(conn, *, shadow=None, **kw):
+        called["shadow"] = shadow
         return {"name": "cdf_sync", "status": hc.PASS, "detail": "STREAMING + advancing"}
 
     monkeypatch.setattr(vs.pps, "get_write_conn", fake_conn)
@@ -446,14 +576,12 @@ async def test_cdf_verify_checks_lakebase_not_cluster(monkeypatch):
     result = await vs.cdf_verify(_ctx("realtime"))
     assert result.status == sm.PASSED
     assert called["branch"] == "pharmaceutical"
-    assert called["table"] == "sensor_readings"
+    assert called["shadow"] == "_shadow_pharmaceutical_sensor_readings"
     assert called.get("closed") is True
 
 
 @pytest.mark.asyncio
 async def test_cdf_verify_fails_when_not_streaming(monkeypatch):
-    import services.health_checks as hc
-
     class FakeConn:
         async def close(self):
             pass
@@ -461,7 +589,7 @@ async def test_cdf_verify_fails_when_not_streaming(monkeypatch):
     async def fake_conn(branch, *, ws=None):
         return FakeConn()
 
-    async def fake_check(conn, *, table="sensor_readings", **kw):
+    async def fake_check(conn, *, shadow=None, **kw):
         return {"name": "cdf_sync", "status": hc.FAIL,
                 "detail": "lakets_cdf._shadow_sensor_readings not STREAMING — enable managed sync"}
 

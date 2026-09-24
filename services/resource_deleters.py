@@ -3,9 +3,9 @@
 ``make_all_deleters()`` builds a registry mapping every ``resource_type`` the
 provisioning services record (see ``services/resource_ledger.RESOURCE_TYPES``
 plus ``lakebase_project``) to an async deleter, so the teardown orchestrator can
-actually remove the cloud resource instead of silently ``skip``-ing it and then
-FK-cascade-dropping the ledger row — which orphaned the real UC catalog, Lakebase
-branch/endpoints, external metrics table + its S3 objects, etc.
+remove uniquely owned cloud resources instead of silently ``skip``-ing them and
+then FK-cascade-dropping the ledger row. Shared UC catalogs and schemas are
+explicit preservation-only entries and are never removed by this registry.
 
 Deleter contract (see ``services.teardown_service``):
 - return normally  → the orchestrator records the row ``deleted``;
@@ -29,9 +29,14 @@ keep every deleter unit-testable without touching a live workspace.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
+from databricks.sdk.errors import NotFound
+
+from services import cdf_config_service
+from services.deployment_service import make_job_deleter
 from services.teardown_service import Deleter, SkipResource
 
 logger = logging.getLogger("iot_digital_twin.services.resource_deleters")
@@ -149,12 +154,14 @@ def make_all_deleters(
     _run_sql = run_sql or _default_run_sql(_ws, warehouse_id)
     _del_s3 = delete_s3_prefix or (lambda loc: _delete_s3_prefix(_ws(), loc))
 
-    # --- UC (DBSQL DDL) ----------------------------------------------------
-    async def del_uc_catalog(res: dict) -> None:
-        await _run_sql(f"DROP CATALOG IF EXISTS {res['identifier']} CASCADE")
-
-    async def del_uc_schema(res: dict) -> None:
-        await _run_sql(f"DROP SCHEMA IF EXISTS {res['identifier']} CASCADE")
+    # --- UC ---------------------------------------------------------------
+    async def preserve_uc_namespace(res: dict) -> None:
+        # Catalogs and schemas are shared containers. Their lifecycle requires a
+        # separate admin workflow with ownership and emptiness checks; a pipeline
+        # delete must never issue namespace DDL.
+        raise SkipResource(
+            "catalog/schema is shared infrastructure — pipeline teardown preserves it"
+        )
 
     async def del_uc_volume(res: dict) -> None:
         await _run_sql(f"DROP VOLUME IF EXISTS {res['identifier']}")
@@ -168,12 +175,28 @@ def make_all_deleters(
                 "ChronoTable lives inside the Lakebase branch — removed when the "
                 "branch is deleted (not a UC table)"
             )
-        await _run_sql(f"DROP TABLE IF EXISTS {res['identifier']}")
+        if not res.get("_ownership_verified"):
+            raise SkipResource(
+                "UC table pipeline ownership is unverified — preserving table"
+            )
+        try:
+            _ws().tables.delete(full_name=res["identifier"])
+        except NotFound:
+            logger.info("UC table %s already absent during teardown", res["identifier"])
 
     async def del_metrics_table(res: dict) -> None:
         # EXTERNAL Delta table: drop the UC object AND delete its S3 objects
         # (otherwise the data files are orphaned in the shared bucket).
-        await _run_sql(f"DROP TABLE IF EXISTS {res['identifier']}")
+        if not res.get("_ownership_verified"):
+            raise SkipResource(
+                "metrics table pipeline ownership is unverified — preserving table"
+            )
+        try:
+            _ws().tables.delete(full_name=res["identifier"])
+        except NotFound:
+            logger.info(
+                "Metrics table %s already absent during teardown", res["identifier"]
+            )
         location = (res.get("metadata") or {}).get("location")
         if location:
             try:
@@ -252,7 +275,7 @@ def make_all_deleters(
         _ws().secrets.delete_secret(scope=scope, key=key)
         logger.info("teardown: deleted secret %s/%s", scope, key)
 
-    # --- Kafka / CDF (not deletable here) ----------------------------------
+    # --- Kafka / CDF -------------------------------------------------------
     async def del_kafka_topic(res: dict) -> None:
         raise SkipResource(
             "kafka-cluster:DeleteTopic denied on this cluster (spec §1.8) — "
@@ -260,23 +283,35 @@ def make_all_deleters(
         )
 
     async def del_cdf_sync(res: dict) -> None:
-        # No live CDF sync is recorded by the current provisioning path; if one
-        # is later recorded, the pipeline job owning it is torn down first.
-        raise SkipResource(
-            "CDF sync is bound to the streaming job (torn down separately) — "
-            "no standalone delete"
+        metadata = res.get("metadata") or {}
+        parent = metadata.get("parent")
+        config_id = metadata.get("cdf_config_id")
+        if not parent or not config_id:
+            raise SkipResource(
+                "CDF sync metadata is incomplete — preserving config because "
+                "its parent or config id is unknown"
+            )
+        deleted = await asyncio.to_thread(
+            cdf_config_service.delete_cdf_config,
+            parent,
+            config_id,
+            force=bool(metadata.get("force_delete_tables", False)),
+            ws=_ws(),
+        )
+        logger.info(
+            "teardown: CDF config %s (%s)",
+            res.get("identifier"),
+            "deleted" if deleted else "already absent",
         )
 
-    from services.deployment_service import make_job_deleter
-
     return {
-        "uc_catalog": del_uc_catalog,
-        "uc_schema": del_uc_schema,
+        "uc_catalog": preserve_uc_namespace,
+        "uc_schema": preserve_uc_namespace,
         "uc_volume": del_uc_volume,
         "uc_table": del_uc_table,
         "metrics_table": del_metrics_table,
         "grant": del_grant,
-        "job": make_job_deleter(_ws()),
+        "job": make_job_deleter(ws),
         "lakebase_branch": del_lakebase_branch,
         "lakebase_endpoint": del_lakebase_endpoint,
         "lakebase_read_replica": del_lakebase_endpoint,

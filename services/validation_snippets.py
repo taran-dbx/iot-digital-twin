@@ -140,6 +140,7 @@ def rtm_produce(
     service_credential: str,
     num_records: int = 100,
     source: str = "validation",
+    industry: str = "pharmaceutical",
 ) -> str:
     """Bounded MSK producer: emit ``num_records`` SSOT sensor messages onto the
     real-time topic so the bounded RTM consumer has data to land (spec §1.10).
@@ -194,7 +195,7 @@ try:
     for i in range({num_records}):
         s = sensors[i % len(sensors)]
         rec = {{
-            "sensor_name": s, "industry": "validation",
+            "sensor_name": s, "industry": {industry!r},
             "value": round(random.uniform(20, 100), 2), "unit": "C",
             "sensor_type": "temperature", "timestamp": time.time(),
             "min_value": 0.0, "max_value": 120.0, "nominal_value": 60.0,
@@ -223,6 +224,10 @@ def rtm_write_test(
     pg_host: str,
     pg_user: str,
     pg_token: str,
+    zerobus_endpoint: str = "",
+    workspace_url: str = "",
+    zerobus_client_id: str = "",
+    zerobus_secret_key: str = "",
     region: str = "us-east-1",
     source: str = "validation",
     trigger: str = "15 seconds",
@@ -241,8 +246,8 @@ def rtm_write_test(
         ``process`` indexes a POSITIONAL tuple and INSERTs into the Lakebase
         LakeTS ChronoTable on the branch PRIMARY endpoint (source-tagged so
         cleanup can purge exactly the test rows);
-      * the buffered delta-rs metrics listener (P5a pattern) is wired in so the
-        Databricks-only latency percentiles land in the external metrics table;
+      * the buffered Zerobus metrics listener (P5a pattern) is wired in so the
+        Databricks-only latency percentiles land in the managed metrics table;
       * ``.outputMode("update").trigger(realTime=...)`` — the RTM shape.
     """
     return _PREAMBLE + f'''
@@ -250,10 +255,9 @@ try:
     import os, time as _t
     import queue as _queue, threading as _threading
     from datetime import datetime, timezone
-    import pandas as _pd
     import psycopg2
-    from deltalake import write_deltalake
-    from databricks.sdk import WorkspaceClient
+    from zerobus.sdk.shared import RecordType, StreamConfigurationOptions, TableProperties
+    from zerobus.sdk.sync import ZerobusSdk
     from pyspark.sql import functions as F
     from pyspark.sql.types import (StructType, StringType, DoubleType,
                                    BooleanType, MapType)
@@ -265,23 +269,34 @@ try:
     if spark.conf.get("spark.databricks.streaming.realTimeMode.enabled", "false") != "true":
         spark.conf.set("spark.databricks.streaming.realTimeMode.enabled", "true")
 
-    # --- buffered delta-rs streaming-metrics listener (P5a, §1.11) ------------
-    # onQueryProgress() ONLY enqueues; a daemon thread flushes batches via
-    # delta-rs write_deltalake so the callback never contends with the query.
+    # --- buffered Zerobus streaming-metrics listener (P5a, §1.11) --------------
+    # onQueryProgress() ONLY enqueues; a daemon thread pushes records via the
+    # Zerobus SDK so the callback never contends with the query.
     METRICS_TABLE_FQN = {metrics_table_fqn!r}
-    METRICS_TABLE_LOCATION = {metrics_table_location!r}
-    _mw = WorkspaceClient()
+    _zb_endpoint = {zerobus_endpoint!r}
+    _zb_workspace_url = {workspace_url!r}
+    _zb_client_id = {zerobus_client_id!r}
+    _zb_secret_key = {zerobus_secret_key!r}
+    if not all((_zb_endpoint, _zb_workspace_url, _zb_client_id, _zb_secret_key)):
+        raise RuntimeError("Zerobus metrics configuration is incomplete")
+    if not _zb_workspace_url.startswith("http"):
+        _zb_workspace_url = "https://" + _zb_workspace_url
+    _zb_uc_catalog, _zb_uc_schema, _ = METRICS_TABLE_FQN.split(".", 2)
+    _zb_client_secret = dbutils.secrets.get(
+        catalog=_zb_uc_catalog,
+        schema=_zb_uc_schema,
+        key=_zb_secret_key,
+    )
+    _zb_metrics_sdk = ZerobusSdk(_zb_endpoint, _zb_workspace_url)
+    _zb_metrics_stream = _zb_metrics_sdk.create_stream(
+        _zb_client_id,
+        _zb_client_secret,
+        TableProperties(METRICS_TABLE_FQN),
+        StreamConfigurationOptions(record_type=RecordType.JSON),
+    )
     _mq = _queue.Queue()
-    def _metrics_storage_options():
-        from databricks.sdk.service.catalog import TableOperation as _TableOp
-        tid = _mw.tables.get(METRICS_TABLE_FQN).table_id
-        tc = _mw.temporary_table_credentials.generate_temporary_table_credentials(
-            operation=_TableOp.READ_WRITE, table_id=tid)
-        c = tc.aws_temp_credentials
-        return {{"AWS_ACCESS_KEY_ID": c.access_key_id,
-                 "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
-                 "AWS_SESSION_TOKEN": c.session_token,
-                 "AWS_REGION": {region!r}, "AWS_S3_ALLOW_UNSAFE_RENAME": "true"}}
+    _metrics_state = {{"written": 0, "error": None, "accepting": True}}
+    _metrics_lock = _threading.Lock()
     def _metrics_record(prog):
         _pjx = getattr(prog, "json", None)
         pj = _pjx() if callable(_pjx) else (_pjx if isinstance(_pjx, str) else json.dumps(prog))
@@ -289,42 +304,51 @@ try:
         e2e = p.get("e2eLatencyMs", {{}}) or {{}}
         proc = p.get("processingLatencyMs", {{}}) or {{}}
         qd = p.get("sourceQueuingLatencyMs", {{}}) or {{}}
-        return {{"query_id": str(p.get("id", "")), "query_name": p.get("name") or "",
+        return {{"mode": "realtime",
+                 "query_id": str(p.get("id", "")), "query_name": p.get("name") or "",
                  "run_id": str(p.get("runId", "")), "batch_id": int(p.get("batchId", 0)),
-                 "timestamp": datetime.now(timezone.utc),
+                 "timestamp": int(datetime.now(timezone.utc).timestamp() * 1_000_000),
                  "num_input_rows": int(p.get("numInputRows", 0)),
                  "input_rps": float(p.get("inputRowsPerSecond", 0.0) or 0.0),
                  "processed_rps": float(p.get("processedRowsPerSecond", 0.0) or 0.0),
                  "trigger_ms": float(dur.get("triggerExecution", 0.0) or 0.0),
                  "e2e_p50": e2e.get("p50"), "e2e_p99": e2e.get("p99"),
                  "processing_p50": proc.get("p50"), "processing_p99": proc.get("p99"),
-                 "queuing_p50": qd.get("p50"), "queuing_p99": qd.get("p99"),
-                 "progress": pj}}
+                 "queuing_p50": qd.get("p50"), "queuing_p99": qd.get("p99")}}
     def _metrics_flush_loop():
         while True:
-            batch = [_mq.get()]
-            while True:
-                try:
-                    batch.append(_mq.get_nowait())
-                except _queue.Empty:
-                    break
+            rec = _mq.get()
             try:
-                write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(batch),
-                                mode="append", storage_options=_metrics_storage_options())
+                if rec is None:
+                    return
+                ack = _zb_metrics_stream.ingest_record(rec)
+                try:
+                    ack.wait_for_ack(timeout_sec=30)
+                except TypeError:
+                    ack.wait_for_ack()
+                _metrics_state["written"] += 1
             except Exception as _e:
-                print("[metrics] delta-rs flush failed:", type(_e).__name__, _e)
-    _threading.Thread(target=_metrics_flush_loop, daemon=True).start()
-    class BufferedDeltaMetricsListener(StreamingQueryListener):
+                _metrics_state["error"] = type(_e).__name__ + ": " + str(_e)[:300]
+                print("[metrics] Zerobus flush failed:", _metrics_state["error"])
+            finally:
+                _mq.task_done()
+    _metrics_thread = _threading.Thread(target=_metrics_flush_loop, daemon=True)
+    _metrics_thread.start()
+    class BufferedZerobusMetricsListener(StreamingQueryListener):
         def onQueryStarted(self, event):
             pass
         def onQueryProgress(self, event):
             try:
-                _mq.put(_metrics_record(event.progress))
+                rec = _metrics_record(event.progress)
+                with _metrics_lock:
+                    if _metrics_state["accepting"]:
+                        _mq.put(rec)
             except Exception as _e:
                 print("[metrics] enqueue failed:", type(_e).__name__, _e)
         def onQueryTerminated(self, event):
             pass
-    spark.streams.addListener(BufferedDeltaMetricsListener())
+    _metrics_listener = BufferedZerobusMetricsListener()
+    spark.streams.addListener(_metrics_listener)
 
     # --- psycopg ForeachWriter -> Lakebase branch PRIMARY (LakeTS ChronoTable) -
     PROJECT_ID = {project_id!r}; BRANCH_ID = {branch!r}
@@ -408,21 +432,22 @@ try:
          .trigger(realTime={trigger!r})
          .start())
     _t.sleep({run_seconds}); q.stop()
-    # Synchronously flush metrics from the query's OWN recorded progress. Does NOT
-    # rely on the async listener firing per trigger or the daemon flush thread
-    # surviving the command end — recentProgress holds the per-trigger progress the
-    # query actually made, so we write it here, before the command returns.
-    _mwritten = 0; _nprog = 0; _mflush_err = None
-    try:
-        _progs = list(getattr(q, "recentProgress", []) or [])
-        _nprog = len(_progs)
-        _rows = [_metrics_record(p) for p in _progs]
-        if _rows:
-            write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(_rows),
-                            mode="append", storage_options=_metrics_storage_options())
-            _mwritten = len(_rows)
-    except Exception as _e:
-        _mflush_err = type(_e).__name__ + ": " + str(_e)[:300]
+    with _metrics_lock:
+        _metrics_state["accepting"] = False
+    spark.streams.removeListener(_metrics_listener)
+    _mq.join()
+    _progs = list(getattr(q, "recentProgress", []) or [])
+    if _metrics_state["written"] == 0 and not _metrics_state["error"]:
+        for _prog in _progs:
+            _mq.put(_metrics_record(_prog))
+        _mq.join()
+    _mq.put(None)
+    _mq.join()
+    _metrics_thread.join(timeout=35)
+    _zb_metrics_stream.close()
+    _mwritten = _metrics_state["written"]
+    _nprog = len(_progs)
+    _mflush_err = _metrics_state["error"]
     _ok(topic={topic!r}, table=PG_TABLE, checkpoint={checkpoint_path!r},
         metrics_written=_mwritten, recent_progress=_nprog, metrics_flush_error=_mflush_err)
 except Exception as e:
@@ -431,13 +456,18 @@ except Exception as e:
 
 
 def _metrics_listener_code(
-    metrics_table_fqn: str, metrics_table_location: str, region: str
+    metrics_table_fqn: str,
+    mode: str,
+    zerobus_endpoint: str,
+    workspace_url: str,
+    zerobus_client_id: str,
+    zerobus_secret_key: str,
 ) -> str:
-    """Return the buffered delta-rs streaming-metrics listener block (P5a, §1.11).
+    """Return the buffered Zerobus streaming-metrics listener block (P5a, §1.11).
 
     Mirrors the inline listener in :func:`rtm_write_test`: ``onQueryProgress``
-    ONLY enqueues; a daemon thread flushes batches via delta-rs ``write_deltalake``
-    so the callback never contends with the query.  Include this inside a
+    ONLY enqueues; a daemon thread flushes records through the Zerobus SDK so
+    the callback never contends with the query. Include this inside a
     snippet's ``try`` block (4-space indent) BEFORE ``.start()``; it ends by
     calling ``spark.streams.addListener(...)``.  Returned text is fully resolved
     (no remaining ``{{}}`` placeholders) so callers must CONCATENATE it — never
@@ -445,25 +475,35 @@ def _metrics_listener_code(
     """
     return f'''
     import json as _json, queue as _queue, threading as _threading
-    import pandas as _pd
     from datetime import datetime, timezone
-    from deltalake import write_deltalake
-    from databricks.sdk import WorkspaceClient
+    from zerobus.sdk.shared import RecordType, StreamConfigurationOptions, TableProperties
+    from zerobus.sdk.sync import ZerobusSdk
     from pyspark.sql.streaming import StreamingQueryListener
     METRICS_TABLE_FQN = {metrics_table_fqn!r}
-    METRICS_TABLE_LOCATION = {metrics_table_location!r}
-    _mw = WorkspaceClient()
+    _zb_endpoint = {zerobus_endpoint!r}
+    _zb_workspace_url = {workspace_url!r}
+    _zb_client_id = {zerobus_client_id!r}
+    _zb_secret_key = {zerobus_secret_key!r}
+    if not all((_zb_endpoint, _zb_workspace_url, _zb_client_id, _zb_secret_key)):
+        raise RuntimeError("Zerobus metrics configuration is incomplete")
+    if not _zb_workspace_url.startswith("http"):
+        _zb_workspace_url = "https://" + _zb_workspace_url
+    _zb_uc_catalog, _zb_uc_schema, _ = METRICS_TABLE_FQN.split(".", 2)
+    _zb_client_secret = dbutils.secrets.get(
+        catalog=_zb_uc_catalog,
+        schema=_zb_uc_schema,
+        key=_zb_secret_key,
+    )
+    _zb_metrics_sdk = ZerobusSdk(_zb_endpoint, _zb_workspace_url)
+    _zb_metrics_stream = _zb_metrics_sdk.create_stream(
+        _zb_client_id,
+        _zb_client_secret,
+        TableProperties(METRICS_TABLE_FQN),
+        StreamConfigurationOptions(record_type=RecordType.JSON),
+    )
     _mq = _queue.Queue()
-    def _metrics_storage_options():
-        from databricks.sdk.service.catalog import TableOperation as _TableOp
-        tid = _mw.tables.get(METRICS_TABLE_FQN).table_id
-        tc = _mw.temporary_table_credentials.generate_temporary_table_credentials(
-            operation=_TableOp.READ_WRITE, table_id=tid)
-        c = tc.aws_temp_credentials
-        return {{"AWS_ACCESS_KEY_ID": c.access_key_id,
-                 "AWS_SECRET_ACCESS_KEY": c.secret_access_key,
-                 "AWS_SESSION_TOKEN": c.session_token,
-                 "AWS_REGION": {region!r}, "AWS_S3_ALLOW_UNSAFE_RENAME": "true"}}
+    _metrics_state = {{"written": 0, "error": None, "accepting": True}}
+    _metrics_lock = _threading.Lock()
     def _metrics_record(prog):
         _pjx = getattr(prog, "json", None)
         pj = _pjx() if callable(_pjx) else (_pjx if isinstance(_pjx, str) else _json.dumps(prog))
@@ -471,42 +511,51 @@ def _metrics_listener_code(
         e2e = p.get("e2eLatencyMs", {{}}) or {{}}
         proc = p.get("processingLatencyMs", {{}}) or {{}}
         qd = p.get("sourceQueuingLatencyMs", {{}}) or {{}}
-        return {{"query_id": str(p.get("id", "")), "query_name": p.get("name") or "",
+        return {{"mode": {mode!r},
+                 "query_id": str(p.get("id", "")), "query_name": p.get("name") or "",
                  "run_id": str(p.get("runId", "")), "batch_id": int(p.get("batchId", 0)),
-                 "timestamp": datetime.now(timezone.utc),
+                 "timestamp": int(datetime.now(timezone.utc).timestamp() * 1_000_000),
                  "num_input_rows": int(p.get("numInputRows", 0)),
                  "input_rps": float(p.get("inputRowsPerSecond", 0.0) or 0.0),
                  "processed_rps": float(p.get("processedRowsPerSecond", 0.0) or 0.0),
                  "trigger_ms": float(dur.get("triggerExecution", 0.0) or 0.0),
                  "e2e_p50": e2e.get("p50"), "e2e_p99": e2e.get("p99"),
                  "processing_p50": proc.get("p50"), "processing_p99": proc.get("p99"),
-                 "queuing_p50": qd.get("p50"), "queuing_p99": qd.get("p99"),
-                 "progress": pj}}
+                 "queuing_p50": qd.get("p50"), "queuing_p99": qd.get("p99")}}
     def _metrics_flush_loop():
         while True:
-            batch = [_mq.get()]
-            while True:
-                try:
-                    batch.append(_mq.get_nowait())
-                except _queue.Empty:
-                    break
+            rec = _mq.get()
             try:
-                write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(batch),
-                                mode="append", storage_options=_metrics_storage_options())
+                if rec is None:
+                    return
+                ack = _zb_metrics_stream.ingest_record(rec)
+                try:
+                    ack.wait_for_ack(timeout_sec=30)
+                except TypeError:
+                    ack.wait_for_ack()
+                _metrics_state["written"] += 1
             except Exception as _e:
-                print("[metrics] delta-rs flush failed:", type(_e).__name__, _e)
-    _threading.Thread(target=_metrics_flush_loop, daemon=True).start()
-    class BufferedDeltaMetricsListener(StreamingQueryListener):
+                _metrics_state["error"] = type(_e).__name__ + ": " + str(_e)[:300]
+                print("[metrics] Zerobus flush failed:", _metrics_state["error"])
+            finally:
+                _mq.task_done()
+    _metrics_thread = _threading.Thread(target=_metrics_flush_loop, daemon=True)
+    _metrics_thread.start()
+    class BufferedZerobusMetricsListener(StreamingQueryListener):
         def onQueryStarted(self, event):
             pass
         def onQueryProgress(self, event):
             try:
-                _mq.put(_metrics_record(event.progress))
+                rec = _metrics_record(event.progress)
+                with _metrics_lock:
+                    if _metrics_state["accepting"]:
+                        _mq.put(rec)
             except Exception as _e:
                 print("[metrics] enqueue failed:", type(_e).__name__, _e)
         def onQueryTerminated(self, event):
             pass
-    spark.streams.addListener(BufferedDeltaMetricsListener())
+    _metrics_listener = BufferedZerobusMetricsListener()
+    spark.streams.addListener(_metrics_listener)
 '''
 
 
@@ -520,6 +569,10 @@ def microbatch_write_test(
     metrics_table_location: str | None = None,
     region: str = "us-east-1",
     run_seconds: int = 30,
+    zerobus_endpoint: str = "",
+    workspace_url: str = "",
+    zerobus_client_id: str = "",
+    zerobus_secret_key: str = "",
 ) -> str:
     """Bounded micro-batch Kafka→Delta write test (spec §1.10).
 
@@ -528,15 +581,20 @@ def microbatch_write_test(
 
     Parses the Kafka JSON to the **SSOT schema** (the same columns the deployed
     micro-batch consumer writes) — a raw-string write collides with the table's
-    real schema (DELTA_METADATA_MISMATCH).  When ``metrics_table_fqn`` +
-    ``metrics_table_location`` are given, the buffered delta-rs metrics listener
-    is wired in so micro-batch streaming metrics land in the per-mode
-    ``streaming_metrics_microbatch`` table (realtime already had this; micro-batch
-    previously captured NO metrics).
+    real schema (DELTA_METADATA_MISMATCH). When ``metrics_table_fqn`` is given,
+    the buffered Zerobus listener writes mode-tagged rows to the shared managed
+    metrics table.
     """
     listener = ""
-    if metrics_table_fqn and metrics_table_location:
-        listener = _metrics_listener_code(metrics_table_fqn, metrics_table_location, region)
+    if metrics_table_fqn:
+        listener = _metrics_listener_code(
+            metrics_table_fqn,
+            "microbatch",
+            zerobus_endpoint,
+            workspace_url,
+            zerobus_client_id,
+            zerobus_secret_key,
+        )
     header = _PREAMBLE + '''
 try:
     from pyspark.sql import functions as F
@@ -577,21 +635,24 @@ try:
               .trigger(processingTime="10 seconds")
               .toTable({delta_table!r}))
     import time as _t; _t.sleep({run_seconds}); stream.stop()
-    # Synchronously flush metrics from the query's OWN recorded progress (only when
-    # the metrics listener was wired in — see _metrics_listener_code). Robust to the
-    # async flush thread / trigger cadence.
     _mwritten = 0; _nprog = 0; _mflush_err = None
     if "_metrics_record" in dir():
-        try:
-            _progs = list(getattr(stream, "recentProgress", []) or [])
-            _nprog = len(_progs)
-            _rows = [_metrics_record(p) for p in _progs]
-            if _rows:
-                write_deltalake(METRICS_TABLE_LOCATION, _pd.DataFrame(_rows),
-                                mode="append", storage_options=_metrics_storage_options())
-                _mwritten = len(_rows)
-        except Exception as _e:
-            _mflush_err = type(_e).__name__ + ": " + str(_e)[:300]
+        with _metrics_lock:
+            _metrics_state["accepting"] = False
+        spark.streams.removeListener(_metrics_listener)
+        _mq.join()
+        _progs = list(getattr(stream, "recentProgress", []) or [])
+        if _metrics_state["written"] == 0 and not _metrics_state["error"]:
+            for _prog in _progs:
+                _mq.put(_metrics_record(_prog))
+            _mq.join()
+        _mq.put(None)
+        _mq.join()
+        _metrics_thread.join(timeout=35)
+        _zb_metrics_stream.close()
+        _mwritten = _metrics_state["written"]
+        _nprog = len(_progs)
+        _mflush_err = _metrics_state["error"]
     _ok(delta_table={delta_table!r}, checkpoint={checkpoint_path!r},
         metrics_written=_mwritten, recent_progress=_nprog, metrics_flush_error=_mflush_err)
 except Exception as e:

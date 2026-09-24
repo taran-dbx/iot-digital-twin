@@ -6,17 +6,25 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from fastapi import APIRouter, Query, Request, Depends
 from fastapi.responses import JSONResponse
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
+from core.workspace_config import get_pipelines_project
 from services import app_permissions
-from routes.sensor_data import _is_undefined_relation
+from services.pipelines_project_service import (
+    PG_DATABASE,
+    PRIMARY_ENDPOINT_ID,
+    endpoint_resource_name,
+)
+from routes.sensor_data import _is_industry_deployment, _is_undefined_relation
 from services.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 from services.pipeline_service import pipeline_row_to_dict
 from services.producer_service import stop_data_producer
@@ -296,51 +304,52 @@ async def delete_pipeline(
         except Exception:
             pass
 
-    try:
-        await release_source(db=state.db, pipeline_id=pipeline_id)
-    except Exception as exc:
-        logger.warning("release_source failed during pipeline delete: %s", exc)
-
-    await state.db.execute(
-        "UPDATE pipelines SET status = 'deleted', updated_at = NOW() WHERE id = $1::uuid",
-        pipeline_id,
-    )
-
     cleanup_log: list[Any] = []
+    cleanup_errors: list[str] = []
 
-    def _uc_tables_to_drop() -> list[str]:
-        """Resolve the fully-qualified UC tables owned by THIS pipeline.
+    def _is_not_found(exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        message = str(exc).lower()
+        return (
+            isinstance(exc, NotFound)
+            or status_code == 404
+            or "not found" in message
+            or "does not exist" in message
+        )
 
-        Always includes the Zerobus/CDF Delta target
-        ``<uc_catalog>.raw.iot_sensor_data``. If the pipeline tracks a specific
-        cold-tier / CDF destination table (``resources['cold_tier_table']``),
-        that is included too — but only when it lives inside this pipeline's own
-        catalog, so a shared catalog is never touched.
+    def _uc_tables_to_drop(log: list[Any]) -> list[str]:
+        """Return only tables carrying exact pipeline ownership metadata.
+
+        Historical ``uc_catalog`` / ``uc_schema`` / ``cold_tier_table`` fields
+        identify locations, not ownership.  Inferring a conventional table name
+        from them can target a sibling deployment in the shared schema, so those
+        fields deliberately authorize no UC deletion.
         """
-        catalog = resources.get("uc_catalog")
-        if not catalog or not isinstance(catalog, str):
+        tracked = resources.get("owned_uc_tables")
+        if not isinstance(tracked, list):
             return []
-        targets: list[str] = [f"{catalog}.raw.iot_sensor_data"]
-        cold = resources.get("cold_tier_table")
-        if isinstance(cold, str) and cold.strip():
-            cold = cold.strip()
-            # Only drop the cold-tier table when it belongs to THIS pipeline's
-            # catalog (never a shared/foreign catalog).
-            if cold.split(".", 1)[0] == catalog and cold not in targets:
-                targets.append(cold)
-            elif cold.split(".", 1)[0] != catalog:
-                logger.warning(
-                    "Skipping cold-tier table drop for pipeline %s — %r is outside "
-                    "its catalog %r",
-                    pipeline_id, cold, catalog,
+        targets: list[str] = []
+        for item in tracked:
+            if not isinstance(item, dict):
+                log.append("Skipped UC table — malformed ownership metadata")
+                continue
+            full_name = item.get("full_name")
+            owner = item.get("pipeline_id")
+            if (
+                owner != pipeline_id
+                or not isinstance(full_name, str)
+                or len(full_name.split(".")) != 3
+            ):
+                log.append(
+                    f"Skipped UC table {full_name!r} — ownership is not proven"
                 )
+                continue
+            targets.append(full_name)
         return targets
 
     def _sdk_cleanup() -> list[Any]:
         log: list[Any] = []
         try:
-            from databricks.sdk.errors import NotFound
-
             w = WorkspaceClient()
 
             if resources.get("job_id"):
@@ -348,19 +357,29 @@ async def delete_pipeline(
                     w.jobs.delete(job_id=int(resources["job_id"]))
                     log.append(f"Deleted job {resources['job_id']}")
                 except Exception as exc:
-                    log.append(f"Job delete failed: {exc}")
+                    if _is_not_found(exc):
+                        log.append(f"Job {resources['job_id']} already absent")
+                    else:
+                        message = f"Job delete failed: {exc}"
+                        log.append(message)
+                        cleanup_errors.append(message)
 
             if resources.get("cluster_id"):
                 try:
                     w.clusters.permanent_delete(cluster_id=resources["cluster_id"])
                     log.append(f"Deleted cluster {resources['cluster_id']}")
                 except Exception as exc:
-                    log.append(f"Cluster delete failed: {exc}")
+                    if _is_not_found(exc):
+                        log.append(f"Cluster {resources['cluster_id']} already absent")
+                    else:
+                        message = f"Cluster delete failed: {exc}"
+                        log.append(message)
+                        cleanup_errors.append(message)
 
             # Drop the pipeline's CDF-enabled / cold-tier Unity Catalog table(s)
             # via the SDK. Each drop is best-effort, idempotent (not-found is
             # success), and scoped to this pipeline's own catalog.
-            for full_name in _uc_tables_to_drop():
+            for full_name in _uc_tables_to_drop(log):
                 entry: dict[str, Any] = {
                     "resource": f"UC table {full_name}",
                 }
@@ -372,21 +391,18 @@ async def delete_pipeline(
                 except Exception as exc:
                     entry["status"] = "failed"
                     entry["error"] = str(exc)
+                    cleanup_errors.append(
+                        f"UC table delete failed for {full_name}: {exc}"
+                    )
                     logger.warning(
                         "UC table drop failed for %s (pipeline %s): %s",
                         full_name, pipeline_id, exc,
                     )
                 log.append(entry)
-
-            if resources.get("uc_schema") and resources.get("uc_catalog"):
-                full_schema = f"{resources['uc_catalog']}.{resources['uc_schema']}"
-                try:
-                    w.schemas.delete(full_name=full_schema)
-                    log.append(f"Deleted schema {full_schema}")
-                except Exception as exc:
-                    log.append(f"Schema delete failed: {exc}")
         except Exception as exc:
-            log.append(f"SDK init failed: {exc}")
+            message = f"SDK init failed: {exc}"
+            log.append(message)
+            cleanup_errors.append(message)
         return log
 
     try:
@@ -395,20 +411,44 @@ async def delete_pipeline(
             timeout=15,
         )
     except asyncio.TimeoutError:
-        cleanup_log.append("SDK cleanup timed out after 15s; resources may be orphaned")
+        message = "SDK cleanup timed out after 15s; resources may be orphaned"
+        cleanup_log.append(message)
+        cleanup_errors.append(message)
 
     if resources.get("lakebase_table"):
-        import re
         table_name = resources["lakebase_table"]
-        if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.]*", table_name):
-            cleanup_log.append(f"Skipped table drop — invalid name: {table_name!r}")
-        else:
-            try:
-                await state.db.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-                cleanup_log.append(f"Dropped table {table_name}")
-            except Exception as exc:
-                cleanup_log.append(f"Table drop failed: {exc}")
+        cleanup_log.append(
+            f"Preserved Lakebase table {table_name!r} — deployment ownership "
+            "is not represented in the legacy pipeline resource record"
+        )
 
+    if cleanup_errors:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "deleted": False,
+                "error": "; ".join(cleanup_errors),
+                "cleanup_log": cleanup_log,
+            },
+        )
+
+    try:
+        await release_source(db=state.db, pipeline_id=pipeline_id)
+    except Exception as exc:
+        logger.warning("release_source failed during pipeline delete: %s", exc)
+        return JSONResponse(
+            status_code=502,
+            content={
+                "deleted": False,
+                "error": f"Source release failed: {exc}",
+                "cleanup_log": cleanup_log,
+            },
+        )
+
+    await state.db.execute(
+        "UPDATE pipelines SET status = 'deleted', updated_at = NOW() WHERE id = $1::uuid",
+        pipeline_id,
+    )
     return {"deleted": True, "cleanup_log": cleanup_log}
 
 
@@ -499,12 +539,14 @@ async def _heal_industry_lakebase(industry: str) -> "dict[str, Any] | JSONRespon
     skipped). Never raises: every step is wrapped in its own try/except and
     reported in the response, matching the legacy endpoint's shape.
     """
-    from services.pipelines_project_service import PG_DATABASE, PIPELINES_PROJECT
-
-    lb_project_id = PIPELINES_PROJECT
+    lb_project_id = get_pipelines_project()
     lb_branch_id = industry
     lb_database = PG_DATABASE
-    endpoint_name = f"projects/{lb_project_id}/branches/{lb_branch_id}/endpoints/primary"
+    endpoint_name = endpoint_resource_name(
+        lb_branch_id,
+        PRIMARY_ENDPOINT_ID,
+        lb_project_id,
+    )
 
     try:
         w = WorkspaceClient()
@@ -862,6 +904,13 @@ async def get_lakebase_health(
         "inserts_per_sec_recent": 0.0,
     }
 
+    if industry and not await _is_industry_deployment(
+        state, pipeline_id, industry, "realtime"
+    ):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Realtime industry deployment not found"},
+        )
     lb = (
         await get_industry_lakebase(state, industry)
         if industry

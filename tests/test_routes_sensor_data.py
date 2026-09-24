@@ -40,6 +40,10 @@ def _state_with_db(db: MagicMock) -> AppState:
     state.db = db
     state.db_available = True
     state.db_error = None
+    metadata_db = MagicMock()
+    metadata_db.fetchrow = AsyncMock(return_value={"exists": 1})
+    state.app_backend_db = metadata_db
+    state.app_backend_available = True
     return state
 
 
@@ -89,8 +93,18 @@ class TestLaketsGapfill:
         bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
         bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.timezone.utc)
         fetch_rows = [
-            {"bucket": bucket_a, "sensor_name": "temp-01", "value": 22.5},
-            {"bucket": bucket_b, "sensor_name": "temp-01", "value": 23.1},
+            {
+                "bucket": bucket_a,
+                "sensor_name": "temp-01",
+                "value": 22.5,
+                "gapfilled": False,
+            },
+            {
+                "bucket": bucket_b,
+                "sensor_name": "temp-01",
+                "value": 22.5,
+                "gapfilled": True,
+            },
         ]
         db = _mock_db(fetchval_return="0.1.0", fetch_return=fetch_rows)
         state = _state_with_db(db)
@@ -113,12 +127,110 @@ class TestLaketsGapfill:
         assert {"bucket", "sensor_name", "value"}.issubset(first.keys())
         assert first["sensor_name"] == "temp-01"
         assert first["value"] == 22.5
+        assert first["gapfilled"] is False
+        assert body["rows"][1]["gapfilled"] is True
+        assert body["gapfilled_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_minutes_use_bounded_bucket_spine_c7227_defect_regression(
+        self,
+    ) -> None:
+        """[C7227][defect][regression] Generate and carry missing minute buckets."""
+        db = _mock_db(fetchval_return="0.1.0", fetch_return=[])
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+
+        with _patch_pipeline_lakebase(db):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/pipelines/pipe-1/lakets/gapfill?minutes=30"
+                )
+
+        assert response.status_code == 200
+        query = " ".join(db.fetch.await_args.args[0].lower().split())
+        assert "generate_series(" in query
+        assert "cross join active_sensors" in query
+        assert "left join base current_bucket" in query
+        assert "left join lateral" in query
+        assert "previous.bucket < spine.bucket" in query
+        assert "make_interval(mins => $1 - 1)" in query
+        assert "event_time >= bounds.window_start" in query
+        assert "event_time < bounds.window_end + interval '1 minute'" in query
+        assert "limit 5000" in query
+        assert "lag(avg_value)" not in query
+        assert "lakets.locf" not in query
 
 
 # ---------------------------------------------------------------------------
 # Rate endpoint
 # ---------------------------------------------------------------------------
 class TestLaketsRate:
+    @pytest.mark.asyncio
+    async def test_rate_query_disables_counter_reset_handling_c7222_defect_regression(
+        self,
+    ) -> None:
+        """[C7222][defect][regression] Preserve negative gauge rates."""
+        db = _mock_db(fetchval_return="0.1.0", fetch_return=[])
+        state = _state_with_db(db)
+
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        with _patch_pipeline_lakebase(db):
+          async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
+
+        assert resp.status_code == 200
+        rate_sql = db.fetch.await_args.args[0]
+        normalized_sql = " ".join(rate_sql.upper().split())
+        assert "LAKETS.RATE(" in normalized_sql
+        assert "FALSE ) AS RATE" in normalized_sql
+
+    @pytest.mark.asyncio
+    async def test_rate_response_uses_frontend_key_and_preserves_null_c7222_defect_regression(
+        self,
+    ) -> None:
+        """[C7222][defect][regression] Return `rate`, including null first values."""
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.timezone.utc)
+        fetch_rows = [
+            {
+                "bucket": bucket_a,
+                "sensor_name": "temperature-01",
+                "rate": None,
+                "value": None,
+            },
+            {
+                "bucket": bucket_b,
+                "sensor_name": "temperature-01",
+                "rate": -0.25,
+                "value": -0.25,
+            },
+        ]
+        db = _mock_db(fetchval_return="0.1.0", fetch_return=fetch_rows)
+        state = _state_with_db(db)
+
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        with _patch_pipeline_lakebase(db):
+          async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
+
+        assert resp.status_code == 200
+        assert resp.json()["rows"] == [
+            {
+                "bucket": str(bucket_a),
+                "sensor_name": "temperature-01",
+                "rate": None,
+            },
+            {
+                "bucket": str(bucket_b),
+                "sensor_name": "temperature-01",
+                "rate": -0.25,
+            },
+        ]
+
     @pytest.mark.asyncio
     async def test_lakets_not_installed_returns_reason(self) -> None:
         db = _mock_db(fetchval_return=None)  # probe returns None
@@ -139,7 +251,7 @@ class TestLaketsRate:
     async def test_happy_path_returns_rows_shape(self) -> None:
         bucket = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
         fetch_rows = [
-            {"bucket": bucket, "sensor_name": "pressure-02", "value": 0.15},
+            {"bucket": bucket, "sensor_name": "pressure-02", "rate": 0.15},
         ]
         db = _mock_db(fetchval_return="0.1.0", fetch_return=fetch_rows)
         state = _state_with_db(db)
@@ -157,7 +269,7 @@ class TestLaketsRate:
         assert len(body["rows"]) == 1
         first = body["rows"][0]
         assert first["sensor_name"] == "pressure-02"
-        assert first["value"] == 0.15
+        assert first["rate"] == 0.15
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +554,52 @@ def _patch_zerobus_deps(
 
 class TestZerobusMetrics:
     @pytest.mark.asyncio
+    async def test_industry_first_deployment_id_is_required(self) -> None:
+        db = _mock_db()
+        state = _state_with_db(db)
+        state.app_backend_db = _mock_db()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/api/pipelines/not-a-deployment/zerobus-metrics"
+                "?minutes=60&industry=pharmaceutical"
+            )
+
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "Industry deployment not found"
+
+    @pytest.mark.asyncio
+    async def test_industry_first_uses_prefixed_zerobus_table(self) -> None:
+        db = _mock_db()
+        state = _state_with_db(db)
+        state.app_backend_db = _mock_db()
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        target = "catalog.schema.pharmaceutical_zerobus"
+
+        with patch(
+            "routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
+        ), patch(
+            "routes.sensor_data.industry_catalog_service.industry_table",
+            MagicMock(return_value=target),
+        ), patch(
+            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+        ), patch(
+            "routes.sensor_data.execute_dbsql",
+            AsyncMock(return_value={"columns": [], "data": [], "row_count": 0}),
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/deployment-zb/zerobus-metrics"
+                    "?minutes=60&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["table_name"] == target
+
+    @pytest.mark.asyncio
     async def test_pipeline_unknown_returns_404(self) -> None:
         db = _mock_db()
         state = _state_with_db(db)
@@ -473,6 +631,7 @@ class TestZerobusMetrics:
                     "total_bytes": 120000,
                     "last_commit_time": last_commit,
                     "error_count": 2,
+                    "current_records_per_min": 240,
                 }
             ],
             "row_count": 1,
@@ -524,9 +683,10 @@ class TestZerobusMetrics:
         assert body["table_name"] == "cat1.raw.iot_sensor_data"
         assert body["total_records"] == 600
         assert body["total_bytes"] == 120000
-        # 600 records over a 60-minute window => 10 rec/min, ~0.167 rec/sec
-        assert body["records_per_min"] == pytest.approx(10.0, abs=0.01)
-        assert body["records_per_sec"] == pytest.approx(600 / (60 * 60), abs=0.001)
+        # Current throughput comes from the latest complete minute, matching
+        # the rightmost complete bucket shown in the chart.
+        assert body["records_per_min"] == pytest.approx(240.0, abs=0.01)
+        assert body["records_per_sec"] == pytest.approx(4.0, abs=0.001)
         assert body["last_commit_time"] == last_commit
         assert body["error_count"] == 2
         # Stream is open (closed_time is null).
@@ -536,9 +696,167 @@ class TestZerobusMetrics:
         assert {"t", "records_per_min"}.issubset(body["series"][0].keys())
         assert body["series"][0]["records_per_min"] == 120.0
         assert body["series"][1]["records_per_min"] == 240.0
+        assert "date_trunc('minute', now()) - INTERVAL 1 MINUTE" in (
+            exec_mock.await_args_list[0].args[0]
+        )
         # Errors flattened from the stream errors array (capped at ~5).
         assert "transient ack timeout" in body["recent_errors"]
         assert len(body["recent_errors"]) <= 5
+
+    @pytest.mark.asyncio
+    async def test_industry_first_returns_latest_sensor_readings_for_twin(self) -> None:
+        db = _mock_db()
+        state = _state_with_db(db)
+        state.app_backend_db = _mock_db()
+        target = "catalog.schema.pharmaceutical_zerobus"
+        summary = {
+            "data": [{
+                "total_records": 600,
+                "total_bytes": 120000,
+                "last_commit_time": "2026-04-21T10:05:00.000+00:00",
+                "error_count": 0,
+                "current_records_per_min": 240,
+            }]
+        }
+        series = {
+            "data": [{"bucket": "2026-04-21T10:04:00.000+00:00", "records": 240}]
+        }
+        stream = {
+            "data": [{
+                "opened_time": "2026-04-21T09:55:00.000+00:00",
+                "closed_time": None,
+                "errors": [],
+            }]
+        }
+        latest = {
+            "data": [
+                {
+                    "sensor_name": "bioreactor_1_temp",
+                    "sensor_type": "temperature",
+                    "value": 37.4,
+                    "unit": "°C",
+                    "fault_active": False,
+                    "event_time": "2026-04-21T10:05:01.000+00:00",
+                },
+                {
+                    "sensor_name": "wfi_flow",
+                    "sensor_type": "flow",
+                    "value": 58.0,
+                    "unit": "L/min",
+                    "fault_active": False,
+                    "event_time": "2026-04-21T10:05:01.000+00:00",
+                },
+            ]
+        }
+        exec_mock = AsyncMock(side_effect=[summary, series, stream, latest])
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        with patch(
+            "routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
+        ), patch(
+            "routes.sensor_data.industry_catalog_service.industry_table",
+            MagicMock(return_value=target),
+        ), patch(
+            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+        ), patch(
+            "routes.sensor_data.execute_dbsql", exec_mock
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/deployment-zb/zerobus-metrics"
+                    "?minutes=60&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["latest_readings"] == latest["data"]
+        assert target in exec_mock.await_args_list[3].args[0]
+        assert "ROW_NUMBER()" in exec_mock.await_args_list[3].args[0]
+
+    @pytest.mark.asyncio
+    async def test_stalled_stream_reports_zero_current_rate(self) -> None:
+        db = _mock_db()
+        state = _state_with_db(db)
+        summary = {
+            "data": [{
+                "total_records": 600,
+                "total_bytes": 120000,
+                "last_commit_time": "2026-04-21T09:55:00.000+00:00",
+                "error_count": 0,
+                "current_records_per_min": 0,
+            }]
+        }
+        old_series = {
+            "data": [{"bucket": "2026-04-21T09:55:00.000+00:00", "records": 240}]
+        }
+        stream = {"data": [{"opened_time": "t0", "closed_time": None, "errors": []}]}
+        exec_mock = AsyncMock(side_effect=[summary, old_series, stream])
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        with patch(
+            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+        ), patch(
+            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+        ), patch(
+            "routes.sensor_data._resolve_zerobus_target",
+            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+        ), patch(
+            "routes.sensor_data.execute_dbsql", exec_mock
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["records_per_min"] == 0
+        assert resp.json()["records_per_sec"] == 0
+
+    @pytest.mark.asyncio
+    async def test_latest_readings_failure_preserves_ingest_metrics(self) -> None:
+        db = _mock_db()
+        state = _state_with_db(db)
+        state.app_backend_db = _mock_db()
+        summary = {
+            "data": [{
+                "total_records": 600,
+                "total_bytes": 120000,
+                "last_commit_time": "2026-04-21T10:05:00.000+00:00",
+                "error_count": 0,
+                "current_records_per_min": 240,
+            }]
+        }
+        series = {
+            "data": [{"bucket": "2026-04-21T10:04:00.000+00:00", "records": 240}]
+        }
+        stream = {"data": [{"opened_time": "t0", "closed_time": None, "errors": []}]}
+        exec_mock = AsyncMock(
+            side_effect=[summary, series, stream, Exception("Delta table unavailable")]
+        )
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        with patch(
+            "routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
+        ), patch(
+            "routes.sensor_data.industry_catalog_service.industry_table",
+            MagicMock(return_value="catalog.schema.pharmaceutical_zerobus"),
+        ), patch(
+            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+        ), patch(
+            "routes.sensor_data.execute_dbsql", exec_mock
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/deployment-zb/zerobus-metrics"
+                    "?minutes=60&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["total_records"] == 600
+        assert resp.json()["records_per_min"] == 240
+        assert resp.json()["latest_readings"] == []
 
     @pytest.mark.asyncio
     async def test_closed_stream_status(self) -> None:
@@ -780,6 +1098,53 @@ class TestSssAggregates:
 
 
 # ---------------------------------------------------------------------------
+# Streaming metrics — SQL-safe fully-qualified metrics table
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+class TestStreamingMetrics:
+    async def test_hyphenated_catalog_is_quoted_in_both_queries_c7230(
+        self,
+    ) -> None:
+        """[C7230][defect][regression] Quote each metrics-table FQN component."""
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        logical_table = "taran-interop.rtm_lakets_zb.pharmaceutical_metrics"
+        empty_result = {"columns": [], "data": [], "row_count": 0}
+        exec_mock = AsyncMock(side_effect=[empty_result, empty_result])
+
+        with patch(
+            "services.industry_catalog_service.industry_table",
+            MagicMock(return_value=logical_table),
+        ), patch(
+            "routes.sensor_data.resolve_warehouse_id",
+            AsyncMock(return_value="wh-1"),
+        ), patch(
+            "routes.sensor_data.execute_dbsql",
+            exec_mock,
+        ):
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                resp = await client.get(
+                    "/api/pipeline/pipe-1/streaming-metrics"
+                    "?industry=pharmaceutical&mode=realtime"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["table"] == logical_table
+        assert exec_mock.await_count == 2
+        expected_from = (
+            "FROM `taran-interop`.rtm_lakets_zb.pharmaceutical_metrics"
+        )
+        assert expected_from in exec_mock.await_args_list[0].args[0]
+        assert expected_from in exec_mock.await_args_list[1].args[0]
+        assert f"FROM {logical_table}" not in exec_mock.await_args_list[0].args[0]
+        assert f"FROM {logical_table}" not in exec_mock.await_args_list[1].args[0]
+
+
+# ---------------------------------------------------------------------------
 # DBSQL time-series — mode-aware per-mode table selection (the raw.sensor_data
 # bug fix: realtime/microbatch/zerobus each land in their own schema/table).
 # ---------------------------------------------------------------------------
@@ -812,9 +1177,11 @@ def _patch_dbsql_timeseries_deps(
 
 @pytest.mark.asyncio
 class TestDbsqlTimeseries:
-    async def test_realtime_mode_queries_one_schema_prefixed_table(self) -> None:
-        """After Task 5 the realtime cold-tier table is {industry}_realtime in the
-        shared one-schema catalog, NOT iot_<industry>.realtime.lb__shadow_…."""
+    async def test_realtime_mode_queries_cdf_synced_table_c7244(self) -> None:
+        """[C7244][defect][regression] Industry-first realtime cold-tier DBSQL
+        must target the CDF-managed destination
+        ``{UC_CATALOG}.{UC_SCHEMA}.lb__shadow_<industry>_sensor_readings_history``, not
+        the empty industry-prefixed ``{industry}_realtime`` table."""
         db = _mock_db()
         state = _state_with_db(db)
         app = _build_app_with_state(state)
@@ -830,11 +1197,180 @@ class TestDbsqlTimeseries:
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "realtime"
-        expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_realtime"
+        expected_table = (
+            f"{_UC_CATALOG}.{_UC_SCHEMA}."
+            "lb__shadow_pharmaceutical_sensor_readings_history"
+        )
         assert body["table"] == expected_table
+        assert "pharmaceutical_realtime" not in body["table"]
         sql = exec_mock.await_args_list[0].args[0]
         assert expected_table in sql
         assert "event_time" in sql
+        assert "industry = 'pharmaceutical'" in sql
+        assert "_pg_change_type IN ('insert', 'update_postimage')" in sql
+        assert "update_preimage" not in sql
+        assert "'delete'" not in sql
+
+    async def test_realtime_latest_timestamp_uses_industry_scoped_dbsql_c7265(
+        self,
+    ) -> None:
+        """[C7265][defect][regression] Read cold freshness without counting rows."""
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        chart_result = {"columns": [], "data": [], "row_count": 0}
+        latest_result = {
+            "columns": ["latest_event_at"],
+            "data": [{"latest_event_at": "2026-09-22T10:29:55Z"}],
+            "row_count": 1,
+        }
+
+        patches, exec_mock = _patch_dbsql_timeseries_deps()
+        exec_mock.side_effect = [chart_result, latest_result]
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipeline/pipe-1/dbsql-timeseries"
+                    "?minutes=60&mode=realtime&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["latest_event_at"] == "2026-09-22T10:29:55Z"
+        latest_sql = " ".join(exec_mock.await_args_list[1].args[0].split())
+        assert latest_sql.startswith("SELECT MAX(event_time) AS latest_event_at FROM")
+        assert "WHERE industry = 'pharmaceutical'" in latest_sql
+        assert "_pg_change_type IN ('insert', 'update_postimage')" in latest_sql
+        assert "COUNT(" not in latest_sql
+        assert "TIMESTAMPADD" not in latest_sql
+
+    async def test_realtime_rejects_non_curated_industry_before_sql_c7229(
+        self,
+    ) -> None:
+        """[C7229][defect][security][regression] Reject unsafe industry input."""
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+
+        patches, exec_mock = _patch_dbsql_timeseries_deps()
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipeline/pipe-1/dbsql-timeseries",
+                    params={
+                        "minutes": 60,
+                        "mode": "realtime",
+                        "industry": "pharma'ceutical",
+                    },
+                )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "Unknown industry: pharma'ceutical"
+        exec_mock.assert_not_awaited()
+
+    async def test_realtime_normalizes_curated_industry_before_sql_c7229(
+        self,
+    ) -> None:
+        """[C7229][defect][security][regression] Normalize curated industry input."""
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        chart_result = {"columns": [], "data": [], "row_count": 0}
+        latest_result = {
+            "columns": ["latest_event_at"],
+            "data": [{"latest_event_at": "2026-09-22T10:29:55Z"}],
+            "row_count": 1,
+        }
+
+        patches, exec_mock = _patch_dbsql_timeseries_deps()
+        exec_mock.side_effect = [chart_result, latest_result]
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipeline/pipe-1/dbsql-timeseries",
+                    params={
+                        "minutes": 60,
+                        "mode": "realtime",
+                        "industry": "  Pharmaceutical  ",
+                    },
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["latest_event_at"] == "2026-09-22T10:29:55Z"
+        chart_sql = exec_mock.await_args_list[0].args[0]
+        latest_sql = exec_mock.await_args_list[1].args[0]
+        assert "industry = 'pharmaceutical'" in chart_sql
+        assert "industry = 'pharmaceutical'" in latest_sql
+        assert "Pharmaceutical" not in chart_sql
+        assert "Pharmaceutical" not in latest_sql
+
+    async def test_direct_write_latest_timestamp_is_industry_scoped_c7265(
+        self,
+    ) -> None:
+        """[C7265][defect][regression] Direct-write freshness stays scoped."""
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        chart_result = {"columns": [], "data": [], "row_count": 0}
+        latest_result = {
+            "columns": ["latest_event_at"],
+            "data": [{"latest_event_at": "2026-09-22T10:29:55Z"}],
+            "row_count": 1,
+        }
+
+        patches, exec_mock = _patch_dbsql_timeseries_deps()
+        exec_mock.side_effect = [chart_result, latest_result]
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipeline/pipe-1/dbsql-timeseries"
+                    "?minutes=15&mode=microbatch&industry=pharmaceutical"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json()["latest_event_at"] == "2026-09-22T10:29:55Z"
+        latest_sql = " ".join(exec_mock.await_args_list[1].args[0].split())
+        assert latest_sql.startswith("SELECT MAX(event_time) AS latest_event_at FROM")
+        assert "WHERE industry = 'pharmaceutical'" in latest_sql
+        assert "_pg_change_type" not in latest_sql
+        assert "COUNT(" not in latest_sql
+        assert "TIMESTAMPADD" not in latest_sql
+
+    async def test_latest_timestamp_failure_does_not_fail_chart_c7265(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """[C7265][defect][regression] Log freshness failure and preserve chart."""
+        db = _mock_db()
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        chart_result = {
+            "columns": ["sensor_name"],
+            "data": [{"sensor_name": "temperature"}],
+            "row_count": 1,
+        }
+
+        patches, exec_mock = _patch_dbsql_timeseries_deps()
+        exec_mock.side_effect = [chart_result, Exception("latest warehouse timeout")]
+        with caplog.at_level("WARNING", logger="iot_digital_twin.routes.sensor_data"):
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                async with AsyncClient(
+                    transport=transport, base_url="http://test"
+                ) as client:
+                    resp = await client.get(
+                        "/api/pipeline/pipe-1/dbsql-timeseries"
+                        "?minutes=60&mode=realtime&industry=pharmaceutical"
+                    )
+
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 1
+        assert resp.json()["latest_event_at"] is None
+        assert resp.json()["rows"] == [{"sensor_name": "temperature"}]
+        assert "DBSQL latest-event query failed" in caplog.text
+        assert "latest warehouse timeout" in caplog.text
 
     async def test_microbatch_mode_queries_one_schema_prefixed_table(self) -> None:
         db = _mock_db()

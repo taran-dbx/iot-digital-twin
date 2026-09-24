@@ -26,6 +26,8 @@ node_modules/
 
 # Project-specific exclusions
 screenshots/
+qa-reports/
+docs/architecture/*.architecture.html
 # Design-reference mockups — kept on disk as reference, out of the repo.
 mockups/
 # Anchored with a leading slash so only the top-level notebooks/ (legacy Spark

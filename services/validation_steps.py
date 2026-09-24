@@ -12,9 +12,9 @@ Registered under their **bare** step name in :data:`DEFAULT_EXECUTORS`; the
 driver strips the ``<mode>:`` prefix before lookup, so ``realtime:write_test`` and
 ``microbatch:write_test`` share one executor that branches on ``ctx.mode``.
 
-``cdf_manual`` is the one non-cluster executor: it returns ``WAITING_ADMIN`` so
-the driver parks until the admin enables the managed Lakebase→Delta sync and the
-``/validate/cdf-enabled`` endpoint releases it (spec §1.10.3).
+``cdf_manual`` retains its historical state-machine key for persisted-state and
+frontend compatibility, but now idempotently enables the managed
+Lakebase→Delta sync through the CDF-config API without an admin park.
 """
 
 from __future__ import annotations
@@ -22,14 +22,29 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import timedelta
 from typing import Any
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.compute import (
+    AwsAttributes,
+    DataSecurityMode,
+    EbsVolumeType,
+    Language as CmdLanguage,
+    RuntimeEngine,
+)
+
 from core.workspace_config import get_secret_scope
 from models.metrics_schema import ALL_METRIC_MODES, metrics_table_location
+from models.sensor_schema import delta_table_ddl
+from services import cdf_reconciliation_service as cdf
+from services import cdf_config_service
+from services import health_checks
 from services import industry_catalog_service as cat
 from services import lakets_service as lakets_svc
 from services import pipelines_project_service as pps
+from services import resource_ledger
 from services import zerobus_validation as zbv
 from services import validation_config as vc
 from services import validation_snippets as snip
@@ -42,11 +57,6 @@ from services.validation_service import StepContext, StepResult
 # the test data it produced (test-data isolation, §1.13).
 VALIDATION_SOURCE = "validation"
 RTM_TABLE = "sensor_readings"
-# The unpartitioned CDC shadow enable_sync creates (lakets_cdf._shadow_sensor_readings)
-# and the UC Delta table the managed CDF sync writes it to (lb_<shadow>_history,
-# the Lakebase CDF naming convention) in the destination `realtime` schema.
-CDF_SHADOW_TABLE = f"_shadow_{RTM_TABLE}"
-CDF_SYNCED_TABLE = f"lb_{CDF_SHADOW_TABLE}_history"  # lb__shadow_sensor_readings_history
 
 logger = logging.getLogger("iot_digital_twin.services.validation_steps")
 
@@ -77,14 +87,11 @@ VALIDATION_CLUSTER_LIBRARIES: tuple[str, ...] = (
     "kafka-python>=3",
     "aws-msk-iam-sasl-signer-python",
     "psycopg2-binary",   # RTM ForeachWriter → Lakebase ChronoTable
-    "deltalake==1.6.1",  # buffered delta-rs streaming-metrics write (pinned: newer versions break write_deltalake)
     "databricks-zerobus-ingest-sdk",  # zerobus produce_test (ZerobusSdk ingest)
 )
 
 
 def _new_ws() -> Any:
-    from databricks.sdk import WorkspaceClient
-
     return WorkspaceClient()
 
 
@@ -98,12 +105,12 @@ def _cfg(ctx: StepContext) -> dict:
     bootstrap = setup.get("bootstrap_servers") or ""
     derived = setup.get("derived") or {}
     cluster_spec = setup.get("cluster_spec") or {}
-    catalog = cat.catalog_name(industry)
+    catalog = cat.uc_catalog_name()
+    schema = cat.uc_schema_name()
     partitions = int(cluster_spec.get("partition_count", 3))
     brokers = int(derived.get("broker_count", 3))
-    # Metrics are captured in a SEPARATE external table per streaming mode
-    # (streaming_metrics_<mode>). For mode-scoped steps (write_test/metrics_check)
-    # ctx.mode selects the table; common steps (no mode) default to realtime.
+    # Metrics share the industry-managed table and are distinguished by `mode`.
+    # For mode-scoped steps, ctx.mode selects the row tag.
     metric_mode = ctx.mode if ctx.mode in ALL_METRIC_MODES else "realtime"
     return {
         "industry": industry,
@@ -116,19 +123,28 @@ def _cfg(ctx: StepContext) -> dict:
         "warehouse_id": setup.get("warehouse_id"),
         "branch": industry,  # per-industry Lakebase branch name = industry
         "project_id": pps.get_pipelines_project(),
+        "schema": schema,
+        "workspace_url": os.getenv("DATABRICKS_HOST", ""),
+        "zerobus_endpoint": os.getenv("ZEROBUS_SERVER_ENDPOINT", ""),
+        "zerobus_client_id": os.getenv("DATABRICKS_CLIENT_ID", ""),
+        "zerobus_secret_key": cat.APP_SP_OAUTH_SECRET,
         "metric_mode": metric_mode,
         "metrics_table_fqn": cat.industry_table(industry, "metrics"),
         "metrics_table_location": metrics_table_location(
             catalog, cat._storage_base(), metric_mode
         ),
+        "cdf_shadow_table": cdf.shadow_table_name(industry),
+        "cdf_delta_table": cdf.delta_table_fqn(
+            industry, catalog=catalog, schema=schema
+        ),
     }
 
 
-def _checkpoint(catalog: str, mode: str) -> str:
-    """Distinct validation checkpoint under the checkpoints volume (§G4/G10)."""
+def _checkpoint(catalog: str, schema: str, industry: str, mode: str) -> str:
+    """Distinct validation checkpoint in the shared workspace volume (§G4/G10)."""
     return (
-        f"/Volumes/{catalog}/{cat.CHECKPOINT_SCHEMA}/{cat.CHECKPOINT_VOLUME}"
-        f"/validation/{mode}"
+        f"/Volumes/{catalog}/{schema}/{cat.CHECKPOINT_VOLUME}"
+        f"/{industry}/validation/{mode}"
     )
 
 
@@ -148,8 +164,6 @@ def _get_or_create_context(ws: Any, cluster_id: str) -> str:
     context across the steps of a validation run makes ``provision_cluster``'s
     library install persist to every downstream step, as the harness intends.
     """
-    from databricks.sdk.service.compute import Language as CmdLanguage
-
     ctx_id = _CONTEXT_CACHE.get(cluster_id)
     if ctx_id:
         return ctx_id
@@ -174,8 +188,6 @@ def _get_or_create_context(ws: Any, cluster_id: str) -> str:
 
 
 def _run_python_sync(ws: Any, cluster_id: str, code: str, timeout_s: int) -> dict:
-    from databricks.sdk.service.compute import Language as CmdLanguage
-
     context_id = _get_or_create_context(ws, cluster_id)
     try:
         result = ws.command_execution.execute(
@@ -210,16 +222,53 @@ async def _run_on_cluster(
     res = await asyncio.to_thread(_run_python_sync, ws, cluster_id, code, timeout_s)
     output = res["output"]
     if res["status"] == "Finished" and snip.OK_SENTINEL in output and res["cause"] is None:
-        return StepResult(sm.PASSED, data={"output": output[:1000]})
+        # Snippets emit diagnostics and the authoritative OK sentinel at the end.
+        # Preserve the tail so downstream parsing never loses metrics fields to
+        # noisy Spark output that preceded them.
+        return StepResult(sm.PASSED, data={"output": output[-2000:]})
     err = res["cause"] or _extract_fail(output) or f"cluster command {res['status']}"
-    return StepResult(sm.FAILED, error=str(err)[:500])
+    return StepResult(sm.FAILED, error=_compact_error(err))
 
 
 def _extract_fail(output: str) -> str | None:
     for line in (output or "").splitlines():
         if line.startswith(snip.FAIL_SENTINEL):
-            return line[len(snip.FAIL_SENTINEL):].strip()
+            payload = line[len(snip.FAIL_SENTINEL):].strip()
+            try:
+                decoded = json.loads(payload)
+            except (TypeError, ValueError):
+                return payload
+            if isinstance(decoded, dict) and decoded.get("error"):
+                extras = {
+                    key: value
+                    for key, value in decoded.items()
+                    if key != "error"
+                }
+                if extras:
+                    prefix = "\ndetails: "
+                    details = _compact_error(
+                        json.dumps(extras, default=str),
+                        limit=200,
+                    )
+                    error_limit = 500 - len(prefix) - len(details)
+                    return (
+                        f"{_compact_error(str(decoded['error']), limit=error_limit)}"
+                        f"{prefix}{details}"
+                    )
+                return str(decoded["error"])
+            return payload
     return None
+
+
+def _compact_error(error: Any, limit: int = 500) -> str:
+    """Keep both traceback context and the root-cause tail within state limits."""
+    text = str(error)
+    if len(text) <= limit:
+        return text
+    head_size = min(120, limit // 3)
+    marker = "\n...\n"
+    tail_size = limit - head_size - len(marker)
+    return f"{text[:head_size]}{marker}{text[-tail_size:]}"
 
 
 def _ok_payload(output: str) -> dict:
@@ -285,10 +334,6 @@ def _latest_lts_spark_version(ws: Any) -> str:
 
 
 def _create_validation_cluster(ws: Any, spec: dict) -> str:
-    from databricks.sdk.service.compute import (
-        AwsAttributes, DataSecurityMode, EbsVolumeType, RuntimeEngine,
-    )
-
     aws = spec.get("aws_attributes") or {}
     resp = ws.clusters.create(
         cluster_name=spec["cluster_name"],
@@ -393,7 +438,7 @@ else:
     import kafka  # noqa: F401
     from aws_msk_iam_sasl_signer import MSKAuthTokenProvider  # noqa: F401
     import psycopg2  # noqa: F401
-    from deltalake import write_deltalake  # noqa: F401
+    from zerobus.sdk.sync import ZerobusSdk  # noqa: F401
     print("{snip.OK_SENTINEL} " + "libraries installed")
 '''
 
@@ -461,8 +506,8 @@ async def partitions_precreate(ctx: StepContext) -> StepResult:
 async def _run_write_test(ctx: StepContext, code: str) -> StepResult:
     """Run a write-test snippet and LOG the metrics-flush diagnostic from its OK
     payload (metrics_written / recent_progress / metrics_flush_error) so a silent
-    delta-rs metrics-write failure surfaces in the app logs instead of only as an
-    empty table caught later by metrics_check."""
+    Zerobus metrics-write failure surfaces here instead of only as an empty
+    table caught later by metrics_check."""
     result = await _run_on_cluster(ctx, code, timeout_s=300)
     p = _ok_payload((result.data or {}).get("output", ""))
     logger.info(
@@ -470,22 +515,45 @@ async def _run_write_test(ctx: StepContext, code: str) -> StepResult:
         ctx.mode, result.status, p.get("metrics_written"),
         p.get("recent_progress"), p.get("metrics_flush_error"),
     )
+    if (
+        result.status == sm.PASSED
+        and p
+        and ctx.mode in {"realtime", "microbatch"}
+        and (
+            int(p.get("metrics_written") or 0) <= 0
+            or bool(p.get("metrics_flush_error"))
+        )
+    ):
+        detail = p.get("metrics_flush_error") or (
+            f"no streaming progress was captured (recent_progress="
+            f"{p.get('recent_progress', 0)})"
+        )
+        return StepResult(sm.FAILED, error=f"metrics flush failed: {detail}")
     return result
 
 
 async def write_test(ctx: StepContext) -> StepResult:
     cfg = _cfg(ctx)
-    checkpoint = _checkpoint(cfg["catalog"], ctx.mode or "realtime")
+    checkpoint = _checkpoint(
+        cfg["catalog"],
+        cfg["schema"],
+        cfg["industry"],
+        ctx.mode or "realtime",
+    )
     if ctx.mode == "microbatch":
         topic = vc.topic_name(cfg["industry"], "microbatch")
         delta = cat.industry_table(cfg["industry"], "microbatch")
-        # cfg metrics_table_fqn/location resolve to the per-mode MICRO-BATCH table
-        # (ctx.mode == "microbatch"), so the listener lands micro-batch metrics.
+        # The managed metrics table is shared; the listener tags these rows as
+        # microbatch.
         code = snip.microbatch_write_test(
             topic, cfg["bootstrap"], cfg["service_credential"], delta, checkpoint,
             metrics_table_fqn=cfg["metrics_table_fqn"],
             metrics_table_location=cfg["metrics_table_location"],
             region=cfg["region"],
+            zerobus_endpoint=cfg["zerobus_endpoint"],
+            workspace_url=cfg["workspace_url"],
+            zerobus_client_id=cfg["zerobus_client_id"],
+            zerobus_secret_key=cfg["zerobus_secret_key"],
         )
         return await _run_write_test(ctx, code)
 
@@ -494,13 +562,15 @@ async def write_test(ctx: StepContext) -> StepResult:
     #      validation otherwise, so an earliest read had nothing to land);
     #   2. run the bounded RTM consumer that writes rows to the Lakebase LakeTS
     #      ChronoTable via a psycopg ForeachWriter, wired with the buffered
-    #      delta-rs metrics listener so metrics rows land too.
+    #      Zerobus metrics listener so metrics rows land too.
     topic = vc.topic_name(cfg["industry"], "realtime")
     produce = await _run_on_cluster(
         ctx,
         snip.rtm_produce(
             topic, cfg["bootstrap"], cfg["region"], cfg["service_credential"],
-            num_records=100, source=VALIDATION_SOURCE,
+            num_records=100,
+            source=VALIDATION_SOURCE,
+            industry=cfg["industry"],
         ),
         timeout_s=180,
     )
@@ -527,6 +597,10 @@ async def write_test(ctx: StepContext) -> StepResult:
         metrics_table_fqn=cfg["metrics_table_fqn"],
         metrics_table_location=cfg["metrics_table_location"],
         pg_host=pg_host, pg_user=pg_user, pg_token=pg_token,
+        zerobus_endpoint=cfg["zerobus_endpoint"],
+        workspace_url=cfg["workspace_url"],
+        zerobus_client_id=cfg["zerobus_client_id"],
+        zerobus_secret_key=cfg["zerobus_secret_key"],
         region=cfg["region"], source=VALIDATION_SOURCE,
         min_event_epoch=min_event_epoch,
     )
@@ -535,59 +609,132 @@ async def write_test(ctx: StepContext) -> StepResult:
 
 def _resolve_lakebase_write_conn(ctx: StepContext, branch: str) -> tuple[str, str, str]:
     """Resolve (host, user, token) for the branch PRIMARY on the harness driver."""
-    import os as _os
-
     ws = ctx.ws or _new_ws()
-    name = pps.endpoint_resource_name(branch, pps.PRIMARY_ENDPOINT_ID, pps.PIPELINES_PROJECT)
+    name = pps.endpoint_resource_name(
+        branch,
+        pps.PRIMARY_ENDPOINT_ID,
+        _cfg(ctx)["project_id"],
+    )
     endpoint = ws.postgres.get_endpoint(name=name)
     host = pps._endpoint_host(endpoint)
     cred = ws.postgres.generate_database_credential(endpoint=name)
-    user = _os.getenv("DATABRICKS_CLIENT_ID") or ws.current_user.me().user_name
+    user = os.getenv("DATABRICKS_CLIENT_ID") or ws.current_user.me().user_name
     return host, user, cred.token
 
 
 async def cdf_manual(ctx: StepContext) -> StepResult:
-    # Ensure the CDC shadow exists, THEN park for the admin. enable_sync creates
-    # the unpartitioned lakets_cdf._shadow_sensor_readings mirror + trigger — the
-    # thing the admin enables the managed Lakebase→Delta sync ON. It's idempotent
-    # (skips when already prepared), so this is safe to run every time and also
-    # self-heals pipelines provisioned before shadow-prep moved into provisioning.
+    """Ensure the CDF shadow and managed CDF config without an admin step.
+
+    The old ``cdf_manual`` key remains stable for existing persisted validation
+    states and UI labels. Its behavior is now fully automated.
+    """
     cfg = _cfg(ctx)
-    shadow_status: str | None = None
     conn = None
     try:
         conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
-        res = await lakets_svc.enable_sync(conn, RTM_TABLE, schema="public")
+        res = await lakets_svc.reconcile_chronotable_shadow(
+            conn,
+            shadow_table=cfg["cdf_shadow_table"],
+            table=RTM_TABLE,
+            schema="public",
+        )
         shadow_status = res.get("status")
-    except Exception as exc:  # non-fatal — surface, don't block the park
-        logger.warning("cdf_manual shadow prep (enable_sync) failed: %s", exc)
-        shadow_status = f"error: {str(exc)[:160]}"
+        if shadow_status not in {"created", "already_exists", "migrated"}:
+            return StepResult(
+                sm.FAILED,
+                error=res.get("error") or "LakeTS CDF shadow was not prepared",
+            )
+    except Exception as exc:
+        return StepResult(sm.FAILED, error=f"CDF shadow prep failed: {str(exc)[:300]}")
     finally:
         if conn is not None:
             try:
                 await conn.close()
             except Exception:  # pragma: no cover - best-effort
                 pass
-    return StepResult(sm.WAITING_ADMIN, error=None, data={
-        "note": "waiting for admin to enable managed CDF sync",
-        "shadow_table": f"lakets_cdf._shadow_{RTM_TABLE}",
+
+    parent = cdf_config_service.database_parent(
+        cfg["branch"],
+        project_id=cfg["project_id"],
+    )
+    try:
+        cdf_result = await asyncio.to_thread(
+            cdf_config_service.ensure_cdf_config,
+            parent,
+            catalog=cat.uc_catalog_name(),
+            schema=cat.uc_schema_name(),
+            ws=ctx.ws,
+        )
+    except Exception as exc:
+        return StepResult(
+            sm.FAILED, error=f"CDF config enablement failed: {str(exc)[:300]}"
+        )
+
+    setup_id = ctx.setup.get("id")
+    if ctx.db is not None and setup_id is not None:
+        try:
+            resources = await resource_ledger.list_resources(ctx.db, setup_id)
+            if not any(
+                resource.get("resource_type") == "cdf_sync"
+                and resource.get("identifier") == cdf_result.get("name")
+                for resource in resources
+            ):
+                await resource_ledger.record_resource(
+                    ctx.db,
+                    setup_id=setup_id,
+                    resource_type="cdf_sync",
+                    identifier=cdf_result["name"],
+                    parent_ref=pps.branch_resource_name(
+                        cfg["branch"], cfg["project_id"]
+                    ),
+                    teardown_order=cdf_config_service.TEARDOWN_ORDER,
+                    metadata={
+                        "parent": parent,
+                        "cdf_config_id": cdf_result.get(
+                            "cdf_config_id",
+                            cdf_config_service.DEFAULT_POSTGRES_SCHEMA,
+                        ),
+                        "catalog": cat.uc_catalog_name(),
+                        "schema": cat.uc_schema_name(),
+                        "postgres_schema": cdf_result.get(
+                            "postgres_schema",
+                            cdf_config_service.DEFAULT_POSTGRES_SCHEMA,
+                        ),
+                        "database": pps.PG_DATABASE,
+                        "source_table": (
+                            f"{cdf.CDF_SHADOW_SCHEMA}.{cfg['cdf_shadow_table']}"
+                        ),
+                        "delta_table": cfg["cdf_delta_table"],
+                        "force_delete_tables": False,
+                    },
+                )
+        except Exception as exc:
+            return StepResult(
+                sm.FAILED,
+                error=f"CDF config ledger recording failed: {str(exc)[:300]}",
+            )
+
+    return StepResult(sm.PASSED, data={
+        "note": "managed CDF sync enabled through the Postgres API",
+        "shadow_table": f"lakets_cdf.{cfg['cdf_shadow_table']}",
         "cdf_shadow": shadow_status,
+        "cdf_config": cdf_result.get("name"),
+        "cdf_config_status": cdf_result.get("status"),
     })
 
 
 async def cdf_verify(ctx: StepContext) -> StepResult:
     # CDF sync status lives in the branch's Lakebase catalog (wal2delta.tables) —
     # NOT in Spark/UC — so verify it on the branch via psycopg, reusing the Tier-1
-    # check (two-snapshot STREAMING + advancing-committed_lsn poll keyed on THIS
-    # pipeline's shadow lakets_cdf._shadow_sensor_readings, §1.10.3). Running it on
-    # the cluster via spark.sql can't work: wal2delta.tables is a Postgres table.
-    from services import health_checks as hc
-
+    # check (two-snapshot STREAMING + committed-LSN poll keyed on this industry's
+    # exact shadow). Spark SQL cannot query the Postgres wal2delta catalog.
     cfg = _cfg(ctx)
     conn = None
     try:
         conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
-        result = await hc.check_cdf_sync(conn, table=RTM_TABLE)
+        result = await health_checks.check_cdf_sync(
+            conn, shadow=cfg["cdf_shadow_table"]
+        )
     except Exception as exc:
         return StepResult(sm.FAILED, error=f"cdf verify failed: {str(exc)[:300]}")
     finally:
@@ -596,14 +743,16 @@ async def cdf_verify(ctx: StepContext) -> StepResult:
                 await conn.close()
             except Exception:  # pragma: no cover - best-effort
                 pass
-    if result.get("status") == hc.PASS:
+    if result.get("status") == health_checks.PASS:
         return StepResult(sm.PASSED, data={"detail": result.get("detail")})
     return StepResult(sm.FAILED, error=result.get("detail") or "CDF not STREAMING/advancing")
 
 
-async def _count_validation_rows(conn: Any) -> int:
+async def _count_validation_rows(conn: Any, industry: str) -> int:
     rows = await conn.fetchval(
-        f"SELECT count(*) FROM {RTM_TABLE} WHERE source = $1", VALIDATION_SOURCE
+        f"SELECT count(*) FROM {RTM_TABLE} WHERE source = $1 AND industry = $2",
+        VALIDATION_SOURCE,
+        industry,
     )
     return int(rows or 0)
 
@@ -616,7 +765,7 @@ async def read_back(ctx: StepContext) -> StepResult:
     primary = None
     try:
         primary = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
-        primary_rows = await _count_validation_rows(primary)
+        primary_rows = await _count_validation_rows(primary, cfg["industry"])
     finally:
         if primary is not None:
             try:
@@ -632,7 +781,7 @@ async def read_back(ctx: StepContext) -> StepResult:
     replica = None
     try:
         replica = await pps.get_read_conn(cfg["branch"], ws=ctx.ws)
-        replica_rows = await _count_validation_rows(replica)
+        replica_rows = await _count_validation_rows(replica, cfg["industry"])
     except Exception as exc:  # replica lag / transient — non-fatal
         logger.info("read_back replica read failed (non-fatal): %s", exc)
     finally:
@@ -656,12 +805,17 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
     elif ctx.mode == "zerobus":
         table = cat.industry_table(cfg["industry"], "zerobus")
     else:
-        # Realtime data is synced by the managed CDF path into the one-schema
-        # {industry}_realtime Delta table (one-schema layout, provisioned by
-        # industry_catalog_service).
-        table = cat.industry_table(cfg["industry"], "realtime")
+        # Managed Lakebase CDF names its destination from the source shadow
+        # table; it does not write into the separately provisioned realtime
+        # table used by direct Delta pipelines.
+        table = cfg["cdf_delta_table"]
     sql_table = sql_fqn(*table.split("."))
     sql = f"SELECT count(*) AS n FROM {sql_table}"
+    if ctx.mode == "realtime":
+        sql += (
+            f" WHERE industry = '{cfg['industry']}'"
+            f" AND source = '{VALIDATION_SOURCE}'"
+        )
 
     if ctx.mode == "zerobus":
         # Bounded poll to absorb the Zerobus ingest→commit lag (see
@@ -704,8 +858,7 @@ async def metrics_check(ctx: StepContext) -> StepResult:
     # by mode so each mode's check only sees its own rows (§1.11 one-schema layout).
     table = cfg["metrics_table_fqn"]
     sql_table = sql_fqn(*table.split("."))
-    # Verify the Databricks-only latency percentiles landed (proves the delta-rs
-    # metrics write path end-to-end, §1.11 S6).
+    # Verify the Databricks-only latency percentiles landed through Zerobus.
     sql = (
         f"SELECT count(*) AS n, "
         f"count(e2e_p50) AS have_e2e, count(processing_p99) AS have_proc "
@@ -718,8 +871,8 @@ async def metrics_check(ctx: StepContext) -> StepResult:
             sm.FAILED,
             error=(
                 f"{table} has no metrics rows — the {cfg['metric_mode']} streaming "
-                "metrics listener did not land data (check EXTERNAL USE SCHEMA/MODIFY "
-                "grants + delta-rs temp creds)"
+                "metrics listener did not land data (check Zerobus endpoint, UC "
+                "secret, and table grants)"
             ),
         )
     return StepResult(sm.PASSED, data={"metrics_table": table, "rows": n, "result": res})
@@ -730,7 +883,12 @@ async def cleanup(ctx: StepContext) -> StepResult:
     # test rows or checkpoint state leak across runs (§1.13).
     cfg = _cfg(ctx)
     mode = ctx.mode or "realtime"
-    checkpoint = _checkpoint(cfg["catalog"], mode)
+    checkpoint = _checkpoint(
+        cfg["catalog"],
+        cfg["schema"],
+        cfg["industry"],
+        mode,
+    )
     data: dict[str, Any] = {"checkpoint": checkpoint}
 
     # 1. Empty the realtime test rows the RTM write-test landed in the Lakebase
@@ -740,7 +898,9 @@ async def cleanup(ctx: StepContext) -> StepResult:
         try:
             conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
             status = await conn.execute(
-                f"DELETE FROM {RTM_TABLE} WHERE source = $1", VALIDATION_SOURCE
+                f"DELETE FROM {RTM_TABLE} WHERE source = $1 AND industry = $2",
+                VALIDATION_SOURCE,
+                cfg["industry"],
             )
             data["rows_purged"] = status
         except Exception as exc:  # best-effort — surfaced, non-fatal
@@ -769,8 +929,6 @@ async def create_table(ctx: StepContext) -> StepResult:
     wh = cfg["warehouse_id"]
     if not wh:
         return StepResult(sm.FAILED, error="no warehouse_id configured for zerobus table create")
-    from models.sensor_schema import delta_table_ddl
-
     fqn = cat.industry_table(cfg["industry"], "zerobus")
     await execute_dbsql(delta_table_ddl(sql_fqn(*fqn.split("."))), wh)
     return StepResult(sm.PASSED, data={"table": fqn})
@@ -780,8 +938,6 @@ async def auth_probe(ctx: StepContext) -> StepResult:
     # REAL driver-side probe (no cluster): DNS + TCP reachability of the zerobus
     # server endpoint + a live OAuth token exchange downscoped to the target table,
     # so a missing UC grant surfaces here instead of as a produce_test failure.
-    import os
-
     cfg = _cfg(ctx)
     workspace_url = os.getenv("DATABRICKS_HOST", "")
     server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
@@ -802,8 +958,6 @@ async def produce_test(ctx: StepContext) -> StepResult:
     # interactive cluster by design). zbv.produce() authenticates exactly as
     # auth_probe does and runs the ZerobusSdk ingest in-process via asyncio.to_thread;
     # the subsequent zerobus:dbsql_read asserts the rows actually landed.
-    import os
-
     cfg = _cfg(ctx)
     workspace_url = os.getenv("DATABRICKS_HOST", "")
     server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")

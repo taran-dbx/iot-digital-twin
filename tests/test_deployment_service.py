@@ -10,7 +10,7 @@ integration test.
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -69,6 +69,111 @@ BASE_SETUP = {
     "derived": {"partitions": 6},
     "cluster_spec": {"node_type": "m5d.large"},
 }
+
+
+@pytest.fixture(autouse=True)
+def _mock_cdf_reconciliation(monkeypatch):
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "current-app-secret")
+    monkeypatch.setenv("UC_CATALOG", "configured-catalog")
+    monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+    monkeypatch.setattr(
+        ds.uc_secrets,
+        "put_secret",
+        AsyncMock(return_value={"status": "updated"}),
+    )
+    reconcile = AsyncMock(return_value={"status": "streaming"})
+    monkeypatch.setattr(
+        ds.cdf_reconciliation_service, "reconcile_realtime_cdf", reconcile
+    )
+    return reconcile
+
+
+class TestConsumerCredentialNormalization:
+    def test_replaces_legacy_scope_with_uc_secret_c7215(self, monkeypatch):
+        """Uploaded consumers use the app SP and UC secret [C7215][defect][regression]."""
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
+        monkeypatch.setenv("UC_CATALOG", "configured-catalog")
+        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        source = (
+            'APP_SECRET_SCOPE = "legacy-scope"\n'
+            '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")\n'
+            '_lb_cs = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-secret")\n'
+        )
+
+        normalized = ds._normalize_consumer_credentials(source)
+
+        assert '_APP_SP_CLIENT_ID = "current-app-sp"' in normalized
+        assert "_lb_ci = _APP_SP_CLIENT_ID" in normalized
+        assert 'catalog="configured-catalog"' in normalized
+        assert 'schema="configured-schema"' in normalized
+        assert 'key="app_sp_oauth"' in normalized
+        assert "APP_SECRET_SCOPE" not in normalized
+        assert "sss-industries-client" not in normalized
+
+    def test_rejects_missing_runtime_config_c7215(self, monkeypatch):
+        monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+        monkeypatch.setenv("UC_CATALOG", "configured-catalog")
+        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        source = (
+            '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
+        )
+
+        with pytest.raises(
+            ds.RuntimeOAuthCredentialError, match="DATABRICKS_CLIENT_ID"
+        ):
+            ds._normalize_consumer_credentials(source)
+
+    def test_rejects_unrecognized_legacy_secret_syntax_c7215(self, monkeypatch):
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
+        monkeypatch.setenv("UC_CATALOG", "configured-catalog")
+        monkeypatch.setenv("UC_SCHEMA", "configured-schema")
+        source = (
+            "_lb_cs = dbutils.secrets.get("
+            'scope=APP_SECRET_SCOPE, key="sss-industries-client-secret")'
+        )
+
+        with pytest.raises(ValueError, match="unsupported legacy secret syntax"):
+            ds._normalize_consumer_credentials(source)
+
+    def test_replaces_stale_metrics_client_id_c7256(self, monkeypatch):
+        """[C7256][defect][regression] Metrics OAuth id matches app_sp_oauth."""
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
+        source = 'ZB_CLIENT_ID = "legacy-zerobus-sp"\nprint(ZB_CLIENT_ID)\n'
+
+        normalized = ds._normalize_consumer_credentials(source)
+
+        assert 'ZB_CLIENT_ID = "current-app-sp"' in normalized
+        assert "legacy-zerobus-sp" not in normalized
+
+
+@pytest.mark.asyncio
+class TestRuntimeOauthSecret:
+    async def test_refreshes_app_sp_secret_c7257(self, monkeypatch):
+        """[C7257][defect][regression] Starts refresh a rotated UC OAuth secret."""
+        put_secret = AsyncMock(return_value={"status": "updated"})
+        monkeypatch.setattr(ds.uc_secrets, "put_secret", put_secret)
+
+        result = await ds.sync_runtime_oauth_secret(_ws())
+
+        assert result["status"] == "updated"
+        put_secret.assert_awaited_once_with(
+            "configured-catalog",
+            "configured-schema",
+            "app_sp_oauth",
+            "current-app-secret",
+            ws=ANY,
+        )
+
+    async def test_rejects_failed_secret_refresh_c7257(self, monkeypatch):
+        monkeypatch.setattr(
+            ds.uc_secrets,
+            "put_secret",
+            AsyncMock(return_value={"status": "failed", "error": "permission denied"}),
+        )
+
+        with pytest.raises(ds.RuntimeOAuthCredentialError, match="permission denied"):
+            await ds.sync_runtime_oauth_secret(_ws())
 
 
 # ---------------------------------------------------------------------------
@@ -355,12 +460,18 @@ class TestDeployPipeline:
         existing = MagicMock(job_id=999, settings=MagicMock())
         existing.settings.name = "iot-pharmaceutical-realtime"
         w.jobs.list.return_value = [existing]
+        calls = []
+        w.jobs.update.side_effect = lambda **_kwargs: calls.append("pause")
+        w.jobs.cancel_all_runs.side_effect = lambda **_kwargs: calls.append("cancel")
+        w.jobs.reset.side_effect = lambda **_kwargs: calls.append("reset")
 
         result = await ds.deploy_pipeline(
             db, "setup-1", "realtime", consumer_notebook="# c", w=w
         )
         assert result["job_id"] == 999
         assert result["action"] == "updated"
+        assert calls == ["pause", "cancel", "reset"]
+        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "PAUSED"
         w.jobs.reset.assert_called_once()
         w.jobs.create.assert_not_called()
 
@@ -381,17 +492,81 @@ class TestDeployPipeline:
 # Lifecycle + teardown deleter
 # ---------------------------------------------------------------------------
 class TestLifecycle:
-    def test_start(self):
+    @pytest.mark.asyncio
+    async def test_realtime_deploy_stops_before_job_on_cdf_failure_c7239(
+        self, monkeypatch
+    ):
+        """Realtime job mutation is blocked by CDF failure [C7239][defect][regression]."""
+        setup = {**BASE_SETUP, "validation_state": _all_passed("realtime")}
+        db = _db(setup, {"id": "dep-rt", "mode": "realtime"})
+        w = _ws()
+        monkeypatch.setattr(
+            ds.cdf_reconciliation_service,
+            "reconcile_realtime_cdf",
+            AsyncMock(
+                side_effect=ds.cdf_reconciliation_service.RealtimeCdfError(
+                    "exact shadow not streaming"
+                )
+            ),
+        )
+
+        with pytest.raises(
+            ds.cdf_reconciliation_service.RealtimeCdfError,
+            match="exact shadow",
+        ):
+            await ds.deploy_pipeline(
+                db, "setup-1", "realtime", consumer_notebook="# consumer", w=w
+            )
+
+        w.workspace.import_.assert_not_called()
+        w.jobs.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_realtime_start_reconciles_then_unpauses_c7240(
+        self, _mock_cdf_reconciliation
+    ):
+        """Start cannot unpause before CDF readiness [C7240][smoke][regression]."""
+        db = _db(
+            BASE_SETUP,
+            {"id": "dep-rt", "mode": "realtime", "job_id": "4242"},
+        )
         w = _ws()
         w.jobs.run_now.return_value = MagicMock(run_id=555)
+
+        result = await ds.start_deployment(db, "setup-1", "realtime", w=w)
+
+        _mock_cdf_reconciliation.assert_awaited_once_with(
+            db, "setup-1", ws=w
+        )
+        ds.uc_secrets.put_secret.assert_awaited_once()
+        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "UNPAUSED"
+        w.jobs.run_now.assert_not_called()
+        assert result["cdf"]["status"] == "streaming"
+
+    def test_start_continuous_unpauses_c7259(self):
+        w = _ws()
         out = ds.start_pipeline(4242, w=w)
+        assert out["state"] == "STARTING"
+        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "UNPAUSED"
+        w.jobs.run_now.assert_not_called()
+
+    def test_start_run_once_uses_run_now(self):
+        w = _ws()
+        w.jobs.run_now.return_value = MagicMock(run_id=555)
+        out = ds.start_pipeline(4242, w=w, continuous=False)
         assert out["run_id"] == 555
         w.jobs.run_now.assert_called_once_with(job_id=4242)
 
     def test_stop(self):
         w = _ws()
+        calls = []
+        w.jobs.update.side_effect = lambda **_kwargs: calls.append("pause")
+        w.jobs.cancel_all_runs.side_effect = lambda **_kwargs: calls.append("cancel")
         out = ds.stop_pipeline(4242, w=w)
         assert out["state"] == "STOPPED"
+        assert out["paused"] is True
+        assert calls == ["pause", "cancel"]
+        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "PAUSED"
         w.jobs.cancel_all_runs.assert_called_once_with(job_id=4242)
 
     def test_status_running(self):
@@ -430,8 +605,49 @@ class TestLifecycle:
         st = ds.pipeline_status(4242, w=w)
         assert st["state"] == "RUNNING"
         assert st["degraded"] is True
+        assert st["restartable"] is True
         assert "data_producer" in (st["detail"] or "")
         assert any(t["task"] == "data_producer" for t in st["tasks"])
+
+    def test_status_terminal_task_failure_is_restartable_c7258(self):
+        """[C7258][defect][regression] A fully failed run keeps its recovery signal."""
+        w = _ws()
+        run = MagicMock()
+        run.run_id = 999
+        run.state.life_cycle_state.value = "TERMINATED"
+        run.state.result_state.value = "FAILED"
+        producer = MagicMock()
+        producer.task_key = "data_producer"
+        producer.state.life_cycle_state.value = "TERMINATED"
+        producer.state.result_state.value = "FAILED"
+        producer.state.state_message = "Driver stopped unexpectedly."
+        full = MagicMock(tasks=[producer])
+        w.jobs.list_runs.return_value = [run]
+        w.jobs.get_run.return_value = full
+
+        st = ds.pipeline_status(4242, w=w)
+
+        assert st["state"] == "FAILED"
+        assert st["degraded"] is False
+        assert st["restartable"] is True
+        assert "data_producer" in st["detail"]
+
+    def test_status_manual_cancellation_is_clean_stop_c7258(self):
+        """[C7258][defect][regression] Manual Stop is not reported as a crash."""
+        w = _ws()
+        run = MagicMock()
+        run.run_id = 1000
+        run.state.life_cycle_state.value = "TERMINATED"
+        run.state.result_state.value = "CANCELED"
+        run.state.state_message = "Run canceled by user"
+        w.jobs.list_runs.return_value = [run]
+        w.jobs.get_run.return_value = MagicMock(tasks=[])
+
+        st = ds.pipeline_status(4242, w=w)
+
+        assert st["state"] == "IDLE"
+        assert st["restartable"] is False
+        assert st["detail"] is None
 
     def test_status_no_runs(self):
         w = _ws()
@@ -443,8 +659,67 @@ class TestLifecycle:
         w = _ws()
         w.jobs.delete = MagicMock(return_value=None)
         deleter = ds.make_job_deleter(w)
-        await deleter({"resource_type": "job", "identifier": "4242"})
+        await deleter(
+            {
+                "resource_type": "job",
+                "identifier": "4242",
+                "metadata": {
+                    "notebook_path": "/Workspace/consumer",
+                    "producer_notebook_path": "/Workspace/producer",
+                },
+            }
+        )
         w.jobs.delete.assert_called_once_with(job_id=4242)
+        w.jobs.update.assert_not_called()
+        w.jobs.cancel_all_runs.assert_called_once_with(job_id=4242)
+        assert w.workspace.delete.call_count == 2
+        w.workspace.delete.assert_any_call(
+            path="/Workspace/consumer", recursive=False
+        )
+        w.workspace.delete.assert_any_call(
+            path="/Workspace/producer", recursive=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_job_deleter_is_idempotent_when_job_is_already_gone(self):
+        class MissingJobError(RuntimeError):
+            status_code = 404
+
+        w = _ws()
+        w.jobs.delete = MagicMock(side_effect=MissingJobError("job not found"))
+        deleter = ds.make_job_deleter(w)
+
+        await deleter(
+            {
+                "resource_type": "job",
+                "identifier": "4242",
+                "metadata": {"mode": "realtime"},
+            }
+        )
+
+        w.jobs.delete.assert_called_once_with(job_id=4242)
+
+    @pytest.mark.asyncio
+    async def test_job_deleter_handles_missing_job_during_pause_c7267(self):
+        """[C7267][defect][regression] Teardown is idempotent before delete."""
+
+        class MissingJobError(RuntimeError):
+            status_code = 404
+
+        w = _ws()
+        w.jobs.update = MagicMock(side_effect=MissingJobError("job not found"))
+        deleter = ds.make_job_deleter(w)
+
+        await deleter(
+            {
+                "resource_type": "job",
+                "identifier": "4242",
+                "metadata": {"mode": "realtime"},
+            }
+        )
+
+        w.jobs.delete.assert_called_once_with(job_id=4242)
+        w.jobs.cancel_all_runs.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

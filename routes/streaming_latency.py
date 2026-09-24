@@ -42,10 +42,46 @@ from services.dbsql_service import (
     resolve_warehouse_id,
     validate_catalog,
 )
+from services.industry_templates import CURATED_INDUSTRIES
 from services.uc_ident import sql_fqn
+from routes.sensor_data import _is_industry_deployment
 
 logger = logging.getLogger("iot_digital_twin.routes.streaming_latency")
 router = APIRouter()
+
+
+async def _is_bound_pipeline(
+    state: AppState,
+    pipeline_id: str,
+    industry: str,
+    mode: str,
+    user_email: str,
+) -> bool:
+    """Authorize industry KPI reads against deployment or legacy ownership."""
+    industry = industry.strip().lower()
+    if industry not in CURATED_INDUSTRIES:
+        return False
+    if await _is_industry_deployment(state, pipeline_id, industry, mode):
+        return True
+    if not state.db_available or state.db is None:
+        return False
+    try:
+        row = await state.db.fetchrow(
+            """
+            SELECT 1
+            FROM pipelines
+            WHERE id = $1::uuid
+              AND industry = $2
+              AND user_email = $3
+              AND status != 'deleted'
+            """,
+            pipeline_id,
+            industry,
+            user_email,
+        )
+    except Exception:
+        return False
+    return row is not None
 
 
 def _is_missing_table_error(exc: Exception) -> bool:
@@ -94,11 +130,17 @@ def _first_non_null(rows: list[dict[str, Any]], column: str) -> Any:
 # ---------------------------------------------------------------------------
 # Streaming latency (realtime / microbatch) — per-mode metrics Delta table
 # ---------------------------------------------------------------------------
-def _empty_streaming_payload(table: str, mode: str, reason: str) -> dict[str, Any]:
+def _empty_streaming_payload(
+    table: str,
+    industry: str,
+    mode: str,
+    reason: str,
+) -> dict[str, Any]:
     """Nulled streaming-latency payload (all KPI keys present) with a reason."""
     return {
         "table": table,
         "mode": mode,
+        "scope": {"industry": industry, "mode": mode},
         "has_data": False,
         "last_batch_id": None,
         "last_timestamp": None,
@@ -112,6 +154,12 @@ def _empty_streaming_payload(table: str, mode: str, reason: str) -> dict[str, An
         "processing_p99": None,
         "queuing_p50": None,
         "queuing_p99": None,
+        "rows_per_sec": None,
+        "processing_latency_p50_ms": None,
+        "processing_latency_p99_ms": None,
+        "spark_e2e_latency_p99_ms": None,
+        "throughput_basis": "spark_processed_rows_per_second",
+        "e2e_basis": "spark_source_available_to_trigger_complete",
         "series": [],
         "reason": reason,
     }
@@ -121,6 +169,7 @@ def _empty_streaming_payload(table: str, mode: str, reason: str) -> dict[str, An
 async def get_streaming_latency(
     industry: str = Query(..., description="Industry id — resolves iot_<industry>"),
     mode: str = Query(..., description="Streaming mode: realtime or microbatch"),
+    pipeline_id: str = Query(..., description="Bound pipeline deployment id"),
     minutes: int = Query(
         60, ge=1, le=10080, description="Lookback window (minutes) for the sparkline series"
     ),
@@ -145,6 +194,17 @@ async def get_streaming_latency(
             content={
                 "error": f"mode must be one of {metrics_schema.ALL_METRIC_MODES}"
             },
+        )
+    industry = industry.strip().lower()
+    if industry not in CURATED_INDUSTRIES:
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid industry"}
+        )
+    if not await _is_bound_pipeline(
+        state, pipeline_id, industry, normalized_mode, user_email
+    ):
+        return JSONResponse(
+            status_code=404, content={"error": "Industry deployment not found"}
         )
 
     try:
@@ -179,12 +239,16 @@ async def get_streaming_latency(
                 table,
             )
             return _empty_streaming_payload(
-                table, normalized_mode, "Metrics table not provisioned yet"
+                table,
+                industry,
+                normalized_mode,
+                "Metrics table not provisioned yet",
             )
         # Never 500 — degrade gracefully so the dashboard tile shows "—".
         logger.warning("streaming latency query failed for %s: %s", table, exc)
         return _empty_streaming_payload(
             table,
+            industry,
             normalized_mode,
             f"Metrics query failed: {type(exc).__name__}: {str(exc)[:200]}",
         )
@@ -192,7 +256,10 @@ async def get_streaming_latency(
     rows = result.get("data") or []
     if not rows:
         return _empty_streaming_payload(
-            table, normalized_mode, "No metrics rows in the requested window"
+            table,
+            industry,
+            normalized_mode,
+            "No metrics rows in the requested window",
         )
 
     latest = rows[0]
@@ -215,6 +282,7 @@ async def get_streaming_latency(
     return {
         "table": table,
         "mode": normalized_mode,
+        "scope": {"industry": industry, "mode": normalized_mode},
         "has_data": True,
         "last_batch_id": _int(latest.get("batch_id")),
         "last_timestamp": latest.get("timestamp"),
@@ -228,6 +296,19 @@ async def get_streaming_latency(
         "processing_p99": _num(_first_non_null(rows, "processing_p99")),
         "queuing_p50": _num(_first_non_null(rows, "queuing_p50")),
         "queuing_p99": _num(_first_non_null(rows, "queuing_p99")),
+        # Explicit aliases for the four summary tiles. These values come from
+        # this industry+mode metrics table, not the process-global /api/sources
+        # counters (which measure app HTTP activity rather than Spark work).
+        "rows_per_sec": _num(_first_non_null(rows, "processed_rps")),
+        "processing_latency_p50_ms": _num(
+            _first_non_null(rows, "processing_p50")
+        ),
+        "processing_latency_p99_ms": _num(
+            _first_non_null(rows, "processing_p99")
+        ),
+        "spark_e2e_latency_p99_ms": _num(_first_non_null(rows, "e2e_p99")),
+        "throughput_basis": "spark_processed_rows_per_second",
+        "e2e_basis": "spark_source_available_to_trigger_complete",
         "series": series,
     }
 
@@ -254,6 +335,7 @@ def _empty_zerobus_payload(table_name: str, reason: str) -> dict[str, Any]:
 @router.get("/api/latency/zerobus")
 async def get_zerobus_latency(
     industry: str = Query(..., description="Industry id — resolves iot_<industry>"),
+    pipeline_id: str = Query(..., description="Bound pipeline deployment id"),
     minutes: int = Query(
         60, ge=1, le=10080, description="Lookback window in minutes"
     ),
@@ -269,6 +351,17 @@ async def get_zerobus_latency(
     ``system.lakeflow.zerobus_ingest``.  Inaccessible system table or an empty
     window → 200 with a zeroed payload (never 500).
     """
+    industry = industry.strip().lower()
+    if industry not in CURATED_INDUSTRIES:
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid industry"}
+        )
+    if not await _is_bound_pipeline(
+        state, pipeline_id, industry, "zerobus", user_email
+    ):
+        return JSONResponse(
+            status_code=404, content={"error": "Industry deployment not found"}
+        )
     try:
         target_table = _icat.industry_table(industry, "zerobus")
     except (ValueError, RuntimeError) as exc:

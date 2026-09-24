@@ -92,6 +92,38 @@ async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+async def _list_industry_first_deployments(
+    state: AppState,
+) -> dict[tuple[str, str], str]:
+    """Return dashboard ids for modes deployed through the admin data model.
+
+    Industry-first deployments intentionally do not create legacy ``pipelines``
+    rows. Their ``pipeline_deployment.id`` is therefore the stable per-mode
+    identity used to unlock industry-aware dashboard endpoints.
+    """
+    db = getattr(state, "app_backend_db", None) if state else None
+    if db is None:
+        return {}
+    try:
+        rows = await db.fetch(
+            """
+            SELECT pd.id AS deployment_id, ps.industry, pd.mode
+            FROM pipeline_deployment pd
+            JOIN pipeline_setup ps ON ps.id = pd.setup_id
+            WHERE pd.job_id IS NOT NULL
+              AND pd.status NOT IN ('pending', 'deploying', 'failed')
+            """
+        )
+    except Exception as exc:
+        logger.warning("Failed to list industry-first deployments for catalog: %s", exc)
+        return {}
+    return {
+        (str(row["industry"]), str(row["mode"])): str(row["deployment_id"])
+        for row in rows
+        if row.get("deployment_id") and row.get("industry") and row.get("mode")
+    }
+
+
 def _coerce_json_dict(raw: Any) -> dict:
     """Return ``raw`` as a dict, parsing JSON strings; ``{}`` on any failure."""
     if isinstance(raw, dict):
@@ -293,6 +325,7 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
     counts as deployed at all).
     """
     rows = await _list_pipelines(state)
+    industry_first_ids = await _list_industry_first_deployments(state)
 
     catalog: list[dict[str, Any]] = []
     for industry in CURATED_INDUSTRIES:
@@ -320,11 +353,14 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
                     "to": cfg["to"],
                     "desc": cfg["desc"],
                     "status": status,
-                    # Real pipeline row id (when one exists) so admins can jump
-                    # straight into the existing per-pipeline inspection/config
-                    # view (``/pipelines/:id``). None when no row is provisioned
-                    # yet — the UI then routes to the create wizard instead.
+                    # Real legacy pipeline-row id, retained only for API
+                    # compatibility and data resolution. The UI no longer
+                    # navigates to legacy per-pipeline pages.
                     "pipeline_id": str(row["id"]) if row and row.get("id") else None,
+                    # Industry-first deliberately has no legacy ``pipelines``
+                    # row. Keep its deployment identity separate so config
+                    # links never send a deployment UUID to legacy CRUD.
+                    "deployment_id": industry_first_ids.get((industry, mode)),
                 }
             )
 

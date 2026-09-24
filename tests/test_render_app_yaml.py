@@ -119,12 +119,17 @@ def test_classic_stable_profile_values(renderer) -> None:
     profile = renderer.load_profile("classic-stable", PROFILES_DIR)
 
     assert profile["UC_CATALOG"] == "classic_stable_realtime_demos_catalog"
-    assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0864d7304e74ad76"
+    assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "3e9790bdfd763a45"
     assert profile["ZEROBUS_CLIENT_ID"] == "7c59807d-7f0d-47ab-8e83-6d91add2f35c"
-    assert profile["UC_SERVICE_CREDENTIAL"] == ""
-    assert profile["MSK_BOOTSTRAP_SERVERS"] == ""
-    assert profile["ZEROBUS_SECRET_SCOPE"] == "iot-secrets"
-    assert profile["ZEROBUS_SECRET_KEY"] == "zerobus-client-secret"
+    assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
+    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines"
+    assert profile["MSK_BOOTSTRAP_SERVERS"] == (
+        "boot-public-9dm.iotrealtimedemo.dkbjww.c6.kafka.eu-central-1.amazonaws.com:9198,"
+        "boot-public-hak.iotrealtimedemo.dkbjww.c6.kafka.eu-central-1.amazonaws.com:9198,"
+        "boot-public-mnx.iotrealtimedemo.dkbjww.c6.kafka.eu-central-1.amazonaws.com:9198"
+    )
+    assert profile["ZEROBUS_SECRET_SCOPE"] == ""
+    assert profile["ZEROBUS_SECRET_KEY"] == ""
 
 
 def test_interop_profile_values(renderer) -> None:
@@ -164,12 +169,13 @@ def test_interop_render_uses_blank_zerobus_secret_env(renderer) -> None:
     assert "iot-secrets" not in rendered
 
 
-def test_classic_stable_render_preserves_legacy_zerobus_secret_env(renderer) -> None:
+def test_classic_stable_render_uses_blank_zerobus_secret_env(renderer) -> None:
     profile = renderer.load_profile("classic-stable", PROFILES_DIR)
     rendered = renderer.render_app_yaml(profile)
 
-    assert 'name: ZEROBUS_SECRET_SCOPE\n    value: "iot-secrets"' in rendered
-    assert 'name: ZEROBUS_SECRET_KEY\n    value: "zerobus-client-secret"' in rendered
+    assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
+    assert 'name: ZEROBUS_SECRET_KEY\n    value: ""' in rendered
+    assert "iot-secrets" not in rendered
 
 
 def test_committed_app_yaml_matches_active_interop_profile(renderer) -> None:

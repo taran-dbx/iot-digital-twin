@@ -7,11 +7,11 @@ block). It is the single source of truth for the four curated industries the
 gallery/setup UI presents, and for the three streaming modes (realtime,
 microbatch, zerobus) a pipeline can run in.
 
-Values here are transcribed verbatim from the design where the design gives
-exact strings (``name``, ``accent``, ``tag``, ``lede``, ``kpis``, mode
-``desc``/``to``). ``sensors`` is derived from each industry's ``stream``
-array in the design — the first element of every ``[name, value, unit,
-alert]`` tuple.
+Values here are transcribed from the design where the design gives exact
+strings (``name``, ``accent``, ``tag``, ``lede``, mode ``desc``/``to``).
+KPI keys may be normalized when they are also frontend live-data contracts.
+``sensors`` is derived from each industry's ``stream`` array in the design —
+the first element of every ``[name, value, unit, alert]`` tuple.
 """
 
 from __future__ import annotations
@@ -60,12 +60,15 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
             "Torque",
             "Air pressure",
         ],
+        # These labels are a frontend contract with
+        # `manufacturingBusinessKpiKeys` in the vendored dashboard bundle.
+        # Values are stable placeholders until matching SSE readings arrive.
         kpis=[
-            {"k": "Line throughput", "v": "1,204", "u": "units/hr"},
+            {"k": "Production", "v": "1,204", "u": "units/hr"},
             {"k": "OEE", "v": "87.3", "u": "%"},
-            {"k": "Spindle load", "v": "72", "u": "%"},
-            {"k": "Station temp", "v": "64", "u": "°C", "s": "warn"},
-            {"k": "Active faults", "v": "2", "u": "", "s": "crit"},
+            {"k": "Utilization", "v": "72", "u": "%"},
+            {"k": "Temperature", "v": "64", "u": "°C", "s": "warn"},
+            {"k": "Active alerts", "v": "2", "u": "", "s": "crit"},
         ],
         default_hz=40,
     ),

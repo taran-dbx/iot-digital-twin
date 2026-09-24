@@ -1,15 +1,15 @@
-"""Per-mode data-freshness ("is data flowing?") signal for the readiness gate.
+"""Per-mode data-freshness ("is data flowing?") observability signal.
 
-A deployed pipeline mode is only truly ``running`` when its Databricks job is up
-AND rows are actually landing in the mode's sink within a short freshness window.
-This module answers *"is data flowing for (industry, mode)?"* — the signal
-``services.pipeline_view`` uses to gate ``running`` vs ``starting`` (warming up).
+A deployed pipeline mode is ``running`` when its Databricks job and tasks are
+running. This module independently answers *"is data flowing for
+(industry, mode)?"* so the UI can report sink freshness without allowing a
+delayed or unavailable data probe to strand a healthy job in ``starting``.
 
 Design contract (spec §1.10, readiness gate):
 
 * **Defensive & fast** — on ANY error (missing table, Lakebase/DBSQL unavailable,
-  timeout) the mode is treated as **not flowing** and this NEVER raises, so the
-  status degrades gracefully to ``starting`` rather than 500-ing the whole list.
+  timeout) the mode is treated as **not flowing** and this NEVER raises or
+  changes the Databricks job lifecycle status.
 * **Cheap** — a single existence probe (``... WHERE event_time > now-window LIMIT 1``)
   per mode, and only for modes whose job is actually up (the caller filters).
 * **Short cache** — a per-(industry, mode) TTL cache (default 15s) so polling the
@@ -28,6 +28,7 @@ The canonical event/ingest timestamp column is ``event_time`` for every sink
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Awaitable, Callable, Mapping
@@ -44,6 +45,10 @@ FRESHNESS_WINDOW_MINUTES = 10
 
 # Short TTL so a fast poll loop reuses the last probe instead of re-querying.
 _CACHE_TTL_SECONDS = 15.0
+
+# Bound Lakebase freshness probes so a hung branch cannot stall /admin/pipelines
+# or /industries/runtime rollups.
+_LAKEBASE_FRESHNESS_TIMEOUT_SECONDS = 5.0
 
 # The realtime Lakebase sink (ChronoTable) — schema.table + timestamp column.
 _REALTIME_TABLE = "public.sensor_readings"
@@ -94,7 +99,10 @@ async def _realtime_flowing(handle: Any, window_minutes: int) -> bool:
         f"WHERE {_EVENT_TIME_COLUMN} > NOW() - make_interval(mins => $1) LIMIT 1"
     )
     try:
-        row = await handle.fetchval(sql, window_minutes)
+        row = await asyncio.wait_for(
+            handle.fetchval(sql, window_minutes),
+            timeout=_LAKEBASE_FRESHNESS_TIMEOUT_SECONDS,
+        )
         return row is not None
     except Exception as exc:
         logger.info("realtime freshness probe failed (treating as not flowing): %s", exc)
@@ -157,7 +165,10 @@ async def mode_flowing(
         if mode == "realtime":
             from services.pipeline_db import get_industry_lakebase
 
-            handle = await get_industry_lakebase(state, industry)
+            handle = await asyncio.wait_for(
+                get_industry_lakebase(state, industry),
+                timeout=_LAKEBASE_FRESHNESS_TIMEOUT_SECONDS,
+            )
             if handle is not None:
                 flowing = await _realtime_flowing(handle, window_minutes)
         elif mode in _DELTA_MODES:
@@ -190,7 +201,9 @@ def _mode_job_running(deployment: Mapping, job_running: Mapping[str, Any]) -> bo
     job_id = deployment.get("job_id")
     if not job_id:
         return False
-    running, degraded, _starting, _detail = pv._runtime(job_running.get(str(job_id)))
+    running, degraded, _starting, _restartable, _detail = pv._runtime(
+        job_running.get(str(job_id))
+    )
     return running and not degraded
 
 

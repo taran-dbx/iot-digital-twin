@@ -27,6 +27,7 @@ node_modules/
 # databricks/vendor/lakets.sql + the wheels at runtime. Keep these in git but
 # out of the deployed bundle to slim it.
 docs/
+qa-reports/
 mockups/
 design-ref/
 scripts/

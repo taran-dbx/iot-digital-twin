@@ -2,20 +2,63 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from typing import Any
+from uuid import UUID
 
+import asyncpg
+from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
-from services import lakets_service
+from services import cdf_reconciliation_service, lakets_service
+from services.industry_templates import CURATED_INDUSTRIES
 from services.lakets_deploy_service import deploy_retention_job
 from services.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
 
 logger = logging.getLogger("iot_digital_twin.routes.lakets")
 
 router = APIRouter()
+_INDUSTRY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Bound CDF / LakeTS probes so a hung industry Lakebase cannot pin the app
+# worker until the reverse-proxy upstream timeout (~10m).
+_LAKEBASE_PROBE_TIMEOUT_SECONDS = 8.0
+_LAKEBASE_RESOLVE_TIMEOUT_SECONDS = 25.0
+_LAKETS_DASHBOARD_TIMEOUT_SECONDS = 30.0
+
+
+async def _probe_wait(coro, *, timeout: float = _LAKEBASE_PROBE_TIMEOUT_SECONDS):
+    """Await ``coro`` with a deadline and fully reap cancellation."""
+    return await asyncio.wait_for(coro, timeout=timeout)
+_CDF_STATUS_SQL = """
+SELECT t.status
+FROM wal2delta.tables t
+JOIN pg_class c ON c.oid = t.table_oid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = $1 AND c.relname = $2
+"""
+_REGISTERED_CDF_STATUS_SQL = """
+SELECT t.status, r.shadow_table_name AS shadow_table
+FROM lakets._chronotable_registry r
+LEFT JOIN pg_namespace n ON n.nspname = $1
+LEFT JOIN pg_class c
+  ON c.relnamespace = n.oid AND c.relname = r.shadow_table_name
+LEFT JOIN wal2delta.tables t ON t.table_oid = c.oid
+WHERE r.schema_name = 'public'
+  AND r.table_name = 'sensor_readings'
+  AND r.sync_enabled
+  AND r.shadow_table_name IS NOT NULL
+"""
+
+
+def _unavailable_dashboard(reason: str) -> dict[str, dict[str, Any]]:
+    return {
+        section: {"value": None, "reason": reason}
+        for section in lakets_service.DASHBOARD_SECTIONS
+    }
 
 
 async def _open_lakebase_conn(lb: dict) -> Any:
@@ -25,13 +68,10 @@ async def _open_lakebase_conn(lb: dict) -> Any:
     mode asks the Databricks SDK for a short-lived OAuth credential; direct mode
     uses plain creds from the body.
     """
-    import asyncpg
-
     mode = lb.get("mode", "autoscale")
     database = lb.get("database", "databricks_postgres")
 
     if mode == "autoscale":
-        from databricks.sdk import WorkspaceClient
         project_id = lb.get("project_id", "")
         branch_id = lb.get("branch_id", "production")
         if not project_id:
@@ -52,6 +92,8 @@ async def _open_lakebase_conn(lb: dict) -> Any:
             password=cred.token,
             port=5432,
             ssl="require",
+            timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
+            command_timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
 
     return await asyncpg.connect(
@@ -61,7 +103,33 @@ async def _open_lakebase_conn(lb: dict) -> Any:
         password=lb.get("password", ""),
         port=int(lb.get("port", 5432)),
         ssl="require",
+        timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
+        command_timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
     )
+
+
+async def _is_realtime_industry_deployment(
+    state: AppState, pipeline_id: str, industry: str
+) -> bool:
+    """Bind an industry dashboard request to deployed realtime metadata."""
+    db = getattr(state, "app_backend_db", None)
+    if db is None:
+        raise RuntimeError("App metadata database is unavailable")
+    row = await db.fetchrow(
+        """
+        SELECT 1
+        FROM pipeline_deployment pd
+        JOIN pipeline_setup ps ON ps.id = pd.setup_id
+        WHERE pd.id = $1::uuid
+          AND ps.industry = $2
+          AND pd.mode = 'realtime'
+          AND pd.job_id IS NOT NULL
+          AND pd.status NOT IN ('pending', 'deploying', 'failed')
+        """,
+        pipeline_id,
+        industry,
+    )
+    return row is not None
 
 
 @router.post("/api/lakets/sync/check")
@@ -115,28 +183,74 @@ async def get_cdf_status(
     If the schema/table is missing or the query errors, we fail closed to
     ``status="NONE"`` with a human-readable ``reason``.
 
-    ``hot_rows`` is a COUNT of ``sensor_readings`` (the hot Lakebase tier).
-    ``cold_rows`` stays ``None`` — the cold tier lives in Unity Catalog and is
-    not queried here.
+    ``hot_latest_at`` is the latest ``sensor_readings.event_time`` in Lakebase.
+    The query uses the time ordering rather than an expensive full-table row
+    count. Cold-tier freshness is queried separately through DBSQL.
     """
     none_result = {
         "enabled": False,
         "streaming": False,
         "status": "NONE",
         "reason": "Lakebase Sync not enabled",
-        "hot_rows": None,
-        "cold_rows": None,
+        "hot_latest_at": None,
     }
+
+    if industry:
+        try:
+            industry = cdf_reconciliation_service.normalize_industry(industry)
+        except ValueError:
+            return JSONResponse(
+                status_code=400, content={"error": "Invalid industry"}
+            )
+        try:
+            UUID(pipeline_id)
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Invalid pipeline deployment id"},
+            )
+        try:
+            is_bound = await _is_realtime_industry_deployment(
+                state, pipeline_id, industry
+            )
+        except Exception as exc:
+            logger.warning(
+                "CDF deployment validation failed for %s: %s",
+                pipeline_id,
+                exc,
+                exc_info=True,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Pipeline metadata unavailable"},
+            )
+        if not is_bound:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Realtime industry deployment not found"},
+            )
 
     try:
         # Industry-first pipelines resolve the deterministic iot-pipelines branch
         # by industry (no legacy pipelines/sink_config row); legacy pipelines fall
-        # back to the per-pipeline lookup.
-        lb = (
-            await get_industry_lakebase(state, industry)
-            if industry
-            else await get_pipeline_lakebase(state, pipeline_id)
+        # back to the per-pipeline lookup. Hard-bound so a hung pool never
+        # stalls the dashboard proxy.
+        lb = await _probe_wait(
+            (
+                get_industry_lakebase(state, industry)
+                if industry
+                else get_pipeline_lakebase(state, pipeline_id)
+            ),
+            timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
         )
+    except asyncio.TimeoutError:
+        return {
+            **none_result,
+            "reason": (
+                f"Lakebase probe timeout after "
+                f"{_LAKEBASE_RESOLVE_TIMEOUT_SECONDS:g}s"
+            ),
+        }
     except Exception as exc:
         return {**none_result, "reason": f"Pipeline Lakebase not resolvable: {exc}"[:200]}
 
@@ -144,7 +258,35 @@ async def get_cdf_status(
         return {**none_result, "reason": "Pipeline Lakebase not resolvable"}
 
     try:
-        rows = await lb.fetch("SELECT status FROM wal2delta.tables LIMIT 50")
+        if industry:
+            expected_shadow = cdf_reconciliation_service.shadow_table_name(industry)
+            rows = await _probe_wait(
+                lb.fetch(
+                    _CDF_STATUS_SQL,
+                    cdf_reconciliation_service.CDF_SHADOW_SCHEMA,
+                    expected_shadow,
+                ),
+                timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
+            )
+        else:
+            rows = await _probe_wait(
+                lb.fetch(
+                    _REGISTERED_CDF_STATUS_SQL,
+                    cdf_reconciliation_service.CDF_SHADOW_SCHEMA,
+                ),
+                timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
+            )
+            expected_shadow = (
+                rows[0].get("shadow_table") if rows else None
+            )
+    except asyncio.TimeoutError:
+        return {
+            **none_result,
+            "reason": (
+                f"Lakebase Sync probe timeout after "
+                f"{_LAKEBASE_PROBE_TIMEOUT_SECONDS:g}s"
+            ),
+        }
     except Exception as exc:
         logger.warning("cdf-status wal2delta probe failed for %s: %s", pipeline_id, exc)
         return {**none_result, "reason": f"Lakebase Sync not enabled: {exc}"[:200]}
@@ -158,23 +300,133 @@ async def get_cdf_status(
     elif statuses:
         status = "UNKNOWN"
     else:
-        return {**none_result, "reason": "Lakebase Sync not enabled (no wal2delta tables)"}
+        missing = (
+            f"{cdf_reconciliation_service.CDF_SHADOW_SCHEMA}.{expected_shadow}"
+            if expected_shadow
+            else "wal2delta tables"
+        )
+        return {**none_result, "reason": f"Lakebase Sync not enabled ({missing} absent)"}
 
-    hot_rows: int | None = None
+    hot_latest_at = None
     try:
-        hot_rows = await lb.fetchval("SELECT COUNT(*) FROM sensor_readings")
-        hot_rows = int(hot_rows) if hot_rows is not None else None
+        hot_latest_at = await _probe_wait(
+            lb.fetchval("SELECT MAX(event_time) FROM sensor_readings"),
+            timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("cdf-status latest hot timestamp timed out for %s", pipeline_id)
     except Exception as exc:
-        logger.warning("cdf-status hot_rows count failed for %s: %s", pipeline_id, exc)
+        logger.warning(
+            "cdf-status latest hot timestamp failed for %s: %s",
+            pipeline_id,
+            exc,
+        )
 
     return {
         "enabled": True,
         "streaming": status == "STREAMING",
         "status": status,
-        "reason": f"wal2delta tables report status={status}",
-        "hot_rows": hot_rows,
-        "cold_rows": None,
+        "reason": (
+            f"{cdf_reconciliation_service.CDF_SHADOW_SCHEMA}.{expected_shadow} "
+            f"reports status={status}"
+            if expected_shadow
+            else f"wal2delta tables report status={status}"
+        ),
+        "hot_latest_at": hot_latest_at,
     }
+
+
+@router.get("/api/pipelines/{pipeline_id}/lakets/dashboard")
+async def get_lakets_dashboard(
+    pipeline_id: str,
+    industry: str | None = Query(
+        None,
+        description="Industry id for the deterministic industry Lakebase branch",
+    ),
+    state: AppState = Depends(get_app_state),
+):
+    """Return consolidated LakeTS observability for a pipeline Lakebase."""
+    if industry:
+        if not _INDUSTRY_ID_RE.fullmatch(industry) or industry not in CURATED_INDUSTRIES:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Invalid industry"},
+            )
+        try:
+            UUID(pipeline_id)
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Invalid pipeline deployment id"},
+            )
+        try:
+            is_bound = await _is_realtime_industry_deployment(
+                state, pipeline_id, industry
+            )
+        except Exception as exc:
+            logger.warning(
+                "Realtime deployment validation failed for %s: %s",
+                pipeline_id,
+                exc,
+                exc_info=True,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Pipeline metadata unavailable"},
+            )
+        if not is_bound:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Realtime industry deployment not found"},
+            )
+
+    try:
+        lb = await _probe_wait(
+            (
+                get_industry_lakebase(state, industry)
+                if industry
+                else get_pipeline_lakebase(state, pipeline_id)
+            ),
+            timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "LakeTS dashboard Lakebase resolution timed out for %s after %.0fs",
+            pipeline_id,
+            _LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
+        )
+        return _unavailable_dashboard("Pipeline Lakebase probe timed out")
+    except Exception as exc:
+        logger.warning(
+            "LakeTS dashboard Lakebase resolution failed for %s: %s",
+            pipeline_id,
+            exc,
+            exc_info=True,
+        )
+        return _unavailable_dashboard("Pipeline Lakebase not resolvable")
+
+    if lb is None:
+        return _unavailable_dashboard("Pipeline Lakebase not resolvable")
+    try:
+        return await _probe_wait(
+            lakets_service.get_dashboard(lb),
+            timeout=_LAKETS_DASHBOARD_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "LakeTS dashboard timed out for %s after %.0fs",
+            pipeline_id,
+            _LAKETS_DASHBOARD_TIMEOUT_SECONDS,
+        )
+        return _unavailable_dashboard("LakeTS dashboard timed out")
+    except Exception as exc:
+        logger.warning(
+            "LakeTS dashboard failed for %s: %s",
+            pipeline_id,
+            exc,
+            exc_info=True,
+        )
+        return _unavailable_dashboard("LakeTS dashboard unavailable")
 
 
 @router.post("/api/lakets/retention/deploy")

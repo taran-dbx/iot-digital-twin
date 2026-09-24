@@ -23,6 +23,20 @@ def test_get_template_pharma_has_kpis_and_twin():
     assert "reactor" in " ".join(k["k"].lower() for k in t.kpis)
 
 
+def test_manufacturing_business_kpis_have_stable_fallbacks():
+    """[C7230][defect][regression] Manufacturing KPIs retain startup fallbacks."""
+    template = get_template("manufacturing")
+
+    assert template is not None
+    assert template.kpis == [
+        {"k": "Production", "v": "1,204", "u": "units/hr"},
+        {"k": "OEE", "v": "87.3", "u": "%"},
+        {"k": "Utilization", "v": "72", "u": "%"},
+        {"k": "Temperature", "v": "64", "u": "°C", "s": "warn"},
+        {"k": "Active alerts", "v": "2", "u": "", "s": "crit"},
+    ]
+
+
 def test_get_template_unknown_returns_none():
     assert get_template("banking") is None
 

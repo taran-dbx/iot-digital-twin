@@ -7,6 +7,7 @@ executor (``LakebaseConnectionManager`` / ``PipelineLakebaseHandle`` / raw
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from services.app_repo_common import (
@@ -17,7 +18,13 @@ from services.app_repo_common import (
 )
 
 TABLE = "pipeline_setup"
-JSON_FIELDS = ("derived", "enabled_modes", "cluster_spec", "validation_state")
+JSON_FIELDS = (
+    "derived",
+    "enabled_modes",
+    "mode_configs",
+    "cluster_spec",
+    "validation_state",
+)
 
 
 def _to_dict(row: Any) -> dict | None:
@@ -34,6 +41,7 @@ async def create_setup(
     derived: dict | None = None,
     service_credential: str | None = None,
     enabled_modes: list | None = None,
+    mode_configs: dict | None = None,
     cluster_spec: dict | None = None,
     warehouse_id: str | None = None,
     validation_state: dict | None = None,
@@ -49,6 +57,7 @@ async def create_setup(
         "derived": derived,
         "service_credential": service_credential,
         "enabled_modes": enabled_modes,
+        "mode_configs": mode_configs,
         "cluster_spec": cluster_spec,
         "warehouse_id": warehouse_id,
         "validation_state": validation_state,
@@ -87,6 +96,25 @@ async def update_setup(db: DBExecutor, setup_id: Any, **fields: Any) -> dict | N
         return await get_setup(db, setup_id)
     query, args = build_update(TABLE, setup_id, fields, JSON_FIELDS)
     row = await db.fetchrow(query, *args)
+    return _to_dict(row)
+
+
+async def update_mode_config(
+    db: DBExecutor,
+    setup_id: Any,
+    mode: str,
+    config: dict[str, Any],
+) -> dict | None:
+    """Atomically merge one mode's config without replacing sibling modes."""
+    row = await db.fetchrow(
+        f"UPDATE {TABLE} SET mode_configs = jsonb_set("
+        "COALESCE(mode_configs, '{}'::jsonb), ARRAY[$2::text], "
+        "COALESCE(mode_configs -> $2, '{}'::jsonb) || $3::jsonb, true"
+        "), updated_at = now() WHERE id = $1::uuid RETURNING *",
+        setup_id,
+        mode,
+        json.dumps(config),
+    )
     return _to_dict(row)
 
 

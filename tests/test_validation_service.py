@@ -414,6 +414,62 @@ async def test_prepare_start_valid_returns_initial_state(monkeypatch):
     assert fake.setup["validation_state"]["sequence"]  # persisted
 
 
+async def test_prepare_start_only_adds_new_mode_when_enabled_modes_changed(monkeypatch):
+    previous = sm.initial_state(["realtime", "microbatch"])
+    for key in previous["sequence"]:
+        previous = sm.set_step(previous, key, sm.PASSED)
+    _repo_with(
+        monkeypatch,
+        _ready_setup(
+            enabled_modes=["realtime", "microbatch", "zerobus"],
+            validation_state=previous,
+        ),
+    )
+
+    out = await vs.prepare_start(None, "automotive")
+    state = out["validation_state"]
+
+    assert state["steps"]["realtime:write_test"]["status"] == sm.PASSED
+    assert state["steps"]["microbatch:write_test"]["status"] == sm.PASSED
+    assert state["steps"]["zerobus:create_table"]["status"] == sm.PENDING
+
+
+async def test_prepare_start_same_modes_is_explicit_full_rerun(monkeypatch):
+    previous = sm.initial_state(["zerobus"])
+    for key in previous["sequence"]:
+        previous = sm.set_step(previous, key, sm.PASSED)
+    _repo_with(
+        monkeypatch,
+        _ready_setup(enabled_modes=["zerobus"], validation_state=previous),
+    )
+
+    out = await vs.prepare_start(None, "automotive")
+
+    assert all(
+        record["status"] == sm.PENDING
+        for record in out["validation_state"]["steps"].values()
+    )
+
+
+async def test_prepare_start_resumes_reconciled_state_with_new_pending_lane(monkeypatch):
+    previous = sm.initial_state(["realtime"])
+    for key in previous["sequence"]:
+        previous = sm.set_step(previous, key, sm.PASSED)
+    reconciled = sm.reconcile_modes(previous, ["realtime", "zerobus"])
+    _repo_with(
+        monkeypatch,
+        _ready_setup(
+            enabled_modes=["realtime", "zerobus"],
+            validation_state=reconciled,
+        ),
+    )
+
+    out = await vs.prepare_start(None, "automotive")
+
+    assert out["validation_state"]["steps"]["realtime:write_test"]["status"] == sm.PASSED
+    assert out["validation_state"]["steps"]["zerobus:create_table"]["status"] == sm.PENDING
+
+
 async def test_prepare_start_incomplete_missing_warehouse_raises(monkeypatch):
     _repo_with(monkeypatch, _ready_setup(warehouse_id=None))
     with pytest.raises(vs.IncompleteSetupError) as ei:

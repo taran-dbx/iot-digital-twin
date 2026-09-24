@@ -191,8 +191,12 @@ class TestMetricsTableResolution:
         async def mock_resolve_warehouse(db, db_available, user_email):  # noqa: ANN001
             return "wh-test"
 
+        async def mock_is_bound_pipeline(*_args, **_kwargs) -> bool:
+            return True
+
         monkeypatch.setattr(mod, "execute_dbsql", mock_execute_dbsql)
         monkeypatch.setattr(mod, "resolve_warehouse_id", mock_resolve_warehouse)
+        monkeypatch.setattr(mod, "_is_bound_pipeline", mock_is_bound_pipeline)
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
@@ -209,7 +213,7 @@ class TestMetricsTableResolution:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/api/latency/streaming?industry=pharmaceutical&mode=realtime"
+                "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
             )
 
         assert resp.status_code == 200
@@ -264,9 +268,15 @@ class TestStreamingMetricsModeValidation:
         async def mock_resolve_warehouse(db, db_available, user_email):  # noqa: ANN001
             return "wh-test"
 
+        async def mock_is_industry_deployment(*_args, **_kwargs) -> bool:
+            return True
+
         monkeypatch.setattr(mod, "execute_dbsql", mock_execute_dbsql)
         monkeypatch.setattr(mod, "get_pipeline_catalog", mock_get_pipeline_catalog)
         monkeypatch.setattr(mod, "resolve_warehouse_id", mock_resolve_warehouse)
+        monkeypatch.setattr(
+            mod, "_is_industry_deployment", mock_is_industry_deployment
+        )
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
@@ -322,9 +332,15 @@ class TestStreamingMetricsModeValidation:
         async def mock_resolve_warehouse(db, db_available, user_email):  # noqa: ANN001
             return "wh-test"
 
+        async def allow_industry_deployment(*_args, **_kwargs) -> bool:
+            return True
+
         monkeypatch.setattr(mod, "execute_dbsql", mock_execute_dbsql)
         monkeypatch.setattr(mod, "get_pipeline_catalog", mock_get_pipeline_catalog)
         monkeypatch.setattr(mod, "resolve_warehouse_id", mock_resolve_warehouse)
+        monkeypatch.setattr(
+            mod, "_is_industry_deployment", allow_industry_deployment
+        )
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient

@@ -50,6 +50,9 @@ _REQUIRED_ENV: tuple[str, ...] = (
     "INDUSTRIES",
 )
 
+# Stable application-level UC secret key (not a workspace-specific value).
+APP_SP_OAUTH_SECRET_KEY = "app_sp_oauth"
+
 
 @dataclass(frozen=True)
 class WorkspaceConfig:
@@ -101,6 +104,21 @@ def get_pipelines_project() -> str:
     a later task.
     """
     return os.getenv("PIPELINES_LAKEBASE_PROJECT", "")
+
+
+def get_uc_catalog() -> str:
+    """Return the configured shared Unity Catalog name."""
+    return os.getenv("UC_CATALOG", "")
+
+
+def get_uc_schema() -> str:
+    """Return the configured shared Unity Catalog schema name."""
+    return os.getenv("UC_SCHEMA", "")
+
+
+def get_app_sp_client_id() -> str:
+    """Return the current Databricks App service-principal client id."""
+    return os.getenv("DATABRICKS_CLIENT_ID", "")
 
 
 def get_config() -> WorkspaceConfig:

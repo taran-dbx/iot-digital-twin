@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS pipeline_setup (
     derived JSONB DEFAULT '{}'::jsonb,
     service_credential TEXT,
     enabled_modes JSONB DEFAULT '[]'::jsonb,
+    mode_configs JSONB DEFAULT '{}'::jsonb,
     cluster_spec JSONB DEFAULT '{}'::jsonb,
     warehouse_id TEXT,
     validation_state JSONB DEFAULT '{}'::jsonb,
@@ -103,8 +104,12 @@ PROVISIONED_RESOURCE_INDEXES = (
 # Idempotent creators
 # ---------------------------------------------------------------------------
 async def ensure_pipeline_setup_table(db: _Executor) -> None:
-    """Create the ``pipeline_setup`` table if it does not exist."""
+    """Create or additively upgrade the ``pipeline_setup`` table."""
     await db.execute(PIPELINE_SETUP_DDL)
+    await db.execute(
+        "ALTER TABLE pipeline_setup "
+        "ADD COLUMN IF NOT EXISTS mode_configs JSONB DEFAULT '{}'::jsonb"
+    )
 
 
 async def ensure_pipeline_deployment_table(db: _Executor) -> None:

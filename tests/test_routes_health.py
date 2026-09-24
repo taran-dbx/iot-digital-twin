@@ -84,20 +84,31 @@ class TestAppDefaultsEndpoint:
     async def test_contains_expected_keys(self, test_client: AsyncClient) -> None:
         resp = await test_client.get("/api/app-defaults")
         body = resp.json()
-        expected_keys = {"zerobus_endpoint", "zerobus_client_id", "zerobus_client_secret_set", "workspace_url"}
+        expected_keys = {
+            "zerobus_endpoint",
+            "zerobus_client_id",
+            "zerobus_client_secret_set",
+            "workspace_url",
+            "warehouse_id",
+        }
         assert expected_keys.issubset(body.keys())
 
     @pytest.mark.asyncio
     @patch.dict("os.environ", {
         "ZEROBUS_SERVER_ENDPOINT": "https://zb.example.com",
-        "ZEROBUS_CLIENT_ID": "zb-client-123",
-        "ZEROBUS_CLIENT_SECRET": "zb-secret-456",
+        "ZEROBUS_CLIENT_ID": "legacy-zb-client",
+        "ZEROBUS_CLIENT_SECRET": "legacy-zb-secret",
+        "DATABRICKS_CLIENT_ID": "app-client-123",
+        "DATABRICKS_CLIENT_SECRET": "app-secret-456",
         "DATABRICKS_HOST": "https://adb-999.azuredatabricks.net",
+        "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-123",
     })
     async def test_returns_env_values(self, test_client: AsyncClient) -> None:
+        """[C7256][defect][regression] Zerobus uses one matching app-SP OAuth pair."""
         resp = await test_client.get("/api/app-defaults")
         body = resp.json()
         assert body["zerobus_endpoint"] == "https://zb.example.com"
-        assert body["zerobus_client_id"] == "zb-client-123"
+        assert body["zerobus_client_id"] == "app-client-123"
         assert body["zerobus_client_secret_set"] is True
         assert body["workspace_url"] == "https://adb-999.azuredatabricks.net"
+        assert body["warehouse_id"] == "warehouse-123"

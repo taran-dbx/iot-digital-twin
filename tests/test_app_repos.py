@@ -9,6 +9,8 @@ ledger must return resources in ascending (list) and descending (teardown)
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import asyncpg
 import pytest
 import pytest_asyncio
@@ -38,17 +40,30 @@ async def test_create_and_get_setup(schema_ready) -> None:
         bootstrap_servers="b-1:9198",
         derived={"region": "us-east-1", "replication_factor": 3},
         enabled_modes=["realtime", "microbatch"],
+        mode_configs={
+            "realtime": {"rate_hz": 1200},
+            "microbatch": {"rate_hz": 2400},
+        },
         user_email="admin@example.com",
     )
     assert row["industry"] == "pharmaceutical"
     assert row["derived"]["region"] == "us-east-1"
     assert row["enabled_modes"] == ["realtime", "microbatch"]
+    assert row["mode_configs"]["realtime"]["rate_hz"] == 1200
     assert row["status"] == "draft"
 
     fetched = await pipeline_setup_repo.get_setup(db, row["id"])
     assert fetched["id"] == row["id"]
     by_ind = await pipeline_setup_repo.get_setup_by_industry(db, "pharmaceutical")
     assert by_ind["id"] == row["id"]
+
+    updated = await pipeline_setup_repo.update_mode_config(
+        db, row["id"], "realtime", {"rate_hz": 1800}
+    )
+    assert updated["mode_configs"] == {
+        "realtime": {"rate_hz": 1800},
+        "microbatch": {"rate_hz": 2400},
+    }
 
 
 async def test_industry_uniqueness_enforced(schema_ready) -> None:
@@ -186,3 +201,37 @@ async def test_mark_resource_status(schema_ready) -> None:
     )
     updated = await resource_ledger.mark_resource_status(db, res["id"], "deleted")
     assert updated["status"] == "deleted"
+
+
+async def test_update_resource_refreshes_cdf_binding_c7253() -> None:
+    """Active CDF rows refresh deployment and metadata [C7253][regression]."""
+    db = MagicMock()
+    db.fetchrow = AsyncMock(
+        return_value={
+            "id": "r1",
+            "deployment_id": "d1",
+            "metadata": {
+                "source_table": (
+                    "lakets_cdf._shadow_manufacturing_sensor_readings"
+                )
+            },
+        }
+    )
+
+    updated = await resource_ledger.update_resource(
+        db,
+        "r1",
+        deployment_id="d1",
+        metadata={
+            "source_table": "lakets_cdf._shadow_manufacturing_sensor_readings"
+        },
+    )
+
+    query = db.fetchrow.await_args.args[0]
+    assert "UPDATE provisioned_resource" in query
+    assert "deployment_id" in query
+    assert "metadata" in query
+    assert "updated_at" not in query
+    assert updated["metadata"]["source_table"].endswith(
+        "_shadow_manufacturing_sensor_readings"
+    )

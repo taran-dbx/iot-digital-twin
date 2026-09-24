@@ -26,7 +26,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.state import AppState, get_app_state
-from services import app_permissions, deployment_repo, deployment_service
+from services import (
+    app_permissions,
+    cdf_reconciliation_service,
+    deployment_repo,
+    deployment_service,
+)
 
 logger = logging.getLogger("iot_digital_twin.routes.pipeline_deploy")
 
@@ -53,6 +58,10 @@ def _validate_mode(mode: str) -> None:
             status_code=422,
             detail=f"unknown mode '{mode}' (expected one of {deployment_service.VALID_MODES})",
         )
+
+
+def _invalidate_industry_runtime_cache(state: AppState) -> None:
+    state.invalidate_industry_runtime_cache()
 
 
 async def _resolve_job_id(db: Any, setup_id: str, mode: str) -> str:
@@ -103,6 +112,11 @@ async def deploy_pipeline_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except cdf_reconciliation_service.RealtimeCdfError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except deployment_service.RuntimeOAuthCredentialError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _invalidate_industry_runtime_cache(state)
     return result
 
 
@@ -117,8 +131,31 @@ async def start_pipeline_endpoint(
     _require_admin(request)
     _validate_mode(mode)
     db = _require_db(state)
-    job_id = await _resolve_job_id(db, setup_id, mode)
-    return deployment_service.start_pipeline(job_id)
+    try:
+        result = await deployment_service.start_deployment(db, setup_id, mode)
+    except cdf_reconciliation_service.RealtimeCdfError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except deployment_service.RuntimeOAuthCredentialError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _invalidate_industry_runtime_cache(state)
+    return result
+
+
+@router.post("/api/admin/pipelines/{setup_id}/realtime/reconcile-cdf")
+async def reconcile_realtime_cdf_endpoint(
+    setup_id: str,
+    request: Request,
+    state: AppState = Depends(get_app_state),
+):
+    """Reconcile an existing realtime deployment's exact CDF binding."""
+    _require_admin(request)
+    db = _require_db(state)
+    try:
+        return await cdf_reconciliation_service.reconcile_realtime_cdf(db, setup_id)
+    except cdf_reconciliation_service.RealtimeCdfError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/api/admin/pipelines/{setup_id}/{mode}/stop")
@@ -133,7 +170,11 @@ async def stop_pipeline_endpoint(
     _validate_mode(mode)
     db = _require_db(state)
     job_id = await _resolve_job_id(db, setup_id, mode)
-    return deployment_service.stop_pipeline(job_id)
+    result = deployment_service.stop_pipeline(
+        job_id, continuous=mode != "zerobus"
+    )
+    _invalidate_industry_runtime_cache(state)
+    return result
 
 
 @router.get("/api/admin/pipelines/{setup_id}/{mode}/status")

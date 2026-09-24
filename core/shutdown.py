@@ -25,9 +25,20 @@ def install_sigterm_handler(state: AppState) -> None:
 
 async def shutdown(state: AppState) -> None:
     """Cancel background tasks and close the DB pool.  Must finish within ~10 s."""
+    background_tasks = {
+        task
+        for task in (
+            state.refresh_task,
+            state.retention_task,
+            state.simulator_task,
+            state.industry_runtime_refresh_task,
+        )
+        if task is not None
+    }
+    background_tasks.update(state.industry_runtime_refresh_tasks)
     tasks_to_cancel: list[asyncio.Task] = []
 
-    for task in (state.refresh_task, state.retention_task, state.simulator_task):
+    for task in background_tasks:
         if task and not task.done():
             task.cancel()
             tasks_to_cancel.append(task)

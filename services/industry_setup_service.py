@@ -11,7 +11,9 @@ Given a never-expiring branch on the shared ``iot-pipelines`` project (created b
 4. pre-creates a ~24h forward window of partitions (96 × 15-minute chunks) so the
    real-time writer never hits a "no partition" error before the Partition
    Manager job takes over,
-5. deploys the four LakeTS operational jobs (partition manager / rollup / tiering
+5. configures the one-minute sensor RollUp, invalidation triggers, and Last
+   Value Cache,
+6. deploys the four LakeTS operational jobs (partition manager / rollup / tiering
    / retention) via the existing ``lakets_deploy_service``.
 
 Every provisioned resource (LakeTS install, ChronoTable, jobs) is recorded in the
@@ -23,8 +25,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from databricks.sdk import WorkspaceClient
+
+from core.workspace_config import get_pipelines_project
 from models.sensor_schema import pg_chronotable_ddl
-from services import lakets_deploy_service, lakets_service
+from services import cdf_reconciliation_service, lakets_deploy_service, lakets_service
 from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.industry_setup")
@@ -53,8 +58,6 @@ _ENSURE_PARTITIONS_SQL = "SELECT lakets._ensure_partitions($1, p_future_count :=
 
 
 def _new_ws() -> Any:
-    from databricks.sdk import WorkspaceClient
-
     return WorkspaceClient()
 
 
@@ -62,6 +65,7 @@ async def setup_lakets_on_branch(
     branch: str,
     *,
     conn: Any,
+    industry: str | None = None,
     ws: Any | None = None,
     project_id: str | None = None,
     future_count: int = DEFAULT_FUTURE_PARTITIONS,
@@ -81,8 +85,8 @@ async def setup_lakets_on_branch(
     Returns a summary dict; records LakeTS install, ChronoTable, and each ops
     job in the ledger.  Idempotent throughout.
     """
-    from core.workspace_config import get_pipelines_project
     project_id = project_id or get_pipelines_project()
+    industry = cdf_reconciliation_service.normalize_industry(industry or branch)
     ws = ws or _new_ws()
     result: dict[str, Any] = {"branch": branch, "steps": []}
 
@@ -122,18 +126,81 @@ async def setup_lakets_on_branch(
         result["partitions_created"] = created
         _step("precreate_partitions", "ok", future_count=future_count, created=created)
 
-    # 4b. Prepare the Lakebase CDF shadow. enable_sync creates the unpartitioned
-    #     mirror lakets_cdf._shadow_sensor_readings + a trigger (REPLICA IDENTITY
-    #     FULL) that forwards every INSERT/UPDATE/DELETE. This is REQUIRED before
-    #     the admin can enable the managed Lakebase->Delta sync in the UI — that
-    #     sync targets the shadow, NOT the partitioned ChronoTable (Lakebase CDF
-    #     rejects partitioned tables). Idempotent + never raises.
-    sync_result = await lakets_service.enable_sync(conn, SENSOR_TABLE, schema="public")
+    # 4b. Configure the default one-minute sensor RollUp and Last Value Cache.
+    rollup_result = await lakets_service.create_rollup(
+        conn,
+        table=SENSOR_TABLE,
+        name="sensor_1m",
+        bucket="1 minute",
+        group_columns=["sensor_name"],
+        aggregates=[
+            {"fn": "count", "column": "value", "as": "sample_count"},
+            {"fn": "avg", "column": "value", "as": "avg_value"},
+            {"fn": "min", "column": "value", "as": "min_value"},
+            {"fn": "max", "column": "value", "as": "max_value"},
+            {
+                "fn": "stddev_samp",
+                "column": "value",
+                "as": "stddev_value",
+            },
+        ],
+    )
+    _step(
+        "create_rollup",
+        rollup_result.get("status", "failed"),
+        error=rollup_result.get("error"),
+    )
+
+    if rollup_result.get("status") == "failed":
+        _step(
+            "enable_rollup_invalidation",
+            "skipped",
+            error="RollUp creation or validation failed",
+        )
+    else:
+        invalidation_result = await lakets_service.enable_rollup_invalidation(
+            conn, "sensor_1m"
+        )
+        _step(
+            "enable_rollup_invalidation",
+            invalidation_result.get("status", "failed"),
+            error=invalidation_result.get("error"),
+        )
+
+    lvc_result = await lakets_service.enable_lvc(
+        conn,
+        table=SENSOR_TABLE,
+        key_columns=["sensor_name"],
+        value_columns=[
+            "event_time",
+            "industry",
+            "sensor_type",
+            "unit",
+            "value",
+            "fault_active",
+        ],
+        schema="public",
+    )
+    _step(
+        "enable_lvc",
+        lvc_result.get("status", "failed"),
+        error=lvc_result.get("error"),
+    )
+
+    # 4c. Prepare the branch's industry-unique CDF source. The atomic helper
+    #     migrates legacy shadows without deleting them and backfills only once.
+    shadow = cdf_reconciliation_service.shadow_table_name(industry)
+    sync_result = await lakets_service.reconcile_chronotable_shadow(
+        conn,
+        shadow_table=shadow,
+        table=SENSOR_TABLE,
+        schema="public",
+    )
     result["cdf_shadow"] = sync_result.get("status", "failed")
     _step(
         "enable_sync",
         sync_result.get("status", "failed"),
-        shadow=f"{CDF_SHADOW_SCHEMA}._shadow_{SENSOR_TABLE}",
+        shadow=f"{CDF_SHADOW_SCHEMA}.{shadow}",
         error=sync_result.get("error"),
     )
 

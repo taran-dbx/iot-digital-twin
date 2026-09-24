@@ -124,20 +124,44 @@ class TestCheckDeltaTables:
         res = await hc.check_delta_tables("iot_pharma", ["microbatch"], None)
         assert res["status"] == hc.SKIP
 
+    async def test_industry_realtime_expects_unique_cdf_destination_c7251(self):
+        """Health rejects the unused direct realtime table [C7251][defect][regression]."""
+        rows = [
+            {
+                "table_schema": "rtm_lakets_zb",
+                "table_name": "manufacturing_realtime",
+            }
+        ]
+        result = await hc.check_delta_tables(
+            "taran-interop",
+            ["realtime"],
+            _run_sql_returning(rows),
+            schema="rtm_lakets_zb",
+            industry="manufacturing",
+        )
+
+        assert result["status"] == hc.SKIP
+        assert "lb__shadow_manufacturing_sensor_readings_history" in result["detail"]
+
 
 # ===========================================================================
 # check_checkpoint_volume
 # ===========================================================================
 @pytest.mark.asyncio
 class TestCheckCheckpointVolume:
-    async def test_pass_when_volume_present(self):
+    async def test_pass_when_volume_present(self, monkeypatch):
+        monkeypatch.setenv("UC_SCHEMA", "shared_schema")
         rows = [{"volume_name": "stream_checkpoints"}]
-        res = await hc.check_checkpoint_volume("iot_pharma", _run_sql_returning(rows))
+        run_sql = _run_sql_returning(rows)
+        res = await hc.check_checkpoint_volume("iot_pharma", run_sql)
         assert res["status"] == hc.PASS
+        assert "volume_schema = 'shared_schema'" in run_sql.await_args.args[0]
 
-    async def test_fail_when_volume_absent(self):
+    async def test_fail_when_volume_absent(self, monkeypatch):
+        monkeypatch.setenv("UC_SCHEMA", "shared_schema")
         res = await hc.check_checkpoint_volume("iot_pharma", _run_sql_returning([]))
         assert res["status"] == hc.FAIL
+        assert "iot_pharma.shared_schema.stream_checkpoints" in res["detail"]
 
 
 # ===========================================================================
@@ -145,34 +169,55 @@ class TestCheckCheckpointVolume:
 # ===========================================================================
 @pytest.mark.asyncio
 class TestCheckMetricsRecent:
+    @pytest.fixture(autouse=True)
+    def _one_schema(self, monkeypatch):
+        monkeypatch.setenv("UC_CATALOG", "shared_catalog")
+        monkeypatch.setenv("UC_SCHEMA", "shared_schema")
+
     async def test_pass_when_rows_present(self):
         rows = [{"n": 42, "latest": "2026-07-06T10:00:00Z"}]
-        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], _run_sql_returning(rows))
+        run_sql = _run_sql_returning(rows)
+        res = await hc.check_metrics_recent(
+            ["realtime"], run_sql, industry="pharmaceutical"
+        )
         assert res["status"] == hc.PASS
+        sql = run_sql.await_args.args[0]
+        assert "shared_catalog.shared_schema.pharmaceutical_metrics" in sql
+        assert "WHERE mode = 'realtime'" in sql
 
     async def test_skip_when_no_rows_yet(self):
         # Metrics rows only land once a mode streams — an empty table on a
         # not-yet-run pipeline is expected (SKIP), not a failure.
         rows = [{"n": 0, "latest": None}]
-        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], _run_sql_returning(rows))
+        res = await hc.check_metrics_recent(
+            ["realtime"], _run_sql_returning(rows), industry="pharmaceutical"
+        )
         assert res["status"] == hc.SKIP
 
     async def test_skip_when_table_not_created(self):
         # The per-mode metrics table is created on the first streaming run; a
         # DBSQL TABLE_OR_VIEW_NOT_FOUND means "not run yet", so SKIP.
         run_sql = AsyncMock(side_effect=RuntimeError("[TABLE_OR_VIEW_NOT_FOUND] table not found"))
-        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], run_sql)
+        res = await hc.check_metrics_recent(
+            ["realtime"], run_sql, industry="pharmaceutical"
+        )
         assert res["status"] == hc.SKIP
 
     async def test_fail_on_genuine_error(self):
         # A real error (not a missing table) must still FAIL, not be masked.
         run_sql = AsyncMock(side_effect=RuntimeError("PERMISSION_DENIED: cannot read table"))
-        res = await hc.check_metrics_recent("iot_pharma", ["realtime"], run_sql)
+        res = await hc.check_metrics_recent(
+            ["realtime"], run_sql, industry="pharmaceutical"
+        )
         assert res["status"] == hc.FAIL
 
     async def test_skip_when_no_streaming_modes(self):
         # zerobus-only pipeline has no Spark streaming metrics → SKIP, not fail.
-        res = await hc.check_metrics_recent("iot_pharma", ["zerobus"], _run_sql_returning([{"n": 0}]))
+        res = await hc.check_metrics_recent(
+            ["zerobus"],
+            _run_sql_returning([{"n": 0}]),
+            industry="pharmaceutical",
+        )
         assert res["status"] == hc.SKIP
 
 
@@ -408,6 +453,31 @@ class TestCheckGrants:
         assert kwargs["securable_type"] == "catalog"
         assert isinstance(kwargs["securable_type"], str)
 
+    async def test_rechecks_current_app_sp_after_grant_c7214(self, monkeypatch):
+        """A second health sweep must observe newly applied grants [C7214][regression]."""
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
+        ws = MagicMock()
+        ws.grants.get = MagicMock(
+            side_effect=[
+                SimpleNamespace(privilege_assignments=[]),
+                SimpleNamespace(
+                    privilege_assignments=[
+                        SimpleNamespace(
+                            principal="current-app-sp",
+                            privileges=["USE_CATALOG"],
+                        )
+                    ]
+                ),
+            ]
+        )
+
+        before = await hc.check_grants("taran-interop", ws)
+        after = await hc.check_grants("taran-interop", ws)
+
+        assert before["status"] == hc.FAIL
+        assert after["status"] == hc.PASS
+        assert ws.grants.get.call_count == 2
+
 
 # ===========================================================================
 # check_secrets
@@ -472,6 +542,25 @@ class TestCheckJobs:
         job_status = MagicMock(side_effect=Exception("Jobs API 500"))
         res = await hc.check_jobs(deployments, job_status=job_status)
         assert res["status"] == hc.FAIL
+
+    async def test_fail_when_running_job_has_failed_task_c7258(self):
+        """[C7258][defect][regression] Task failure overrides run-level RUNNING."""
+        deployments = [_deployed("realtime", "j1")]
+        job_status = MagicMock(return_value={
+            "state": "RUNNING",
+            "degraded": True,
+            "detail": "data_producer: Driver stopped unexpectedly",
+            "tasks": [{
+                "task": "data_producer",
+                "life_cycle": "INTERNAL_ERROR",
+                "result": "FAILED",
+            }],
+        })
+
+        res = await hc.check_jobs(deployments, job_status=job_status)
+
+        assert res["status"] == hc.FAIL
+        assert "data_producer" in res["detail"]
 
 
 # ===========================================================================
@@ -577,6 +666,107 @@ def _all_good_deps():
 
 @pytest.mark.asyncio
 class TestGatherChecks:
+    async def test_zerobus_uses_one_schema_catalog_tables_grants_and_uc_secret(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv(
+            "UC_CATALOG", "classic_stable_realtime_demos_catalog"
+        )
+        monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
+        setup = {
+            **_healthy_setup(),
+            "industry": "pharmaceutical",
+            "enabled_modes": ["zerobus"],
+            "validation_state": {"cluster_id": None},
+        }
+        queries: list[str] = []
+
+        async def run_sql(sql, *args, **kwargs):
+            queries.append(sql)
+            if "information_schema.schemata" in sql:
+                return _sql_result([{"schema_name": "rtm_lakets_zb"}])
+            if "information_schema.tables" in sql:
+                return _sql_result(
+                    [{
+                        "table_schema": "rtm_lakets_zb",
+                        "table_name": "pharmaceutical_zerobus",
+                    }]
+                )
+            return _sql_result([])
+
+        ws = MagicMock()
+        ws.grants.get.return_value = SimpleNamespace(
+            privilege_assignments=[
+                SimpleNamespace(principal="sp-app-id", privileges=["USE_CATALOG"])
+            ]
+        )
+        ws.secrets_uc.get_secret.return_value = SimpleNamespace(
+            name="app_sp_oauth"
+        )
+
+        result = await hc.gather_checks(
+            setup,
+            deployments=[],
+            ws=ws,
+            run_sql=run_sql,
+            open_read_conn=None,
+            job_status=MagicMock(),
+            principal="sp-app-id",
+        )
+
+        sql = "\n".join(queries)
+        assert "classic_stable_realtime_demos_catalog.information_schema" in sql
+        assert "iot_pharmaceutical" not in sql
+        assert "pharmaceutical_zerobus" in sql or any(
+            check["name"] == hc.DELTA_TABLES_CHECK
+            and check["status"] == hc.PASS
+            for check in result["checks"]
+        )
+        ws.grants.get.assert_called_with(
+            securable_type="catalog",
+            full_name="classic_stable_realtime_demos_catalog",
+        )
+        ws.secrets_uc.get_secret.assert_called_once_with(
+            "classic_stable_realtime_demos_catalog.rtm_lakets_zb.app_sp_oauth",
+            include_value=False,
+        )
+        failures = [
+            check for check in result["checks"] if check["status"] == hc.FAIL
+        ]
+        assert failures == []
+
+    async def test_zerobus_only_excludes_realtime_kafka_and_cluster_checks(self):
+        setup = {
+            **_healthy_setup(),
+            "enabled_modes": ["zerobus"],
+            "validation_state": {"cluster_id": None},
+        }
+        run_sql, open_read_conn, ws = _all_good_deps()
+        job_status = MagicMock(return_value={"state": "RUNNING"})
+
+        result = await hc.gather_checks(
+            setup,
+            deployments=[
+                _deployed("zerobus", "j-zb"),
+                _deployed("realtime", "stale-j-rt"),
+            ],
+            ws=ws,
+            run_sql=run_sql,
+            open_read_conn=open_read_conn,
+            job_status=job_status,
+            principal="sp-app-id",
+        )
+
+        names = {check["name"] for check in result["checks"]}
+        assert hc.LAKEBASE_ENDPOINTS_CHECK not in names
+        assert hc.CHRONOTABLE_CHECK not in names
+        assert hc.CDF_SYNC_CHECK not in names
+        assert hc.CHECKPOINT_VOLUME_CHECK not in names
+        assert hc.CLUSTER_STATE_CHECK not in names
+        assert hc.KAFKA_TOPIC_CHECK not in names
+        ws.postgres.get_project.assert_not_called()
+        job_status.assert_called_once_with("j-zb")
+
     async def test_returns_checks_health_startable_cluster_state(self):
         setup = _healthy_setup()
         run_sql, _open, ws = _all_good_deps()

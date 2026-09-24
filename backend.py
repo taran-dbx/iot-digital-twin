@@ -17,8 +17,25 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import asyncpg
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.core import Config
 
 logger = logging.getLogger("iot_digital_twin.backend")
+
+# Bounded pool waits so a hung Lakebase endpoint cannot pin app workers forever
+# (proxy upstream timeouts were ~10m with no asyncpg command/connect limits).
+LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10")
+)
+# DDL/CDF migrations can legitimately exceed dashboard probe budgets. Routes
+# apply shorter per-request wait_for deadlines; this pool-level ceiling is the
+# final guard for long-running provisioning statements.
+LAKEBASE_COMMAND_TIMEOUT_SECONDS = float(
+    os.getenv("LAKEBASE_COMMAND_TIMEOUT_SECONDS", "120")
+)
+LAKEBASE_SDK_TIMEOUT_SECONDS = float(
+    os.getenv("LAKEBASE_SDK_TIMEOUT_SECONDS", "8")
+)
 
 
 def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, str]:
@@ -30,9 +47,12 @@ def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, st
 
     Returns (pg_user, pg_password).
     """
-    from databricks.sdk import WorkspaceClient
-
-    w = WorkspaceClient()
+    w = WorkspaceClient(
+        config=Config(
+            http_timeout_seconds=LAKEBASE_SDK_TIMEOUT_SECONDS,
+            retry_timeout_seconds=LAKEBASE_SDK_TIMEOUT_SECONDS,
+        )
+    )
     endpoint_name = endpoint_name or os.getenv("LAKEBASE_ENDPOINT")
     if not endpoint_name:
         raise RuntimeError("LAKEBASE_ENDPOINT env var not set")
@@ -86,7 +106,9 @@ class LakebaseConnectionManager:
             self._pg_password = os.getenv("PGPASSWORD")
             self._uses_static_creds = True
         else:
-            self._pg_user, self._pg_password = _get_lakebase_credentials(self._endpoint_name)
+            self._pg_user, self._pg_password = await asyncio.to_thread(
+                _get_lakebase_credentials, self._endpoint_name
+            )
             self._uses_static_creds = False
 
         ssl_mode = os.getenv("PGSSLMODE", "require")
@@ -99,6 +121,9 @@ class LakebaseConnectionManager:
             min_size=self._pool_min,
             max_size=self._pool_max,
             ssl=ssl_mode,
+            # Pool acquire + connect wait (asyncpg pops ``timeout`` for both).
+            timeout=LAKEBASE_CONNECT_TIMEOUT_SECONDS,
+            command_timeout=LAKEBASE_COMMAND_TIMEOUT_SECONDS,
         )
         logger.info(
             "Lakebase pool created — host=%s db=%s user=%s static=%s",
@@ -113,7 +138,9 @@ class LakebaseConnectionManager:
         while True:
             await asyncio.sleep(50 * 60)  # 50 minutes
             try:
-                self._pg_user, self._pg_password = _get_lakebase_credentials(self._endpoint_name)
+                self._pg_user, self._pg_password = await asyncio.to_thread(
+                    _get_lakebase_credentials, self._endpoint_name
+                )
                 old_pool = self._pool
                 ssl_mode = os.getenv("PGSSLMODE", "require")
                 self._pool = await asyncpg.create_pool(
@@ -125,6 +152,8 @@ class LakebaseConnectionManager:
                     min_size=self._pool_min,
                     max_size=self._pool_max,
                     ssl=ssl_mode,
+                    timeout=LAKEBASE_CONNECT_TIMEOUT_SECONDS,
+                    command_timeout=LAKEBASE_COMMAND_TIMEOUT_SECONDS,
                 )
                 if old_pool:
                     await old_pool.close()

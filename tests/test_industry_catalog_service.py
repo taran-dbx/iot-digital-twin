@@ -156,9 +156,20 @@ class TestGrants:
             res = await ics.grant_app_sp("pharmaceutical", ws=ws, principal="app-123")
         sqls = "\n".join(c.args[0] for c in exec_mock.call_args_list)
         assert f"USE CATALOG ON CATALOG {CATALOG}" in sqls
-        for priv in ("USE SCHEMA", "CREATE TABLE", "MODIFY", "SELECT", "READ SECRET"):
+        for priv in (
+            "USE SCHEMA",
+            "EXTERNAL USE SCHEMA",
+            "CREATE TABLE",
+            "MODIFY",
+            "SELECT",
+            "READ SECRET",
+        ):
             assert priv in sqls
         assert f"ON SCHEMA {CATALOG}.{SCHEMA}" in sqls
+        assert (
+            f"GRANT SELECT, MODIFY ON TABLE "
+            f"{ics.sql_fqn(CATALOG, SCHEMA, 'pharmaceutical_metrics')}"
+        ) in sqls
         assert "`app-123`" in sqls
         assert res["principal"] == "app-123"
 
@@ -230,11 +241,15 @@ class TestGrants:
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "cid-123")
         assert ics.resolve_app_principal(MagicMock()) == "cid-123"
 
-    def test_resolve_streaming_principal_falls_back(self, monkeypatch) -> None:
-        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "fallback-sp-id")
+    def test_health_grants_use_current_app_principal_c7214(self, monkeypatch) -> None:
+        """Legacy SP discovery must not override the single app SP [C7214][defect]."""
+        monkeypatch.setenv("DATABRICKS_CLIENT_ID", "current-app-sp")
         ws = MagicMock()
-        with patch.object(ics, "_find_sp_by_display_name", return_value=None):
-            assert ics.resolve_streaming_sp_principal(ws) == "fallback-sp-id"
+        ws.service_principals.list.side_effect = AssertionError(
+            "legacy service-principal discovery must not run"
+        )
+
+        assert ics.resolve_streaming_sp_principal(ws) == "current-app-sp"
 
 
 # ---------------------------------------------------------------------------

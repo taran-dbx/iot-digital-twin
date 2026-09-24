@@ -18,20 +18,59 @@ from services import lakets_service
 def _pool(*, existing: bool = False) -> AsyncMock:
     """Mocked asyncpg pool.
 
-    ``fetchval`` is used both for the existence probe and for the
-    ``SELECT lakets.create_rollup(...)`` call.  By default the rollup does not
-    yet exist (probe -> None) and creation returns id 7.
+    ``fetchrow`` probes the registry; ``fetchval`` invokes
+    ``lakets.create_rollup`` when the definition does not exist.
     """
     pool = AsyncMock()
-    # First fetchval -> existence probe; second -> create_rollup id.
-    pool.fetchval.side_effect = [
-        (1 if existing else None),  # existence probe
-        7,  # create_rollup return id (only reached when not existing)
-    ]
+    pool.fetchrow.return_value = (
+        {
+            "id": 1,
+            "query_text": (
+                "SELECT lakets.time_bucket('1 hour'::interval, event_time) AS bucket, "
+                "avg(value) AS avg_value FROM public.sensor_readings GROUP BY bucket"
+            ),
+        }
+        if existing
+        else None
+    )
+    pool.fetchval.return_value = 7
     return pool
 
 
 class TestCreateRollup:
+    @pytest.mark.asyncio
+    async def test_groups_by_dimensions_and_supports_stddev_samp_c7223_regression(
+        self,
+    ) -> None:
+        """[C7223][regression] Group a RollUp by bucket plus dimensions."""
+        pool = _pool(existing=False)
+
+        result = await lakets_service.create_rollup(
+            pool,
+            table="sensor_readings",
+            name="sensor_1m",
+            bucket="1 minute",
+            group_columns=["sensor_name", "sensor_type"],
+            aggregates=[
+                {"fn": "avg", "column": "value", "as": "avg_value"},
+                {
+                    "fn": "stddev_samp",
+                    "column": "value",
+                    "as": "stddev_value",
+                },
+            ],
+        )
+
+        assert result["status"] == "created"
+        query = pool.fetchval.await_args_list[0].args[2]
+        normalized_query = " ".join(query.lower().split())
+        assert (
+            "select lakets.time_bucket('1 minute'::interval, event_time) as bucket, "
+            "sensor_name, sensor_type, avg(value) as avg_value, "
+            "stddev_samp(value) as stddev_value"
+        ) in normalized_query
+        assert "group by bucket, sensor_name, sensor_type" in normalized_query
+
     @pytest.mark.asyncio
     async def test_creates_rollup_with_mapped_args(self) -> None:
         pool = _pool(existing=False)
@@ -52,8 +91,7 @@ class TestCreateRollup:
             "status": "created",
         }
 
-        # The create_rollup SQL call is the 2nd fetchval invocation.
-        create_call = pool.fetchval.await_args_list[1]
+        create_call = pool.fetchval.await_args_list[0]
         args = create_call.args
         # SELECT lakets.create_rollup($1=name, $2=query, $3=bucket,
         #                             $4=source_table, $5=source_schema)
@@ -86,8 +124,7 @@ class TestCreateRollup:
             "resource": "LakeTS rollup sensor_hourly",
             "status": "already_exists",
         }
-        # Only the existence probe ran; create_rollup was never called.
-        assert pool.fetchval.await_count == 1
+        pool.fetchval.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_accepts_raw_sql_aggregate_spec(self) -> None:
@@ -101,7 +138,7 @@ class TestCreateRollup:
             aggregates="avg(value) AS avg_value, count(*) AS n",
         )
 
-        query = pool.fetchval.await_args_list[1].args[2]
+        query = pool.fetchval.await_args_list[0].args[2]
         assert "avg(value) AS avg_value, count(*) AS n" in query
         assert "lakets.time_bucket" in query
 
@@ -118,14 +155,15 @@ class TestCreateRollup:
             schema="iot",
         )
 
-        create_args = pool.fetchval.await_args_list[1].args
+        create_args = pool.fetchval.await_args_list[0].args
         assert create_args[5] == "iot"  # p_source_schema
         assert "from iot.readings" in create_args[2].lower()
 
     @pytest.mark.asyncio
     async def test_never_raises_returns_failed(self) -> None:
         pool = AsyncMock()
-        pool.fetchval.side_effect = [None, RuntimeError("boom")]
+        pool.fetchrow.return_value = None
+        pool.fetchval.side_effect = RuntimeError("boom")
 
         result = await lakets_service.create_rollup(
             pool,
@@ -150,5 +188,102 @@ class TestCreateRollup:
             aggregates=[{"fn": "avg", "column": "value", "as": "avg_v"}],
         )
 
-        query = pool.fetchval.await_args_list[1].args[2]
+        query = pool.fetchval.await_args_list[0].args[2]
         assert "avg(value) AS avg_v" in query
+
+    @pytest.mark.asyncio
+    async def test_existing_definition_mismatch_returns_failed(self) -> None:
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {
+            "id": 5,
+            "query_text": (
+                "SELECT lakets.time_bucket('1 minute'::interval, event_time) AS bucket, "
+                "avg(value) AS avg_value FROM public.sensor_readings GROUP BY bucket"
+            ),
+        }
+
+        result = await lakets_service.create_rollup(
+            pool,
+            table="sensor_readings",
+            name="sensor_1m",
+            bucket="1 minute",
+            group_columns=["sensor_name"],
+            aggregates=[
+                {"fn": "avg", "column": "value", "as": "avg_value"},
+                {"fn": "stddev_samp", "column": "value", "as": "stddev_value"},
+            ],
+        )
+
+        assert result["status"] == "failed"
+        assert "definition mismatch" in result["error"]
+        assert "drop or migrate it explicitly" in result["error"]
+        pool.fetchval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_list_aggregate_is_rejected(self) -> None:
+        pool = AsyncMock()
+
+        result = await lakets_service.create_rollup(
+            pool,
+            table="sensor_readings",
+            name="unsafe",
+            bucket="1 minute",
+            aggregates=["avg(value); DROP TABLE sensor_readings"],
+        )
+
+        assert result["status"] == "failed"
+        assert "unsupported aggregate function" in result["error"]
+        pool.fetchrow.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_named_count_uses_count_star(self) -> None:
+        pool = _pool(existing=False)
+
+        await lakets_service.create_rollup(
+            pool,
+            table="sensor_readings",
+            name="sensor_1m",
+            bucket="1 minute",
+            aggregates=[{"fn": "count", "column": "value", "as": "sample_count"}],
+        )
+
+        query = pool.fetchval.await_args.args[2]
+        assert "count(*) AS sample_count" in query
+
+
+class TestRollupInvalidation:
+    @pytest.mark.asyncio
+    async def test_existing_triggers_are_refreshed_for_new_chunks(self) -> None:
+        pool = AsyncMock()
+        pool.fetchval.side_effect = [True, None]
+
+        result = await lakets_service.enable_rollup_invalidation(pool, "sensor_1m")
+
+        assert result["status"] == "already_exists"
+        assert pool.fetchval.await_count == 2
+        assert "lakets.enable_rollup_invalidation" in (
+            pool.fetchval.await_args_list[1].args[0]
+        )
+
+
+class TestEnableLvc:
+    @pytest.mark.asyncio
+    async def test_existing_definition_mismatch_returns_failed(self) -> None:
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {
+            "id": 3,
+            "enabled": True,
+            "key_columns": ["sensor_name"],
+            "value_columns": ["value"],
+        }
+
+        result = await lakets_service.enable_lvc(
+            pool,
+            table="sensor_readings",
+            key_columns=["sensor_name"],
+            value_columns=["event_time", "value"],
+        )
+
+        assert result["status"] == "failed"
+        assert "definition mismatch" in result["error"]
+        pool.fetchval.assert_not_awaited()

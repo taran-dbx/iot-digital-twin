@@ -41,6 +41,10 @@ def _rtm_write_test_code() -> str:
         pg_host="ep-x.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
         pg_token="lb-oauth-token",
+        zerobus_endpoint="workspace.zerobus.us-east-1.cloud.databricks.com",
+        workspace_url="https://workspace.cloud.databricks.com",
+        zerobus_client_id="app-client-id",
+        zerobus_secret_key="oauth-secret-key",
         region="us-east-1",
     )
 
@@ -82,22 +86,38 @@ def test_rtm_write_test_lands_data_not_noop():
 
 
 def test_rtm_write_test_wires_buffered_metrics_listener():
-    """The buffered delta-rs metrics listener (P5a) must be wired into the run."""
+    """The buffered Zerobus metrics listener must match the production transport."""
     code = _rtm_write_test_code()
-    assert "BufferedDeltaMetricsListener" in code
+    assert "BufferedZerobusMetricsListener" in code
     assert "spark.streams.addListener(" in code
-    assert "write_deltalake" in code
+    assert "_zb_metrics_stream.ingest_record(rec)" in code
+    assert "write_deltalake" not in code
+    assert "saveAsTable" not in code
     assert "onQueryProgress" in code
     assert "iot_x.metrics.streaming_metrics" in code       # metrics table fqn
-    assert "streaming_metrics/" in code                    # metrics table location
-    # Synchronous post-run flush from the query's own recentProgress (robust to
-    # trigger cadence / daemon thread) + diagnostics in the OK payload.
-    assert "recentProgress" in code
+    assert '"mode": "realtime"' in code
+    assert "oauth-secret-key" in code
+    assert "workspace.zerobus.us-east-1.cloud.databricks.com" in code
+    assert "dbutils.secrets.get(" in code
+    assert "catalog=_zb_uc_catalog" in code
+    assert "schema=_zb_uc_schema" in code
+    assert "timestamp() * 1_000_000" in code
+    assert "wait_for_ack(timeout_sec=30)" in code
+    assert "spark.streams.removeListener(_metrics_listener)" in code
+    assert 'getattr(q, "recentProgress", [])' in code
     assert "metrics_written=" in code
 
 
-def test_rtm_produce_uses_msk_iam_kafka_producer():
-    code = snip.rtm_produce("iot.x.realtime", "b-1:9198", "us-east-1", "iot-rtm-sc", num_records=100)
+def test_rtm_produce_uses_curated_industry_c7245():
+    """Producer preserves validation source and actual industry [C7245][regression]."""
+    code = snip.rtm_produce(
+        "iot.x.realtime",
+        "b-1:9198",
+        "us-east-1",
+        "iot-rtm-sc",
+        num_records=100,
+        industry="manufacturing",
+    )
     assert "KafkaProducer" in code
     assert "SASL_SSL" in code
     assert "OAUTHBEARER" in code
@@ -109,6 +129,8 @@ def test_rtm_produce_uses_msk_iam_kafka_producer():
     assert "api_version=(2, 8, 1)" in code
     assert "iot.x.realtime" in code
     assert "range(100)" in code
+    assert '"industry": \'manufacturing\'' in code
+    assert '"metadata": {"source": \'validation\'}' in code
     # Returns the earliest event_time floor so the consumer can drop stale rows.
     assert "_min_ts = time.time()" in code
     assert "min_ts=_min_ts" in code
@@ -162,7 +184,7 @@ def test_microbatch_write_test_processing_time_trigger():
     assert "timestamp_seconds" in code
     assert 'alias("sensor_name")' in code
     # No metrics args → no listener wired.
-    assert "BufferedDeltaMetricsListener" not in code
+    assert "BufferedZerobusMetricsListener" not in code
 
 
 def test_microbatch_write_test_wires_metrics_listener_when_given():
@@ -174,11 +196,20 @@ def test_microbatch_write_test_wires_metrics_listener_when_given():
         metrics_table_fqn="iot_x.metrics.streaming_metrics_microbatch",
         metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics_microbatch/",
         region="us-east-1",
+        zerobus_endpoint="workspace.zerobus.us-east-1.cloud.databricks.com",
+        workspace_url="https://workspace.cloud.databricks.com",
+        zerobus_client_id="app-client-id",
+        zerobus_secret_key="oauth-secret-key",
     )
-    assert "BufferedDeltaMetricsListener" in code
+    assert "BufferedZerobusMetricsListener" in code
     assert "spark.streams.addListener(" in code
-    assert "write_deltalake" in code
+    assert "_zb_metrics_stream.ingest_record(rec)" in code
+    assert "write_deltalake" not in code
+    assert "saveAsTable" not in code
     assert "streaming_metrics_microbatch" in code
+    assert '"mode": \'microbatch\'' in code
+    assert "spark.streams.removeListener(_metrics_listener)" in code
+    assert 'getattr(stream, "recentProgress", [])' in code
     # Still parses to the SSOT schema + writes the table.
     assert "from_json" in code and "toTable(" in code
 

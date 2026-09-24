@@ -16,6 +16,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound
 
 from services import resource_deleters
 from services.resource_deleters import make_all_deleters
@@ -42,6 +43,7 @@ RECORDED_TYPES = {
     "lakebase_branch",
     "lakebase_endpoint",
     "lakebase_read_replica",
+    "cdf_sync",
 }
 
 
@@ -63,23 +65,31 @@ async def test_registry_covers_every_ledger_resource_type() -> None:
 # ---------------------------------------------------------------------------
 # UC deleters (DBSQL)
 # ---------------------------------------------------------------------------
-async def test_uc_catalog_drops_cascade() -> None:
+async def test_pipeline_teardown_never_drops_uc_catalog_c7113() -> None:
     run_sql = AsyncMock()
     reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
-    await reg["uc_catalog"]({"identifier": "iot_pharma", "metadata": {}})
-    run_sql.assert_awaited_once()
-    assert run_sql.await_args.args[0] == "DROP CATALOG IF EXISTS iot_pharma CASCADE"
+    with pytest.raises(SkipResource):
+        await reg["uc_catalog"]({"identifier": "iot_pharma", "metadata": {}})
+    run_sql.assert_not_awaited()
 
 
-async def test_uc_schema_and_volume_drop() -> None:
+async def test_pipeline_teardown_never_drops_shared_uc_schema_c7113() -> None:
     run_sql = AsyncMock()
     reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
-    await reg["uc_schema"]({"identifier": "iot_p.metrics", "metadata": {}})
+    with pytest.raises(SkipResource):
+        await reg["uc_schema"]({"identifier": "iot_p.metrics", "metadata": {}})
+    run_sql.assert_not_awaited()
+
+
+async def test_uc_volume_drop_remains_pipeline_scoped() -> None:
+    run_sql = AsyncMock()
+    reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
     await reg["uc_volume"]({"identifier": "iot_p.checkpoints.stream_checkpoints",
                             "metadata": {}})
-    sqls = [c.args[0] for c in run_sql.await_args_list]
-    assert "DROP SCHEMA IF EXISTS iot_p.metrics CASCADE" in sqls
-    assert "DROP VOLUME IF EXISTS iot_p.checkpoints.stream_checkpoints" in sqls
+    assert (
+        run_sql.await_args.args[0]
+        == "DROP VOLUME IF EXISTS iot_p.checkpoints.stream_checkpoints"
+    )
 
 
 async def test_uc_table_chronotable_is_skipped_with_note() -> None:
@@ -94,42 +104,80 @@ async def test_uc_table_chronotable_is_skipped_with_note() -> None:
 
 
 async def test_uc_table_real_table_is_dropped() -> None:
+    ws = MagicMock()
     run_sql = AsyncMock()
-    reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
-    await reg["uc_table"]({"identifier": "iot_p.raw.events", "metadata": {}})
-    assert run_sql.await_args.args[0] == "DROP TABLE IF EXISTS iot_p.raw.events"
+    reg = make_all_deleters(ws=ws, warehouse_id="wh", run_sql=run_sql)
+    await reg["uc_table"](
+        {
+            "identifier": "iot_p.raw.events",
+            "deployment_id": "deployment-1",
+            "_ownership_verified": True,
+            "metadata": {},
+        }
+    )
+    ws.tables.delete.assert_called_once_with(full_name="iot_p.raw.events")
+    run_sql.assert_not_awaited()
+
+
+async def test_uc_table_delete_is_idempotent_when_already_absent() -> None:
+    ws = MagicMock()
+    ws.tables.delete.side_effect = NotFound("table not found")
+    reg = make_all_deleters(ws=ws, warehouse_id="wh", run_sql=AsyncMock())
+
+    await reg["uc_table"](
+        {
+            "identifier": "iot_p.raw.events",
+            "_ownership_verified": True,
+            "metadata": {},
+        }
+    )
+
+    ws.tables.delete.assert_called_once_with(full_name="iot_p.raw.events")
 
 
 # ---------------------------------------------------------------------------
 # Metrics table — drop table AND delete the external S3 prefix
 # ---------------------------------------------------------------------------
 async def test_metrics_table_drops_table_and_deletes_s3_prefix() -> None:
+    ws = MagicMock()
     run_sql = AsyncMock()
     delete_s3 = AsyncMock()
     reg = make_all_deleters(
-        ws=MagicMock(), warehouse_id="wh",
+        ws=ws, warehouse_id="wh",
         run_sql=run_sql, delete_s3_prefix=delete_s3,
     )
     loc = "s3://taran-shared-interop/iot-digital-twin/iot_p/metrics/streaming_metrics/"
     await reg["metrics_table"](
         {"identifier": "iot_p.metrics.streaming_metrics",
+         "deployment_id": "deployment-1",
+         "_ownership_verified": True,
          "metadata": {"external": True, "location": loc}}
     )
-    assert run_sql.await_args.args[0] == "DROP TABLE IF EXISTS iot_p.metrics.streaming_metrics"
+    ws.tables.delete.assert_called_once_with(
+        full_name="iot_p.metrics.streaming_metrics"
+    )
+    run_sql.assert_not_awaited()
     delete_s3.assert_awaited_once_with(loc)
 
 
 async def test_metrics_table_without_location_skips_s3() -> None:
+    ws = MagicMock()
     run_sql = AsyncMock()
     delete_s3 = AsyncMock()
     reg = make_all_deleters(
-        ws=MagicMock(), warehouse_id="wh",
+        ws=ws, warehouse_id="wh",
         run_sql=run_sql, delete_s3_prefix=delete_s3,
     )
     await reg["metrics_table"](
-        {"identifier": "iot_p.metrics.streaming_metrics", "metadata": {}}
+        {
+            "identifier": "iot_p.metrics.streaming_metrics",
+            "deployment_id": "deployment-1",
+            "_ownership_verified": True,
+            "metadata": {},
+        }
     )
-    run_sql.assert_awaited_once()
+    ws.tables.delete.assert_called_once()
+    run_sql.assert_not_awaited()
     delete_s3.assert_not_awaited()
 
 
@@ -150,6 +198,29 @@ async def test_kafka_topic_skipped_with_note() -> None:
         )
     note = str(exc.value).lower()
     assert "deletetopic" in note or "1.8" in note
+
+
+async def test_cdf_sync_is_deleted_via_postgres_api_c7205() -> None:
+    """Automated CDF is removed before its Lakebase branch [C7205][regression]."""
+    ws = MagicMock()
+    reg = make_all_deleters(ws=ws, warehouse_id="wh")
+    parent = "projects/iot-pipelines/branches/pharma/databases/databricks_postgres"
+
+    await reg["cdf_sync"](
+        {
+            "identifier": f"{parent}/cdf-configs/lakets_cdf",
+            "metadata": {
+                "parent": parent,
+                "cdf_config_id": "lakets_cdf",
+            },
+        }
+    )
+
+    ws.api_client.do.assert_called_once_with(
+        "DELETE",
+        f"/api/2.0/postgres/{parent}/cdf-configs/lakets_cdf",
+        query={"force": "false"},
+    )
 
 
 # ---------------------------------------------------------------------------

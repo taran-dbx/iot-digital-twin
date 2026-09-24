@@ -214,10 +214,9 @@ async def run_machine(
 
         if result.status == sm.FAILED:
             break  # hard failure — stop and wait for admin fix/retry (§1.12)
-        # A ``waiting_admin`` step only parks its own lane: keep driving so
-        # independent lanes (micro-batch / zerobus) still run to green while the
-        # realtime lane waits on the manual CDF enable.  ``next_runnable_step``
-        # skips the parked lane, so the loop advances instead of looping on it.
+        # ``waiting_admin`` remains supported for backward-compatible custom
+        # executors. Current built-in CDF enablement is API-driven and passes
+        # without parking.
 
     return state
 
@@ -228,15 +227,35 @@ async def run_machine(
 # the background (a full run can take minutes provisioning the cluster).
 # ---------------------------------------------------------------------------
 async def prepare_start(db: Any, industry: str) -> dict:
-    """Build a fresh validation state, persist it, return the setup (with state).
+    """Prepare validation state, preserving green lanes when modes changed.
 
     Raises :class:`ValidationError` (→404) when no setup exists and
     :class:`IncompleteSetupError` (→400) when the setup is a draft still missing
     the inputs an interactive run needs — so the caller never sees a 500.
+
+    When the configured mode set differs from the persisted state's mode set,
+    only newly added/common steps are pending; retained lanes keep their prior
+    results. With an unchanged mode set this is an explicit full re-run and a
+    fresh state is created.
     """
     setup = await _require_setup(db, industry)
     assert_ready_for_start(setup)
-    state = sm.initial_state(setup.get("enabled_modes") or [])
+    enabled = setup.get("enabled_modes") or []
+    previous = setup.get("validation_state") or {}
+    previous_modes = set(previous.get("enabled_modes") or [])
+    if previous.get("sequence") and previous_modes != set(enabled):
+        state = sm.reconcile_modes(previous, enabled)
+    elif previous.get("sequence") and any(
+        record.get("status") != sm.PASSED
+        for key, record in (previous.get("steps") or {}).items()
+        if key not in sm.TERMINAL_STEPS
+    ):
+        # A mode-update endpoint already reconciled the state: continue only
+        # its new/pending lane rather than resetting healthy retained lanes.
+        state = previous
+    else:
+        state = sm.initial_state(enabled)
+    state = sm.reset_legacy_cdf_park(state)
     await _persist(db, setup["id"], state)
     return {**setup, "validation_state": state}
 
@@ -295,6 +314,10 @@ async def resume_validation(
     if not (setup.get("validation_state") or {}).get("sequence"):
         # Nothing started yet → start fresh.
         return await start_validation(db, industry, executors=executors, ws=ws)
+    migrated_state = sm.reset_legacy_cdf_park(setup["validation_state"])
+    if migrated_state is not setup["validation_state"]:
+        await _persist(db, setup["id"], migrated_state)
+        setup = {**setup, "validation_state": migrated_state}
     return await run_machine(db, setup, executors=executors, ws=ws)
 
 

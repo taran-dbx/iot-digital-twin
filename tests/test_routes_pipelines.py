@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from databricks.sdk.errors import NotFound
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -137,6 +138,33 @@ class TestLakebaseHealth:
         assert body["rows_5m"] == 0
         assert body["inserts_per_sec_recent"] == 0.0
         assert "connection reset" in body["error"]
+
+    @pytest.mark.asyncio
+    async def test_industry_health_requires_matching_deployment_c7266(self) -> None:
+        """[C7266][defect][security] Reject cross-industry Lakebase reads."""
+        state = _state_with_db(_mock_db_for_health())
+        app = _build_app_with_state(state)
+        transport = ASGITransport(app=app)
+        with patch(
+            "routes.pipelines._is_industry_deployment",
+            AsyncMock(return_value=False),
+        ), patch(
+            "routes.pipelines.get_industry_lakebase",
+            AsyncMock(),
+        ) as resolve_industry:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/pipelines/deployment-1/lakebase-health",
+                    params={"industry": "pharmaceutical"},
+                )
+
+        assert response.status_code == 404
+        assert response.json()["error"] == (
+            "Realtime industry deployment not found"
+        )
+        resolve_industry.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -420,11 +448,117 @@ def _make_delete_ws_mock() -> MagicMock:
     return ws
 
 
-class TestDeletePipelineUcTableDrop:
-    """DELETE /api/pipelines/:id drops the pipeline's CDF-enabled UC table(s)."""
+class TestDeletePipelineUcSafety:
+    """Regression coverage for destructive UC cleanup during pipeline delete."""
 
     @pytest.mark.asyncio
-    async def test_drops_raw_cdf_table_for_pipeline_catalog(self) -> None:
+    async def test_zerobus_delete_never_deletes_shared_schema_c7113_defect_regression(
+        self,
+    ) -> None:
+        db = _mock_db_for_delete(
+            _delete_pipeline_row(
+                resources={
+                    "uc_catalog": "classic_stable_realtime_demos_catalog",
+                    "uc_schema": "rtm_lakets_zb",
+                }
+            )
+        )
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        ws = _make_delete_ws_mock()
+
+        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.delete("/api/pipelines/pipe-del")
+
+        assert resp.status_code == 200, resp.text
+        ws.schemas.delete.assert_not_called()
+        ws.tables.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_table_ownership_metadata_fails_closed_c7113_defect_regression(
+        self,
+    ) -> None:
+        db = _mock_db_for_delete(
+            _delete_pipeline_row(
+                resources={
+                    "uc_catalog": "shared_catalog",
+                    "owned_uc_tables": [
+                        {"full_name": "shared_catalog.shared_schema.target_zerobus"}
+                    ],
+                }
+            )
+        )
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        ws = _make_delete_ws_mock()
+
+        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.delete("/api/pipelines/pipe-del")
+
+        assert resp.status_code == 200, resp.text
+        ws.tables.delete.assert_not_called()
+        assert any(
+            "ownership" in str(entry).lower()
+            for entry in resp.json()["cleanup_log"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_is_surfaced_without_false_success_c7113_defect_regression(
+        self,
+    ) -> None:
+        db = _mock_db_for_delete(
+            _delete_pipeline_row(resources={"job_id": "42"})
+        )
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        ws = _make_delete_ws_mock()
+        ws.jobs.delete.side_effect = RuntimeError("permission denied")
+
+        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.delete("/api/pipelines/pipe-del")
+
+        assert resp.status_code == 502, resp.text
+        assert resp.json()["deleted"] is False
+        assert "permission denied" in resp.text
+        status_updates = [
+            call
+            for call in db.execute.await_args_list
+            if "UPDATE pipelines SET status = 'deleted'" in call.args[0]
+        ]
+        assert status_updates == []
+
+    @pytest.mark.asyncio
+    async def test_missing_job_is_idempotent_and_pipeline_delete_completes(
+        self,
+    ) -> None:
+        db = _mock_db_for_delete(
+            _delete_pipeline_row(resources={"job_id": "42"})
+        )
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        ws = _make_delete_ws_mock()
+        ws.jobs.delete.side_effect = NotFound("job not found")
+
+        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.delete("/api/pipelines/pipe-del")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["deleted"] is True
+
+    @pytest.mark.asyncio
+    async def test_catalog_location_alone_does_not_authorize_table_delete(self) -> None:
         db = _mock_db_for_delete(
             _delete_pipeline_row(resources={"uc_catalog": "iot_factory_abc123"})
         )
@@ -441,25 +575,25 @@ class TestDeletePipelineUcTableDrop:
         body = resp.json()
         assert body["deleted"] is True
 
-        # The CDF/Delta target <catalog>.raw.iot_sensor_data is dropped via the SDK.
-        ws.tables.delete.assert_any_call(
-            full_name="iot_factory_abc123.raw.iot_sensor_data"
-        )
-        # And the cleanup log surfaces a structured "dropped" entry for it.
-        entries = [e for e in body["cleanup_log"] if isinstance(e, dict)]
-        raw_entry = next(
-            e for e in entries
-            if e.get("resource") == "UC table iot_factory_abc123.raw.iot_sensor_data"
-        )
-        assert raw_entry["status"] == "dropped"
+        ws.tables.delete.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_drops_tracked_cold_tier_table(self) -> None:
+    async def test_only_exactly_owned_table_is_deleted_and_sibling_is_preserved(
+        self,
+    ) -> None:
         db = _mock_db_for_delete(
             _delete_pipeline_row(
                 resources={
-                    "uc_catalog": "iot_factory_abc123",
-                    "cold_tier_table": "iot_factory_abc123.cold.sensor_history",
+                    "owned_uc_tables": [
+                        {
+                            "full_name": "shared.schema.target_zerobus",
+                            "pipeline_id": "pipe-del",
+                        },
+                        {
+                            "full_name": "shared.schema.sibling_zerobus",
+                            "pipeline_id": "pipe-sibling",
+                        },
+                    ],
                 }
             )
         )
@@ -474,8 +608,7 @@ class TestDeletePipelineUcTableDrop:
 
         assert resp.status_code == 200, resp.text
         called = {c.kwargs.get("full_name") for c in ws.tables.delete.call_args_list}
-        assert "iot_factory_abc123.raw.iot_sensor_data" in called
-        assert "iot_factory_abc123.cold.sensor_history" in called
+        assert called == {"shared.schema.target_zerobus"}
 
     @pytest.mark.asyncio
     async def test_cold_tier_table_outside_catalog_is_skipped(self) -> None:
@@ -501,15 +634,21 @@ class TestDeletePipelineUcTableDrop:
         assert resp.status_code == 200, resp.text
         called = {c.kwargs.get("full_name") for c in ws.tables.delete.call_args_list}
         assert "shared_prod.cold.sensor_history" not in called
-        # The pipeline's own raw table is still dropped.
-        assert "iot_factory_abc123.raw.iot_sensor_data" in called
+        assert "iot_factory_abc123.raw.iot_sensor_data" not in called
 
     @pytest.mark.asyncio
     async def test_not_found_table_is_treated_as_success(self) -> None:
-        from databricks.sdk.errors import NotFound
-
         db = _mock_db_for_delete(
-            _delete_pipeline_row(resources={"uc_catalog": "iot_factory_abc123"})
+            _delete_pipeline_row(
+                resources={
+                    "owned_uc_tables": [
+                        {
+                            "full_name": "iot_factory_abc123.raw.iot_sensor_data",
+                            "pipeline_id": "pipe-del",
+                        }
+                    ]
+                }
+            )
         )
         state = _state_with_db(db)
         app = _build_app_with_state(state)
@@ -532,9 +671,18 @@ class TestDeletePipelineUcTableDrop:
         assert raw_entry["status"] == "not_found"
 
     @pytest.mark.asyncio
-    async def test_drop_failure_is_non_fatal_and_surfaced(self) -> None:
+    async def test_drop_failure_is_fatal_and_surfaced(self) -> None:
         db = _mock_db_for_delete(
-            _delete_pipeline_row(resources={"uc_catalog": "iot_factory_abc123"})
+            _delete_pipeline_row(
+                resources={
+                    "owned_uc_tables": [
+                        {
+                            "full_name": "iot_factory_abc123.raw.iot_sensor_data",
+                            "pipeline_id": "pipe-del",
+                        }
+                    ]
+                }
+            )
         )
         state = _state_with_db(db)
         app = _build_app_with_state(state)
@@ -546,10 +694,9 @@ class TestDeletePipelineUcTableDrop:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 
-        # Endpoint still succeeds; the failure is reported, not raised.
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 502, resp.text
         body = resp.json()
-        assert body["deleted"] is True
+        assert body["deleted"] is False
         entries = [e for e in body["cleanup_log"] if isinstance(e, dict)]
         raw_entry = next(
             e for e in entries

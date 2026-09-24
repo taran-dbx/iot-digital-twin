@@ -49,6 +49,8 @@ class AppState:
     simulator_task: asyncio.Task | None = None
     refresh_task: asyncio.Task | None = None
     retention_task: asyncio.Task | None = None
+    industry_runtime_refresh_task: asyncio.Task | None = None
+    industry_runtime_refresh_tasks: set[asyncio.Task] = field(default_factory=set)
 
     # Shutdown coordination
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -61,6 +63,19 @@ class AppState:
 
     # Per-pipeline Lakebase connection pools (resolved from source_config)
     pipeline_dbs: dict[str, PipelineLakebaseHandle] = field(default_factory=dict)
+    pipeline_db_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+
+    # Stale-while-revalidate snapshot for the industry gallery. The live Jobs
+    # and freshness sweep is intentionally kept off the request critical path.
+    industry_runtime_cache: dict[str, Any] | None = None
+    industry_runtime_cached_at: float = 0.0
+    industry_runtime_cache_generation: int = 0
+    industry_runtime_refresh_generation: int = -1
+
+    def invalidate_industry_runtime_cache(self) -> None:
+        """Mark runtime state stale after a pipeline mutation."""
+        self.industry_runtime_cache_generation += 1
+        self.industry_runtime_cached_at = 0.0
 
     # Runtime-mutable config (set via /api/simulator/restart)
     industries: str = ""

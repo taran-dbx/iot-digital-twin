@@ -46,13 +46,14 @@ class TestModeStatus:
     def test_draft_when_not_deployed(self):
         assert pv.mode_status({"job_id": None}, True) == pv.STATUS_DRAFT
 
-    def test_running_only_when_deployed_running_and_flowing(self):
-        # RUNNING job + data flowing → running (the strict readiness gate).
+    def test_running_when_deployed_running_and_flowing_c7264(self):
+        """[C7264][regression] Running jobs retain their positive flow signal."""
+        # RUNNING job + data flowing → running, with freshness also reported.
         assert pv.mode_status(_deployed(), True, flowing=True) == pv.STATUS_RUNNING
 
-    def test_starting_when_running_but_not_flowing(self):
-        # RUNNING job but no fresh rows in the sink → still warming up.
-        assert pv.mode_status(_deployed(), True, flowing=False) == pv.STATUS_STARTING
+    def test_running_job_is_not_left_starting_by_freshness_c7264(self):
+        """[C7264][defect][regression] A healthy RUNNING job leaves starting."""
+        assert pv.mode_status(_deployed(), True, flowing=False) == pv.STATUS_RUNNING
 
     def test_starting_when_run_pending(self):
         # Coarse run life-cycle PENDING/STARTING → starting, regardless of flow.
@@ -73,16 +74,19 @@ class TestModeStatus:
         rt = {"running": True, "degraded": False, "detail": None}
         assert pv.mode_status(_deployed(), rt, flowing=True) == pv.STATUS_RUNNING
 
-    def test_starting_with_healthy_richer_runtime_not_flowing(self):
+    def test_running_with_healthy_richer_runtime_not_flowing_c7264(self):
+        """[C7264][regression] Rich RUNNING state ignores a stale sink probe."""
         rt = {"running": True, "degraded": False, "detail": None}
-        assert pv.mode_status(_deployed(), rt, flowing=False) == pv.STATUS_STARTING
+        assert pv.mode_status(_deployed(), rt, flowing=False) == pv.STATUS_RUNNING
 
     def test_build_mode_view_surfaces_runtime_detail_and_tasks(self):
         rt = {"running": True, "degraded": True, "detail": "data_producer: boom",
+              "restartable": True,
               "tasks": [{"task": "data_producer", "life_cycle": "INTERNAL_ERROR"}]}
         v = pv.build_mode_view(None, _deployed(), "microbatch", rt)
         assert v["status"] == pv.STATUS_DEGRADED
         assert v["runtime_detail"] == "data_producer: boom"
+        assert v["restartable"] is True
         assert v["tasks"] and v["tasks"][0]["task"] == "data_producer"
 
     def test_build_mode_view_carries_flowing_and_deployed(self):
@@ -104,8 +108,8 @@ class TestModeStatus:
                  {"status": pv.STATUS_DRAFT}]
         assert pv.rollup_status(views) == pv.STATUS_DEGRADED
 
-    def test_rollup_running_beats_starting(self):
-        views = [{"status": pv.STATUS_STARTING}, {"status": pv.STATUS_RUNNING}]
+    def test_rollup_running_with_undeployed_modes_is_running(self):
+        views = [{"status": pv.STATUS_DRAFT}, {"status": pv.STATUS_RUNNING}]
         assert pv.rollup_status(views) == pv.STATUS_RUNNING
 
     def test_rollup_starting_beats_stopped_and_draft(self):
@@ -203,7 +207,8 @@ class TestBuildPipelineView:
         assert view["health"] == pv.HEALTH_UNHEALTHY
         assert view["startable"] is False
 
-    def test_running_reported_only_when_jobs_api_running_and_flowing(self):
+    def test_running_job_preserves_flowing_signal_c7264(self):
+        """[C7264][regression] Lifecycle and sink freshness stay independent."""
         setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
                  "validation_state": _all_passed_state("microbatch")}
         deployments = [_deployed("microbatch")]
@@ -215,14 +220,58 @@ class TestBuildPipelineView:
         assert view["startable"] is True
         assert view["modes"][0]["flowing"] is True
 
-    def test_running_job_without_flow_is_starting(self):
-        # Deployed + RUNNING but no fresh data yet → the pipeline is warming up.
+    def test_failed_task_makes_valid_pipeline_unhealthy_c7258(self):
+        """[C7258][defect][regression] Runtime task failures gate health."""
+        setup = {
+            "id": "s1",
+            "industry": "pharma",
+            "enabled_modes": ["microbatch"],
+            "validation_state": _all_passed_state("microbatch"),
+        }
+        runtime = {
+            "123": {
+                "running": False,
+                "degraded": False,
+                "restartable": True,
+                "detail": "data_producer: Driver stopped unexpectedly",
+            }
+        }
+
+        view = pv.build_pipeline_view(setup, [_deployed("microbatch")], runtime)
+
+        assert view["status"] == pv.STATUS_STOPPED
+        assert view["health"] == pv.HEALTH_UNHEALTHY
+        assert view["modes"][0]["restartable"] is True
+
+    def test_undeployed_mode_does_not_degrade_running_mode(self):
+        setup = {
+            "id": "s1",
+            "industry": "pharma",
+            "enabled_modes": ["microbatch", "zerobus"],
+            "validation_state": _all_passed_state("microbatch"),
+        }
+        deployments = [_deployed("microbatch")]
+        view = pv.build_pipeline_view(
+            setup,
+            deployments,
+            {"123": True},
+            {"microbatch": True},
+        )
+        assert view["status"] == pv.STATUS_RUNNING
+        assert view["health"] == pv.HEALTH_HEALTHY
+        assert view["startable"] is True
+        assert view["validation_passed"] is False
+
+    def test_running_job_without_flow_reports_freshness_separately_c7264(self):
+        """[C7264][defect][regression] Missing freshness does not block RUNNING."""
+        # Job lifecycle settles at RUNNING while sink freshness stays observable.
         setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
                  "validation_state": _all_passed_state("microbatch")}
         deployments = [_deployed("microbatch")]
         view = pv.build_pipeline_view(setup, deployments, {"123": True}, {})
-        assert view["status"] == pv.STATUS_STARTING
-        assert view["modes"][0]["status"] == pv.STATUS_STARTING
+        assert view["status"] == pv.STATUS_RUNNING
+        assert view["modes"][0]["status"] == pv.STATUS_RUNNING
+        assert view["modes"][0]["health"] == pv.HEALTH_HEALTHY
         assert view["modes"][0]["flowing"] is False
 
     def test_pending_run_is_starting(self):
@@ -232,14 +281,16 @@ class TestBuildPipelineView:
         job = {"123": {"running": False, "starting": True, "degraded": False}}
         view = pv.build_pipeline_view(setup, deployments, job, {})
         assert view["status"] == pv.STATUS_STARTING
+        assert view["health"] == pv.HEALTH_HEALTHY
 
-    def test_mode_union_orders_by_mode_order(self):
+    def test_only_selected_modes_contribute_to_pipeline_health(self):
         setup = {"id": "s1", "industry": "x", "enabled_modes": ["zerobus"]}
         deployments = [{"mode": "realtime", "status": "deployed", "job_id": "9"}]
         view = pv.build_pipeline_view(setup, deployments, {})
-        assert [m["mode"] for m in view["modes"]] == ["realtime", "zerobus"]
+        assert [m["mode"] for m in view["modes"]] == ["zerobus"]
+        assert view["health"] == pv.HEALTH_DRAFT
 
-    def test_rollup_status_prefers_running_then_stopped(self):
+    def test_rollup_status_reports_any_healthy_running_mode(self):
         assert pv.rollup_status(
             [{"status": "stopped"}, {"status": "running"}]
         ) == pv.STATUS_RUNNING
@@ -254,6 +305,9 @@ class TestBuildPipelineView:
         ) == pv.HEALTH_UNHEALTHY
         assert pv.rollup_health([{"health": "healthy"}]) == pv.HEALTH_HEALTHY
         assert pv.rollup_health([{"health": "draft"}]) == pv.HEALTH_DRAFT
+        assert pv.rollup_health(
+            [{"health": "healthy"}, {"health": "draft"}]
+        ) == pv.HEALTH_HEALTHY
 
 
 class TestRollupApiHealth:

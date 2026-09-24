@@ -99,6 +99,18 @@ async def test_pipeline_setup_industry_unique(app_backend_conn) -> None:
     assert await _has_unique(app_backend_conn, "pipeline_setup", {"industry"})
 
 
+async def test_pipeline_setup_has_per_mode_config_column(app_backend_conn) -> None:
+    await app_schema.ensure_app_schema(app_backend_conn)
+    schema = await _current_schema(app_backend_conn)
+    data_type = await app_backend_conn.fetchval(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_schema = $1 AND table_name = 'pipeline_setup' "
+        "AND column_name = 'mode_configs'",
+        schema,
+    )
+    assert data_type == "jsonb"
+
+
 async def test_deployment_fk_cascade_and_unique(app_backend_conn) -> None:
     await app_schema.ensure_app_schema(app_backend_conn)
     assert await _fk_delete_rule(

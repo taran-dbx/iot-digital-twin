@@ -6,12 +6,11 @@ delete → mark each ledger row ``deleted`` → finally delete the ``pipeline_se
 row, whose ``ON DELETE CASCADE`` FKs remove the ``pipeline_deployment`` and
 ``provisioned_resource`` metadata.  Result: nothing orphaned.
 
-The concrete cloud-resource deleters (UC drop, Kafka topic delete, Lakebase
-branch/endpoint delete, job delete, …) are provided as an injected registry so
-they are mockable in tests and can be filled in by later phases.  A resource
-whose type has no registered deleter is recorded as ``skipped`` (e.g. the Kafka
-topic-delete permission gap noted in spec §1.8) rather than failing the whole
-teardown.
+The concrete cloud-resource deleters (deployment-owned UC table, Lakebase
+branch/endpoint, job, …) are provided as an injected registry so they are
+mockable in tests. Catalogs and schemas are always preserved. A resource whose
+type has no registered deleter is recorded as ``skipped`` rather than failing
+the whole teardown.
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ logger = logging.getLogger("iot_digital_twin.services.teardown")
 
 # A deleter takes the ledger row (dict) and performs the real delete.
 Deleter = Callable[[dict], Awaitable[Any]]
+_SHARED_UC_NAMESPACES = frozenset({"uc_catalog", "uc_schema"})
 
 # No concrete deleters yet — Phase 2+ registers UC / MSK / Lakebase / job
 # deleters here.  Until then every type is ``skipped`` (recorded, not failed).
@@ -51,6 +51,23 @@ def _is_shared(res: dict) -> bool:
     deletes the resource other industries still depend on.
     """
     return bool((res.get("metadata") or {}).get("shared"))
+
+
+def _ownership_skip_reason(res: dict, setup_id: Any) -> str | None:
+    """Return why a ledger resource cannot be safely deleted, if any.
+
+    Catalogs and schemas are namespace containers shared by pipeline modes and
+    deployments, so a single-setup teardown never owns them.  Every other row
+    must belong to the requested setup. A matching normalized resource row is
+    sufficient ownership proof even when it is setup-scoped rather than tied to
+    one mode deployment (for example, industry tables and LakeTS ops jobs).
+    """
+    resource_type = res.get("resource_type")
+    if resource_type in _SHARED_UC_NAMESPACES:
+        return "shared UC namespace — catalog/schema cleanup is never pipeline-scoped"
+    if str(res.get("setup_id") or "") != str(setup_id):
+        return "resource ownership does not match the requested setup"
+    return None
 
 
 async def teardown_setup(
@@ -94,7 +111,17 @@ async def teardown_setup(
             "identifier": identifier,
         }
 
-        if _is_shared(res):
+        ownership_skip = _ownership_skip_reason(res, setup_id)
+        if ownership_skip:
+            step["action"] = "skipped"
+            step["reason"] = ownership_skip
+            logger.warning(
+                "teardown: preserving %s '%s': %s",
+                rtype,
+                identifier,
+                ownership_skip,
+            )
+        elif _is_shared(res):
             step["action"] = "skipped"
             step["reason"] = "shared resource — not torn down per-industry"
             logger.info("teardown: shared %s '%s' — skipping", rtype, identifier)
@@ -107,7 +134,8 @@ async def teardown_setup(
             )
         else:
             try:
-                await deleter(res)
+                owned_res = {**res, "_ownership_verified": True}
+                await deleter(owned_res)
                 step["action"] = "deleted"
             except SkipResource as skip:  # intentional skip, not a failure
                 step["action"] = "skipped"

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.app_repo_common import DBExecutor, build_insert, row_to_dict
+from services.app_repo_common import DBExecutor, build_insert, build_update, row_to_dict
 
 TABLE = "provisioned_resource"
 JSON_FIELDS = ("metadata",)
@@ -75,6 +75,23 @@ async def record_resource(
 async def get_resource(db: DBExecutor, resource_id: Any) -> dict | None:
     """Return a single ledger row by id, or None."""
     row = await db.fetchrow(f"SELECT * FROM {TABLE} WHERE id = $1", resource_id)
+    return _to_dict(row)
+
+
+async def update_resource(
+    db: DBExecutor, resource_id: Any, **fields: Any
+) -> dict | None:
+    """Refresh mutable binding metadata on an existing ledger row."""
+    if not fields:
+        return await get_resource(db, resource_id)
+    query, args = build_update(
+        TABLE,
+        resource_id,
+        fields,
+        JSON_FIELDS,
+        touch_updated_at=False,
+    )
+    row = await db.fetchrow(query, *args)
     return _to_dict(row)
 
 
