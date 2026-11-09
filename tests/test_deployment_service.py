@@ -9,12 +9,15 @@ integration test.
 
 from __future__ import annotations
 
+import base64
 import os
+import inspect
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
 from services import deployment_service as ds
+from services.production_control import PRODUCTION_CONTROL_TOKEN
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +353,14 @@ class TestSparkTasks:
         )
         assert [t.task_key for t in tasks] == ["rtm_consumer"]
 
+    def test_pipeline_tasks_have_job_level_retry_safety_net(self):
+        """[C7234][defect][regression] Pipeline tasks restart after sink failure."""
+        source = inspect.getsource(ds.build_spark_tasks)
+
+        assert source.count("max_retries=3") == 2
+        assert source.count("min_retry_interval_millis=30_000") == 2
+        assert source.count("retry_on_timeout=True") == 2
+
 
 # ---------------------------------------------------------------------------
 # deploy_pipeline — gate + creation + ledger + deployment update
@@ -400,6 +411,27 @@ class TestDeployPipeline:
         calls = [c.args[0].lower() for c in db.fetchrow.call_args_list]
         assert any("insert into provisioned_resource" in c for c in calls)
         assert any("update pipeline_deployment" in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_producer_gets_its_production_control_path_c7437_regression(self):
+        """[C7437][regression] The producer polls the control file beside its own notebook."""
+        setup = {**BASE_SETUP, "validation_state": _all_passed("realtime")}
+        db = _db(setup, {"id": "dep-rt", "mode": "realtime", "partition_count": 6})
+        w = _ws()
+
+        await ds.deploy_pipeline(
+            db,
+            "setup-1",
+            "realtime",
+            consumer_notebook="# consumer",
+            producer_notebook=f'PRODUCTION_CONTROL_FILE = "{PRODUCTION_CONTROL_TOKEN}"',
+            w=w,
+        )
+
+        producer = w.workspace.import_.call_args_list[1].kwargs
+        source = base64.b64decode(producer["content"]).decode()
+        folder = producer["path"].rsplit("/", 1)[0]
+        assert source == f'PRODUCTION_CONTROL_FILE = "{folder}/production_control/pharmaceutical.json"'
 
     @pytest.mark.asyncio
     async def test_fully_green_microbatch_deploys_without_override(self):

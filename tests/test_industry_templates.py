@@ -23,22 +23,69 @@ def test_get_template_pharma_has_kpis_and_twin():
     assert "reactor" in " ".join(k["k"].lower() for k in t.kpis)
 
 
-def test_manufacturing_business_kpis_have_stable_fallbacks():
-    """[C7230][defect][regression] Manufacturing KPIs retain startup fallbacks."""
+def test_manufacturing_kpis_have_no_invented_values_c7230_defect():
+    """[C7230][defect][regression] Manufacturing KPIs show "—" until live data arrives."""
     template = get_template("manufacturing")
 
     assert template is not None
-    assert template.kpis == [
-        {"k": "Production", "v": "1,204", "u": "units/hr"},
-        {"k": "OEE", "v": "87.3", "u": "%"},
-        {"k": "Utilization", "v": "72", "u": "%"},
-        {"k": "Temperature", "v": "64", "u": "°C", "s": "warn"},
-        {"k": "Active alerts", "v": "2", "u": "", "s": "crit"},
+    assert [k["k"] for k in template.kpis] == [
+        "Spindle 3 temperature",
+        "Operating limit",
+        "Spindle 3 status",
+        "Open alerts",
+        "Last device event",
     ]
+    assert all(k["v"] == "—" for k in template.kpis)
+    assert not any(k["k"] in {"Production", "OEE", "Utilization"} for k in template.kpis)
 
 
 def test_get_template_unknown_returns_none():
     assert get_template("banking") is None
+
+
+def test_templates_use_real_simulator_sensor_names_c7313_regression():
+    """[C7313][regression] Curated templates list real simulator sensor names."""
+    expected = {
+        "manufacturing": {
+            "cnc_1_spindle_speed",
+            "assy_line_1_speed",
+            "cnc_1_vibration",
+            "cnc_1_coolant_temp",
+            "press_1_pressure",
+            "compressor_1_pressure",
+        },
+        "pharmaceutical": {
+            "bioreactor_1_temp",
+            "bioreactor_1_ph",
+            "bioreactor_1_dissolved_oxygen",
+            "cleanroom_1_pressure",
+            "tablet_weight",
+            "autoclave_chamber_temp",
+        },
+        "energy": {
+            "gt_1_power_output",
+            "gen_1_frequency",
+            "transformer_1_load",
+            "gen_1_voltage",
+            "st_1_power_output",
+            "gen_1_bearing_temp",
+        },
+        "automotive": {
+            "robot_1_weld_current",
+            "torque_wrench_1_torque",
+            "paint_booth_humidity",
+            "paint_booth_temp",
+            "assembly_line_speed",
+            "agv_1_battery_level",
+        },
+    }
+    for industry, names in expected.items():
+        template = get_template(industry)
+        assert template is not None
+        assert names <= set(template.sensors)
+        for sensor in template.sensors:
+            assert " " not in sensor
+            assert "·" not in sensor
 
 
 def test_mode_config_flags():

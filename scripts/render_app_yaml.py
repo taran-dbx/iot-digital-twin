@@ -52,6 +52,15 @@ def _env_entry(name: str, value: str) -> str:
     return f"  - name: {name}\n    value: {_yaml_value(value)}"
 
 
+def _env_from_resource(name: str, resource_key: str) -> str:
+    """Bind an env var from a Databricks App resource; never a hardcoded id.
+
+    Genie uses resource key ``genie-space`` (permission CAN_VIEW) so
+    ``GENIE_SPACE_ID`` is injected by the Apps runtime.
+    """
+    return f"  - name: {name}\n    valueFrom: {resource_key}"
+
+
 def load_profile(name: str, profiles_dir: Path = DEFAULT_PROFILES_DIR) -> dict[str, str]:
     path = profiles_dir / f"{name}.profile"
     if not path.is_file():
@@ -109,6 +118,9 @@ def render_app_yaml(profile: dict[str, str]) -> str:
         _env_entry("ADMIN_GROUP", profile["ADMIN_GROUP"]),
         _env_entry("ADMIN_EMAILS", profile["ADMIN_EMAILS"]),
         _env_entry("LAKETS_SQL_PATH", profile["LAKETS_SQL_PATH"]),
+        # Injected by the Apps runtime from the genie-space resource (CAN_VIEW).
+        # Never hardcode a Genie space id in profiles or source.
+        _env_from_resource("GENIE_SPACE_ID", "genie-space"),
     ]
 
     body = "\n\n".join(env_blocks)

@@ -37,6 +37,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 import json
 import os
+import time
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
@@ -62,35 +63,83 @@ endpoint = w.postgres.get_endpoint(name=primary)
 cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
-conn = psycopg2.connect(
-    host=endpoint.status.hosts.host,
-    port=5432,
-    dbname=database,
-    user=pg_user,
-    password=cred.token,
-    sslmode="require",
-)
+MAX_CONNECT_ATTEMPTS = 12
+BACKOFF_BASE_S = 1.0
+BACKOFF_MAX_S = 30.0
+
+def connect_once():
+    return psycopg2.connect(
+        host=endpoint.status.hosts.host,
+        port=5432,
+        dbname=database,
+        user=pg_user,
+        password=cred.token,
+        sslmode="require",
+    )
+
+def connect_with_backoff():
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            return connect_once()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres connect attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
+conn = connect_with_backoff()
 conn.autocommit = True
 
+def run_with_backoff(sql, params=None, fetch=None):
+    global conn
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            if conn is None or getattr(conn, "closed", False):
+                conn = connect_once()
+                conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                if fetch == "all":
+                    return cur.fetchall()
+                if fetch == "one":
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                return None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres operation attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
 results: dict = {}
-with conn.cursor() as cur:
-    cur.execute(
-        "SELECT DISTINCT c.schema_name, c.table_name "
-        "FROM lakets._policy_registry p "
-        "JOIN lakets._chronotable_registry c ON p.chronotable_id = c.id "
-        "WHERE p.policy_type IN ('retention', 'tiered_retention') "
-        "  AND p.enabled = TRUE"
-    )
-    tables = cur.fetchall()
+tables = run_with_backoff(
+    "SELECT DISTINCT c.schema_name, c.table_name "
+    "FROM lakets._policy_registry p "
+    "JOIN lakets._chronotable_registry c ON p.chronotable_id = c.id "
+    "WHERE p.policy_type IN ('retention', 'tiered_retention') "
+    "  AND p.enabled = TRUE",
+    fetch="all",
+)
 
 for schema, table in tables:
     key = f"{schema}.{table}"
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT lakets.execute_retention(%s, %s)", (table, schema))
-            dropped = cur.fetchone()[0]
+        dropped = run_with_backoff(
+            "SELECT lakets.execute_retention(%s, %s)",
+            (table, schema),
+            fetch="one",
+        )
         results[key] = dropped
         print(f"Retention on {key}: dropped {dropped} chunk(s)")
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        raise
     except Exception as exc:
         results[key] = f"error: {exc}"
         print(f"Retention on {key} FAILED: {exc}")
@@ -129,6 +178,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 import json
 import os
+import time
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
@@ -154,37 +204,81 @@ endpoint = w.postgres.get_endpoint(name=primary)
 cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
-conn = psycopg2.connect(
-    host=endpoint.status.hosts.host,
-    port=5432,
-    dbname=database,
-    user=pg_user,
-    password=cred.token,
-    sslmode="require",
-)
+MAX_CONNECT_ATTEMPTS = 12
+BACKOFF_BASE_S = 1.0
+BACKOFF_MAX_S = 30.0
+
+def connect_once():
+    return psycopg2.connect(
+        host=endpoint.status.hosts.host,
+        port=5432,
+        dbname=database,
+        user=pg_user,
+        password=cred.token,
+        sslmode="require",
+    )
+
+def connect_with_backoff():
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            return connect_once()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres connect attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
+conn = connect_with_backoff()
 conn.autocommit = True
 
+def run_with_backoff(sql, params=None, fetch=None):
+    global conn
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            if conn is None or getattr(conn, "closed", False):
+                conn = connect_once()
+                conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                if fetch == "all":
+                    return cur.fetchall()
+                if fetch == "one":
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                return None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres operation attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
 results: dict = {}
-with conn.cursor() as cur:
-    cur.execute(
-        "SELECT id, schema_name, table_name FROM lakets._chronotable_registry"
-    )
-    tables = cur.fetchall()
+tables = run_with_backoff(
+    "SELECT id, schema_name, table_name FROM lakets._chronotable_registry",
+    fetch="all",
+)
 
 for table_id, schema, table in tables:
     key = f"{schema}.{table}"
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                # 192 * 15-min chunks = 48h forward window, so coverage never
-                # lapses between (daily) runs and fresh rows always land in an
-                # existing partition (avoids CheckViolation "no partition found").
-                "SELECT lakets._ensure_partitions(%s, p_future_count := 192)",
-                (table_id,),
-            )
-            created = cur.fetchone()[0]
+        # 192 * 15-min chunks = 48h forward window, so coverage never lapses
+        # between runs and fresh rows always land in an existing partition.
+        created = run_with_backoff(
+            "SELECT lakets._ensure_partitions(%s, p_future_count := 192)",
+            (table_id,),
+            fetch="one",
+        )
         results[key] = created
         print(f"Partitions ensured on {key}: {created}")
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        raise
     except Exception as exc:
         results[key] = f"error: {exc}"
         print(f"Partition manager on {key} FAILED: {exc}")
@@ -218,6 +312,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 import json
 import os
+import time
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
@@ -243,30 +338,78 @@ endpoint = w.postgres.get_endpoint(name=primary)
 cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
-conn = psycopg2.connect(
-    host=endpoint.status.hosts.host,
-    port=5432,
-    dbname=database,
-    user=pg_user,
-    password=cred.token,
-    sslmode="require",
-)
+MAX_CONNECT_ATTEMPTS = 12
+BACKOFF_BASE_S = 1.0
+BACKOFF_MAX_S = 30.0
+
+def connect_once():
+    return psycopg2.connect(
+        host=endpoint.status.hosts.host,
+        port=5432,
+        dbname=database,
+        user=pg_user,
+        password=cred.token,
+        sslmode="require",
+    )
+
+def connect_with_backoff():
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            return connect_once()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres connect attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
+conn = connect_with_backoff()
 conn.autocommit = True
+
+def run_with_backoff(sql, params=None, fetch=None):
+    global conn
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            if conn is None or getattr(conn, "closed", False):
+                conn = connect_once()
+                conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                if fetch == "all":
+                    return cur.fetchall()
+                if fetch == "one":
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                return None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres operation attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
 
 result: dict = {}
 try:
-    with conn.cursor() as cur:
-        cur.execute("SELECT lakets.refresh_rollup_cascade()")
-        row = cur.fetchone()
-        result["refresh_rollup_cascade"] = row[0] if row else None
+    result["refresh_rollup_cascade"] = run_with_backoff(
+        "SELECT lakets.refresh_rollup_cascade()",
+        fetch="one",
+    )
     result["status"] = "ok"
     print(f"Rollup cascade refreshed: {result['refresh_rollup_cascade']}")
+except (psycopg2.OperationalError, psycopg2.InterfaceError):
+    raise
 except Exception as exc:
     result["status"] = "error"
     result["error"] = str(exc)
     print(f"Rollup refresh FAILED: {exc}")
 finally:
-    conn.close()
+    if conn is not None:
+        conn.close()
 
 print("\\n==== Summary ====")
 print(json.dumps(result, indent=2, default=str))
@@ -301,6 +444,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 import json
 import os
+import time
 import psycopg2
 
 dbutils.widgets.text("project_id", "", "Lakebase project")
@@ -326,25 +470,69 @@ endpoint = w.postgres.get_endpoint(name=primary)
 cred = w.postgres.generate_database_credential(endpoint=primary)
 pg_user = os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
 
-conn = psycopg2.connect(
-    host=endpoint.status.hosts.host,
-    port=5432,
-    dbname=database,
-    user=pg_user,
-    password=cred.token,
-    sslmode="require",
-)
+MAX_CONNECT_ATTEMPTS = 12
+BACKOFF_BASE_S = 1.0
+BACKOFF_MAX_S = 30.0
+
+def connect_once():
+    return psycopg2.connect(
+        host=endpoint.status.hosts.host,
+        port=5432,
+        dbname=database,
+        user=pg_user,
+        password=cred.token,
+        sslmode="require",
+    )
+
+def connect_with_backoff():
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            return connect_once()
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres connect attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
+conn = connect_with_backoff()
 conn.autocommit = True
 
+def run_with_backoff(sql, params=None, fetch=None):
+    global conn
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            if conn is None or getattr(conn, "closed", False):
+                conn = connect_once()
+                conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                if fetch == "all":
+                    return cur.fetchall()
+                if fetch == "one":
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                return None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+            if attempt == MAX_CONNECT_ATTEMPTS:
+                raise
+            delay = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_MAX_S)
+            print(f"Postgres operation attempt {attempt} failed: {exc}; retrying in {delay:.1f}s")
+            time.sleep(delay)
+
 # Tables with an enabled tiering policy.
-with conn.cursor() as cur:
-    cur.execute(
-        "SELECT DISTINCT c.schema_name, c.table_name "
-        "FROM lakets._policy_registry p "
-        "JOIN lakets._chronotable_registry c ON p.chronotable_id = c.id "
-        "WHERE p.policy_type = 'tiering' AND p.enabled = TRUE"
-    )
-    tables = cur.fetchall()
+tables = run_with_backoff(
+    "SELECT DISTINCT c.schema_name, c.table_name "
+    "FROM lakets._policy_registry p "
+    "JOIN lakets._chronotable_registry c ON p.chronotable_id = c.id "
+    "WHERE p.policy_type = 'tiering' AND p.enabled = TRUE",
+    fetch="all",
+)
 
 results: dict = {}
 for schema, table in tables:
@@ -353,23 +541,29 @@ for schema, table in tables:
     deferred = 0
     errors: list = []
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT chunk_name FROM lakets._get_chunks_to_tier(%s, %s)",
-                (table, schema),
-            )
-            chunk_names = [r[0] for r in cur.fetchall()]
+        rows = run_with_backoff(
+            "SELECT chunk_name FROM lakets._get_chunks_to_tier(%s, %s)",
+            (table, schema),
+            fetch="all",
+        )
+        chunk_names = [row[0] for row in rows]
         for chunk_name in chunk_names:
             try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT lakets.tier_chunk(%s)", (chunk_name,))
-                    flagged = cur.fetchone()[0]
+                flagged = run_with_backoff(
+                    "SELECT lakets.tier_chunk(%s)",
+                    (chunk_name,),
+                    fetch="one",
+                )
                 if flagged:
                     tiered += 1
                 else:
                     deferred += 1
+            except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                raise
             except Exception as exc:
                 errors.append(f"{chunk_name}: {exc}")
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        raise
     except Exception as exc:
         errors.append(f"{key}: {exc}")
 
@@ -485,6 +679,9 @@ def deploy_retention_job(
         ),
         environment_key=env_key,
         timeout_seconds=600,
+        max_retries=3,
+        min_retry_interval_millis=30_000,
+        retry_on_timeout=True,
     )
 
     job_settings = dj.JobSettings(
@@ -623,6 +820,9 @@ def _deploy_ops_job(
         ),
         environment_key=env_key,
         timeout_seconds=600,
+        max_retries=3,
+        min_retry_interval_millis=30_000,
+        retry_on_timeout=True,
     )
 
     job_settings = dj.JobSettings(

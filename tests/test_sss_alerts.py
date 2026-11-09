@@ -108,6 +108,7 @@ class TestSssAlertsIngest:
                     "pipeline_id": "pipe-1",
                     "sensor_id": "temp-01",
                     "sensor_type": "temperature",
+                    "industry": "manufacturing",
                     "value": 120.5,
                     "threshold_min": 0,
                     "threshold_max": 100,
@@ -130,6 +131,7 @@ class TestSssAlertsIngest:
                     "pipeline_id": "pipe-1",
                     "sensor_id": "temp-01",
                     "sensor_type": "temperature",
+                    "industry": "manufacturing",
                     "value": 120.5,
                     "threshold_min": 0,
                     "threshold_max": 100,
@@ -141,7 +143,7 @@ class TestSssAlertsIngest:
         assert not queue.empty()
 
     @pytest.mark.asyncio
-    async def test_event_type_is_threshold_alert(
+    async def test_event_type_is_alert_opened(
         self, alerts_client: tuple
     ) -> None:
         client, queue = alerts_client
@@ -151,6 +153,7 @@ class TestSssAlertsIngest:
                     "pipeline_id": "pipe-1",
                     "sensor_id": "temp-01",
                     "sensor_type": "temperature",
+                    "industry": "manufacturing",
                     "value": 120.5,
                     "threshold_min": 0,
                     "threshold_max": 100,
@@ -160,7 +163,7 @@ class TestSssAlertsIngest:
         }
         await client.post("/api/sss/alerts", json=payload)
         event = queue.get_nowait()
-        assert event["type"] == "threshold_alert"
+        assert event["type"] == "alert_opened"
 
     @pytest.mark.asyncio
     async def test_event_fields_match_alert_payload(
@@ -171,6 +174,7 @@ class TestSssAlertsIngest:
             "pipeline_id": "pipe-1",
             "sensor_id": "temp-01",
             "sensor_type": "temperature",
+            "industry": "manufacturing",
             "value": 120.5,
             "threshold_min": 0.0,
             "threshold_max": 100.0,
@@ -193,7 +197,8 @@ class TestSssAlertsIngest:
         client, queue = alerts_client
         alerts = [
             {"pipeline_id": f"pipe-{i}", "sensor_id": f"s-{i}",
-             "sensor_type": "temperature", "value": float(i),
+             "sensor_type": "temperature", "industry": "manufacturing",
+             "value": float(i),
              "threshold_min": None, "threshold_max": None,
              "timestamp": "2026-04-05T10:00:00Z"}
             for i in range(3)
@@ -211,6 +216,7 @@ class TestSssAlertsIngest:
                     "pipeline_id": "pipe-1",
                     "sensor_id": "temp-01",
                     "sensor_type": "temperature",
+                    "industry": "manufacturing",
                     "value": 42.0,
                     "threshold_min": None,
                     "threshold_max": None,
@@ -228,8 +234,62 @@ class TestSssAlertsIngest:
     ) -> None:
         """Alerts with missing fields should not raise — None values are acceptable."""
         client, queue = alerts_client
-        resp = await client.post("/api/sss/alerts", json={"alerts": [{}]})
+        resp = await client.post(
+            "/api/sss/alerts",
+            json={"alerts": [{"industry": "manufacturing"}]},
+        )
         assert resp.status_code == 200
         event = queue.get_nowait()
-        assert event["type"] == "threshold_alert"
-        assert event["sensor_id"] is None
+        assert event["type"] == "alert_opened"
+        assert event["sensor_id"] in (None, "")
+
+    @pytest.mark.asyncio
+    async def test_missing_industry_is_not_broadcast_c7410_defect(
+        self, alerts_client: tuple
+    ) -> None:
+        """[C7410][defect] Legacy SSS alerts without industry are rejected, not global."""
+        client, queue = alerts_client
+        resp = await client.post(
+            "/api/sss/alerts",
+            json={
+                "alerts": [
+                    {
+                        "pipeline_id": "pipe-1",
+                        "sensor_id": "temp-01",
+                        "value": 120.5,
+                        "threshold_max": 100,
+                    }
+                ]
+            },
+        )
+        assert resp.status_code in {200, 400, 422}
+        assert queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_transitions_mark_snapshot_dirty_c7410_regression(self) -> None:
+        """[C7410][regression] SSS lifecycle transitions dirty the alert snapshot."""
+        from httpx import ASGITransport, AsyncClient
+        from services.alert_snapshot_sync import AlertSnapshotSynchronizer
+
+        state = AppState()
+        syncer = AlertSnapshotSynchronizer(state)
+        syncer.enabled = True
+        state.alert_snapshot_synchronizer = syncer
+        app = _build_alerts_app(state)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/api/sss/alerts",
+                json={
+                    "alerts": [
+                        {
+                            "pipeline_id": "pipe-1",
+                            "sensor_id": "temp-01",
+                            "industry": "manufacturing",
+                            "value": 120.5,
+                            "threshold_max": 100,
+                        }
+                    ]
+                },
+            )
+        assert syncer.dirty is True

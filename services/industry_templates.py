@@ -52,23 +52,23 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
             "throughput, spindle load, OEE and fault detection across the "
             "floor."
         ),
+        # Real simulator sensor names (SSE / twin overlay keys).
         sensors=[
-            "Station 3 · spindle",
-            "Conveyor speed",
-            "Motor vibration",
-            "Coolant temp",
-            "Torque",
-            "Air pressure",
+            "cnc_1_spindle_speed",
+            "assy_line_1_speed",
+            "cnc_1_vibration",
+            "cnc_1_coolant_temp",
+            "press_1_pressure",
+            "compressor_1_pressure",
         ],
-        # These labels are a frontend contract with
-        # `manufacturingBusinessKpiKeys` in the vendored dashboard bundle.
-        # Values are stable placeholders until matching SSE readings arrive.
+        # Every tile is backed by a live reading or the alert rail; "—" until
+        # the first SSE event arrives. No derived production metrics.
         kpis=[
-            {"k": "Production", "v": "1,204", "u": "units/hr"},
-            {"k": "OEE", "v": "87.3", "u": "%"},
-            {"k": "Utilization", "v": "72", "u": "%"},
-            {"k": "Temperature", "v": "64", "u": "°C", "s": "warn"},
-            {"k": "Active alerts", "v": "2", "u": "", "s": "crit"},
+            {"k": "Spindle 3 temperature", "v": "—", "u": "°C"},
+            {"k": "Operating limit", "v": "—", "u": "°C"},
+            {"k": "Spindle 3 status", "v": "—", "u": ""},
+            {"k": "Open alerts", "v": "—", "u": ""},
+            {"k": "Last device event", "v": "—", "u": ""},
         ],
         default_hz=40,
     ),
@@ -119,13 +119,15 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
             "Grid and generation health — turbine output, frequency "
             "stability, transformer load and demand across substations."
         ),
+        # Real simulator sensor names for the electric_power industry
+        # (curated id remains ``energy`` on persisted records).
         sensors=[
-            "Turbine 1 · output",
-            "Grid frequency",
-            "Xfmr T4 load",
-            "Voltage L1",
-            "Reactive power",
-            "Bearing temp",
+            "gt_1_power_output",
+            "gen_1_frequency",
+            "transformer_1_load",
+            "gen_1_voltage",
+            "st_1_power_output",
+            "gen_1_bearing_temp",
         ],
         kpis=[
             {"k": "Grid output", "v": "842", "u": "MW"},
@@ -149,12 +151,12 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
             "vehicle."
         ),
         sensors=[
-            "Weld cell · current",
-            "Torque station 7",
-            "Paint booth RH",
-            "Booth temp",
-            "Conveyor index",
-            "Battery test V",
+            "robot_1_weld_current",
+            "torque_wrench_1_torque",
+            "paint_booth_humidity",
+            "paint_booth_temp",
+            "assembly_line_speed",
+            "agv_1_battery_level",
         ],
         kpis=[
             {"k": "Vehicles/hr", "v": "58", "u": ""},

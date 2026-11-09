@@ -27,6 +27,8 @@ from routes.industries_admin import (
 )
 from routes.validation_admin import router as validation_admin_router
 from routes.static_files import router as static_files_router
+from services.alert_snapshot_sync import start_alert_snapshot_sync
+from services.deployment_service import RuntimeOAuthCredentialError, sync_runtime_oauth_secret
 from services.simulator_service import run_simulator
 
 logging.basicConfig(
@@ -34,6 +36,20 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("iot_digital_twin")
+
+
+async def publish_runtime_oauth_secret() -> None:
+    """Copy the app SP secret into the UC secret that streaming jobs read.
+
+    A secret rotation restarts the app; running consumers wait for this copy.
+    """
+    try:
+        result = await sync_runtime_oauth_secret()
+        logger.info("App SP OAuth secret published to the UC secret (%s)", result.get("status"))
+    except RuntimeOAuthCredentialError as exc:
+        logger.info("Skipping UC secret refresh: %s", exc)
+    except Exception as exc:
+        logger.warning("UC secret refresh failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -95,12 +111,16 @@ async def lifespan(application: FastAPI):
         state.app_backend_available = False
         state.app_backend_error = "PGHOST not set"
 
+    secret_sync = asyncio.create_task(publish_runtime_oauth_secret())
+
     # --- Simulator background task ---
     state.simulator_task = asyncio.create_task(run_simulator(state))
     start_industry_runtime_refresh(state)
+    start_alert_snapshot_sync(state)
 
     logger.info("=== IoT Digital Twin started (db=%s) ===", state.db_available)
     yield
+    secret_sync.cancel()
     logger.info("=== IoT Digital Twin shutting down ===")
     await shutdown(state)
     logger.info("=== IoT Digital Twin stopped ===")

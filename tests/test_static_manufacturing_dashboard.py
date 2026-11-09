@@ -20,92 +20,83 @@ def _bundle() -> str:
     return (DIST / "assets" / match.group(1)).read_text(encoding="utf-8")
 
 
-def _manufacturing_derivation(bundle: str) -> str:
-    # Minifier renames the React import (`T`/`E`) and the local binding (`Le`);
-    # anchor on the industry-gated useMemo body instead.
-    start = bundle.index('useMemo(()=>{if(t!=="manufacturing")')
-    end = bundle.index(".useEffect(()=>", start)
-    return bundle[start:end]
-
-
-def test_manufacturing_kpis_use_live_sensor_derivations():
-    """[C7230][defect][regression] Business KPIs update from manufacturing SSE data."""
+def test_realtime_lakebase_writer_retries_recovery_with_exponential_backoff():
+    """[C7231][defect][regression] RTM survives transient Postgres recovery."""
     bundle = _bundle()
+    start = bundle.index("class LakebaseWriter:")
+    end = bundle.index("class AppSseWriter:", start)
+    writer = bundle[start:end]
 
-    for marker in (
-        'Production:"throughput"',
-        'OEE:"oee"',
-        'Utilization:"utilization"',
-        'Temperature:"temperature"',
-        '"Active alerts":"faults"',
-        '"assy_line_1_throughput"',
-        '"assy_line_1_speed"',
-        '"cnc_1_spindle_power"',
-        '"assy_line_1_motor_current"',
-        '"cnc_1_spindle_temp"',
+    assert "MAX_RECONNECT_ATTEMPTS = 12" in writer
+    assert "BACKOFF_BASE_S = 1.0" in writer
+    assert "BACKOFF_MAX_S = 30.0" in writer
+    assert "def _connect_with_backoff(self):" in writer
+    assert "def _flush_with_backoff(self):" in writer
+    assert "_lb_time.sleep(delay)" in writer
+    assert "min(self.BACKOFF_BASE_S * (2 ** (attempt - 1))" in writer
+    assert writer.count(
+        "execute_values(self.cur, self.sql, self.buffer, template=_INSERT_TEMPLATE)"
+    ) == 2
+
+
+CLIENT_SRC = Path(__file__).parents[1] / "client" / "src"
+
+
+def _source(*parts: str) -> str:
+    return CLIENT_SRC.joinpath(*parts).read_text(encoding="utf-8")
+
+
+def test_manufacturing_view_has_no_invented_metrics_c7230():
+    """[C7230][defect][regression] The operator twin shows only measured or catalog values."""
+    bundle = _bundle()
+    kpis = _source("components", "cell", "cell-kpis.tsx")
+    model = _source("components", "cell", "use-cell-model.ts")
+
+    for invented in ('OEE:"oee"', 'Utilization:"utilization"', 'Production:"throughput"', "/1250)*100"):
+        assert invented not in bundle
+    for label in (
+        "Spindle 3 temperature",
+        "Operating limit",
+        "Spindle 3 status",
+        "Open alerts",
+        "Last device event",
     ):
-        assert marker in bundle
-    assert "/1250)*100" in bundle
+        assert f'case "{label}":' in kpis
+    assert "spindleLimitFrom(rules)" in model
+    for source in (kpis, model):
+        assert "input_rows_per_second" not in source
+        assert "processed_rows_per_second" not in source
 
 
-def test_manufacturing_business_kpis_stay_separate_from_pipeline_metrics():
-    """[C7230][regression] Do not map operational throughput into business KPIs."""
+def test_manufacturing_realtime_data_is_industry_scoped_c7232():
+    """[C7232][defect][regression] Mixed SSE data cannot contaminate the machining cell."""
+    section = _source("components", "cell", "use-cell-model.ts")
+
+    assert section.count('r.industry === "manufacturing"') >= 2
+    assert 'useIndustryAlerts("manufacturing")' in section
+    assert 'inspect: { health: "no-feed" as const, readout: "no sensor feed" }' in section
+
+
+def test_machining_cell_twin_is_accessible_c7231():
+    """[C7231][defect][smoke][regression] MILL -> INSPECT -> PACK twin is labelled and selectable."""
     bundle = _bundle()
-    derivation = _manufacturing_derivation(bundle)
+    story = _source("lib", "manufacturing-story.ts")
 
-    assert "input_rows_per_second" not in derivation
-    assert "processed_rows_per_second" not in derivation
-    assert ".sensor_name===" in derivation
-
-
-def test_manufacturing_realtime_data_is_industry_scoped():
-    """[C7232][defect][regression] Mixed SSE data cannot contaminate the factory."""
-    bundle = _bundle()
-    derivation = _manufacturing_derivation(bundle)
-
-    assert "latest_readings" in derivation
-    assert "Object.values(" in derivation
-    assert '.industry==="manufacturing"' in derivation
-    assert ".filter(" in derivation
-    assert ".fault_active===!0" in derivation
-    assert 'e==="microbatch"' not in derivation
-    assert 'aria-label":"Interactive 3D manufacturing factory"' in bundle
-    assert '"bioreactor_1_temp"' in bundle
-    assert '.fault_active==="1"' in bundle
-    assert '.fault_active==="true"' in bundle
-    assert 'value:"—",unit:"",alert:!1' in bundle
+    assert "Machining cell twin: mill, inspect, pack" in bundle
+    assert 'aria-label":"Cell stations"' in bundle
+    assert "Interactive 3D manufacturing factory" not in bundle
+    assert "Reference · MES not connected" in story
 
 
-def test_manufacturing_overlay_cards_are_compact_and_accessible():
-    """[C7231][defect][smoke][regression] 3D labels remain readable but unobtrusive."""
-    index = (DIST / "index.html").read_text(encoding="utf-8")
-    css = (DIST / "manufacturing-dashboard.css").read_text(encoding="utf-8")
-    bundle = _bundle()
+def test_alert_action_comes_from_catalog_rule_c7417():
+    """[C7417][regression] "Inspection required" is catalog data, not hard-coded UI copy."""
+    rail = _source("components", "dashboard", "alert-rail.tsx")
+    card = _source("components", "dashboard", "cell-station-card.tsx")
 
-    assert 'href="/static/dist/manufacturing-dashboard.css"' in index
-    assert index.index('href="/assets/index-') < index.index(
-        'href="/static/dist/manufacturing-dashboard.css"'
-    )
-    label_rule = css[css.index(".manufacturing-factory__label {") :]
-    label_rule = label_rule[: label_rule.index("}") + 1]
-    assert "width: 132px" in label_rule
-    assert "max-width: 132px" in label_rule
-    assert "padding: 4px 6px" in label_rule
-    for selector in (
-        ".manufacturing-factory__label > span",
-        ".manufacturing-factory__kpis small",
-        ".manufacturing-factory__kpis b",
-        ".manufacturing-factory__kpis i",
-    ):
-        rule = css[css.index(f"{selector} {{") :]
-        rule = rule[: rule.index("}") + 1]
-        assert "font-size: 10px" in rule
-    title_rule = css[css.index(".manufacturing-factory__label strong {") :]
-    title_rule = title_rule[: title_rule.index("}") + 1]
-    assert "font-size: 12px" in title_rule
-    assert "distanceFactor:8" in bundle
-    assert 'aria-label":"Interactive 3D manufacturing factory"' in bundle
-    assert 'aria-label":"Factory stations"' in bundle
+    assert "r.rule_id === selected.rule_id)?.action" in rail
+    assert "limit.action" in card
+    for source in (rail, card, _source("lib", "manufacturing-story.ts")):
+        assert "Inspection required" not in source
 
 
 def test_tier_summary_uses_latest_timestamps_and_delay_c7265():
@@ -127,6 +118,23 @@ def test_tier_summary_uses_latest_timestamps_and_delay_c7265():
     assert "hot_rows" not in component
     assert "total_rows" not in component
     assert "Checking Lakebase Sync status" in component
+
+
+def test_historical_chart_keeps_axis_readable_c7268_defect() -> None:
+    """[C7268][defect][regression] DBSQL chart sorts points, compacts ticks, and avoids mixed scales."""
+    component = (
+        Path(__file__).parents[1]
+        / "client"
+        / "src"
+        / "components"
+        / "dashboard"
+        / "historical-dbsql.tsx"
+    ).read_text(encoding="utf-8")
+    assert "formatAxisTick" in component
+    assert "pickCompatibleSeries" in component
+    assert ".sort(" in component
+    assert "width={44}" in component or "width={40}" in component or "width={48}" in component
+    assert "margin={{" in component
 
 
 def test_streaming_summary_tiles_use_pipeline_scoped_spark_metrics():
@@ -302,6 +310,18 @@ def test_legacy_pipeline_pages_are_unreachable_c7263():
     assert "navigate(`/i/${resolvedIndustryId}/${mode.id}/dashboard`)" in setup_page
     assert "/pipelines/${industryId}/dashboard" not in gallery
     assert 'navigate(`/setup-validate?industry=${encodeURIComponent(industry.id)}`)' in pipeline_card
+
+
+def test_mode_dashboard_passes_industry_only_for_industry_first_c7263() -> None:
+    """Industry query params follow industry-first ids, not leftover legacy pipeline ids."""
+    page = (
+        Path(__file__).resolve().parents[1]
+        / "client"
+        / "src"
+        / "pages"
+        / "mode-dashboard-page.tsx"
+    ).read_text(encoding="utf-8")
+    assert "isIndustryFirst ? industryId : undefined" in page
 
 
 @pytest.mark.asyncio

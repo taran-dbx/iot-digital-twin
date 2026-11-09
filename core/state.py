@@ -45,12 +45,26 @@ class AppState:
     # SSE clients (each is an asyncio.Queue that the SSE endpoint drains)
     sse_clients: list[asyncio.Queue] = field(default_factory=list)
 
+    # In-memory alert state machine (persists to app-backend Lakebase when up)
+    alert_engine: Any = None
+    # Operator decisions per alert episode (services/alert_responses.py)
+    alert_response_store: Any = None
+    production_control: Any = None
+
+    # Genie conversation ownership — process-local, fail-closed after restart
+    genie_conversations: dict[str, dict[str, str]] = field(default_factory=dict)
+    genie_sdk_semaphore: asyncio.Semaphore = field(
+        default_factory=lambda: asyncio.Semaphore(4)
+    )
+
     # Background tasks
     simulator_task: asyncio.Task | None = None
     refresh_task: asyncio.Task | None = None
     retention_task: asyncio.Task | None = None
     industry_runtime_refresh_task: asyncio.Task | None = None
     industry_runtime_refresh_tasks: set[asyncio.Task] = field(default_factory=set)
+    alert_snapshot_synchronizer: Any = None
+    alert_snapshot_sync_task: asyncio.Task | None = None
 
     # Shutdown coordination
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)

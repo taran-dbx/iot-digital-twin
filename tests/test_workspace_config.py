@@ -159,6 +159,20 @@ class TestOptionalFields:
         from core.workspace_config import get_config
         assert get_config().pipelines_project == ""
 
+    def test_genie_space_id_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.setenv("GENIE_SPACE_ID", "space-xyz")
+        from core.workspace_config import get_config
+        assert get_config().genie_space_id == "space-xyz"
+
+    def test_genie_space_id_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, val in _FULL_ENV.items():
+            monkeypatch.setenv(key, val)
+        monkeypatch.delenv("GENIE_SPACE_ID", raising=False)
+        from core.workspace_config import get_config
+        assert get_config().genie_space_id == ""
+
 
 class TestCallTimeGetters:
     """Standalone getter functions must read from env on every call (call-time)."""
@@ -200,6 +214,16 @@ class TestCallTimeGetters:
         monkeypatch.delenv("PIPELINES_LAKEBASE_PROJECT", raising=False)
         from core.workspace_config import get_pipelines_project
         assert get_pipelines_project() == ""
+
+    def test_get_genie_space_id_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GENIE_SPACE_ID", "space-from-resource")
+        from core.workspace_config import get_genie_space_id
+        assert get_genie_space_id() == "space-from-resource"
+
+    def test_get_genie_space_id_returns_empty_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GENIE_SPACE_ID", raising=False)
+        from core.workspace_config import get_genie_space_id
+        assert get_genie_space_id() == ""
 
 
 class TestGetConfigRaisesOnMissingRequired:
@@ -255,6 +279,7 @@ class TestWorkspaceConfigStructure:
             "industries",
             # Optional fields added in review pass.
             "secret_scope", "service_credential", "pipelines_project",
+            "genie_space_id",
         }
         actual = {f for f in cfg.__dataclass_fields__}
         assert actual == expected

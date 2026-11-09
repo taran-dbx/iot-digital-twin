@@ -9,8 +9,10 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
+from fastapi import HTTPException
+
 from core import auth
-from core.auth import get_current_user
+from core.auth import get_current_user, require_identity
 
 
 @pytest.fixture(autouse=True)
@@ -120,3 +122,37 @@ class TestGetCurrentUserCaching:
         assert result_a == "alice@co.com"
         assert result_b == "bob@co.com"
         assert len(auth._user_cache) == 2
+
+
+class TestRequireIdentity:
+    @pytest.mark.asyncio
+    async def test_apps_runtime_rejects_anonymous_c7601_defect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[C7601][defect] Databricks Apps runtime without identity returns 401."""
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "iot-digital-twin")
+        monkeypatch.delenv("IOT_ALLOW_ANONYMOUS_IDENTITY", raising=False)
+        with pytest.raises(HTTPException) as exc:
+            await require_identity(_request_with_token(None))
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_explicit_bypass_allows_local_c7601_smoke(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[C7601][smoke] Explicit local bypass remains available."""
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "iot-digital-twin")
+        monkeypatch.setenv("IOT_ALLOW_ANONYMOUS_IDENTITY", "1")
+        result = await require_identity(_request_with_token(None))
+        assert result == "anonymous"
+
+    @pytest.mark.asyncio
+    async def test_valid_token_accepted_in_runtime_c7601_regression(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[C7601][regression] Forwarded identity is accepted in Apps runtime."""
+        monkeypatch.setenv("DATABRICKS_APP_NAME", "iot-digital-twin")
+        monkeypatch.delenv("IOT_ALLOW_ANONYMOUS_IDENTITY", raising=False)
+        token = _make_jwt({"sub": "ops@example.com"})
+        result = await require_identity(_request_with_token(token))
+        assert result == "ops@example.com"

@@ -33,6 +33,13 @@ class TestAppStateDefaults:
         state = AppState()
         assert state.simulator_task is None
 
+    def test_alert_snapshot_sync_defaults_c7505_smoke(self) -> None:
+        """[C7505][smoke] Snapshot synchronizer is unset until lifespan starts it."""
+        state = AppState()
+        assert state.alert_snapshot_sync_task is None
+        assert state.alert_snapshot_synchronizer is None
+        assert state.genie_conversations == {}
+
     def test_refresh_task_defaults_to_none(self) -> None:
         state = AppState()
         assert state.refresh_task is None

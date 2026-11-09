@@ -366,29 +366,76 @@ try:
     PG_USER = {pg_user!r}
     PG_TOKEN = {pg_token!r}
     class LakebaseWriter:
-        def open(self, partition_id, epoch_id):
+        MAX_RECONNECT_ATTEMPTS = 12
+        BACKOFF_BASE_S = 1.0
+        BACKOFF_MAX_S = 30.0
+
+        def _connect(self):
             self.conn = psycopg2.connect(
                 host=PG_HOST, port=5432, dbname=PG_DATABASE,
                 user=PG_USER, password=PG_TOKEN, sslmode="require")
             self.conn.autocommit = True
             self.cur = self.conn.cursor()
+
+        def _disconnect(self):
+            try:
+                if getattr(self, "cur", None) is not None:
+                    self.cur.close()
+            except Exception:
+                pass
+            try:
+                if getattr(self, "conn", None) is not None:
+                    self.conn.close()
+            except Exception:
+                pass
+            self.cur = None
+            self.conn = None
+
+        def _delay(self, attempt):
+            return min(
+                self.BACKOFF_BASE_S * (2 ** (attempt - 1)),
+                self.BACKOFF_MAX_S,
+            )
+
+        def _connect_with_backoff(self):
+            for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
+                try:
+                    self._disconnect()
+                    self._connect()
+                    return
+                except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                    if attempt == self.MAX_RECONNECT_ATTEMPTS:
+                        raise
+                    delay = self._delay(attempt)
+                    print("[LakebaseWriter] connect retry in", delay, "seconds")
+                    _t.sleep(delay)
+
+        def _execute_with_backoff(self, params):
+            try:
+                self.cur.execute(_INSERT_SQL, params)
+                return
+            except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                # Keep at-least-once behavior bounded: wait for Postgres through
+                # the connection retry loop, then retry this row only once.
+                self._connect_with_backoff()
+            self.cur.execute(_INSERT_SQL, params)
+
+        def open(self, partition_id, epoch_id):
+            self.cur = None
+            self.conn = None
+            self._connect_with_backoff()
             return True
         def process(self, row):
             # row is a POSITIONAL tuple (not a named Row) — index by position.
             metadata = row[10]
             if metadata is not None and not isinstance(metadata, str):
                 metadata = json.dumps(dict(metadata))
-            self.cur.execute(_INSERT_SQL, (
+            self._execute_with_backoff((
                 row[0], row[1], row[2], row[3], row[4], row[5],
                 row[6], row[7], row[8], row[9], metadata, {source!r},
             ))
         def close(self, error):
-            try:
-                if getattr(self, "cur", None) is not None:
-                    self.cur.close()
-            finally:
-                if getattr(self, "conn", None) is not None:
-                    self.conn.close()
+            self._disconnect()
 
     SCHEMA = (StructType()
               .add("sensor_name", StringType()).add("industry", StringType())

@@ -121,6 +121,19 @@ async def test_run_halts_on_failure(repo):
     assert sm.is_gate_open(state) is False
 
 
+async def test_run_records_timeout_type_when_message_empty_c7238(repo):
+    execs = _all_pass_executors()
+
+    async def boom(_ctx):
+        raise TimeoutError()
+
+    execs["source_connectivity"] = boom
+    state = await vs.start_validation(None, "pharmaceutical", executors=execs)
+
+    assert state["steps"]["source_connectivity"]["status"] == sm.FAILED
+    assert state["steps"]["source_connectivity"]["error"] == "TimeoutError"
+
+
 async def test_retry_from_failure_resumes(repo):
     execs = _all_pass_executors()
     execs["source_connectivity"] = _fail("dns down")
@@ -209,7 +222,10 @@ async def test_cluster_id_merged_to_top_level(repo):
         return vs.StepResult(sm.PASSED, data={"run_id": "run-xyz"})
 
     execs["write_test"] = _rec_run
-    state = await vs.start_validation(None, "pharmaceutical", executors=execs)
+    ws = _FakeWs(_FakeClusters(state_value="RUNNING"))
+    state = await vs.start_validation(
+        None, "pharmaceutical", executors=execs, ws=ws
+    )
 
     assert state["cluster_id"] == "0705-abc"
     assert state["run_ids"]["microbatch:write_test"] == "run-xyz"
@@ -380,6 +396,132 @@ async def test_get_state_none_when_no_setup(monkeypatch):
     assert await vs.get_state(None, "pharmaceutical") is None
 
 
+async def test_get_state_fails_running_step_when_cluster_terminated_c7239(monkeypatch):
+    """Poll must settle a stuck run when the interactive cluster is gone [C7239][defect]."""
+    repo = _repo_with(monkeypatch, _started_setup())
+    out = await vs.get_state(
+        None,
+        "pharmaceutical",
+        ws=_FakeWs(_FakeClusters(state_value="TERMINATED")),
+    )
+    assert out["cluster_state"] == "TERMINATED"
+    assert out["steps"]["source_connectivity"]["status"] == sm.FAILED
+    assert "TERMINATED" in (out["steps"]["source_connectivity"]["error"] or "")
+    assert repo.setup["validation_state"]["steps"]["source_connectivity"]["status"] == sm.FAILED
+    assert out["phase"] == "failed"
+
+
+async def test_get_state_preserves_original_failure_after_autoterminate_c7239(monkeypatch):
+    """A real step error must not be replaced by cluster-gone after idle autoterminate [C7239][regression]."""
+    setup = _started_setup()
+    setup["validation_state"] = sm.set_step(
+        setup["validation_state"],
+        "source_connectivity",
+        sm.FAILED,
+        error="dns down",
+        updated_at="2026-07-06T00:01:00+00:00",
+    )
+    repo = _repo_with(monkeypatch, setup)
+    out = await vs.get_state(
+        None,
+        "pharmaceutical",
+        ws=_FakeWs(_FakeClusters(state_value="TERMINATED")),
+    )
+    assert out["steps"]["source_connectivity"]["status"] == sm.FAILED
+    assert out["steps"]["source_connectivity"]["error"] == "dns down"
+    assert repo.update_calls == 0
+
+
+async def test_get_state_fills_empty_failure_when_cluster_terminated_c7239(monkeypatch):
+    """Blank TimeoutError() reasons get a cluster-gone message on poll [C7239][defect]."""
+    setup = _started_setup()
+    setup["validation_state"] = sm.set_step(
+        setup["validation_state"],
+        "source_connectivity",
+        sm.FAILED,
+        error="",
+        updated_at="2026-07-06T00:01:00+00:00",
+    )
+    repo = _repo_with(monkeypatch, setup)
+    out = await vs.get_state(
+        None,
+        "pharmaceutical",
+        ws=_FakeWs(_FakeClusters(state_value="TERMINATED")),
+    )
+    assert "TERMINATED" in (out["steps"]["source_connectivity"]["error"] or "")
+    assert repo.setup["validation_state"]["steps"]["source_connectivity"]["error"]
+    assert repo.update_calls >= 1
+
+
+async def test_get_state_leaves_passed_run_when_cluster_autoterminate_c7239(monkeypatch):
+    """90-min autoterminate after a green run must not rewrite passed steps [C7239][regression]."""
+    state = sm.initial_state(["microbatch"])
+    for key in sm.validation_step_keys(state):
+        state = sm.set_step(state, key, sm.PASSED)
+    state["cluster_id"] = "0705-abc"
+    setup = _started_setup()
+    setup["validation_state"] = state
+    repo = _repo_with(monkeypatch, setup)
+    out = await vs.get_state(
+        None,
+        "pharmaceutical",
+        ws=_FakeWs(_FakeClusters(state_value="TERMINATED")),
+    )
+    assert out["cluster_state"] == "TERMINATED"
+    assert sm.is_gate_open(out) is True
+    assert repo.setup["validation_state"]["steps"]["source_connectivity"]["status"] == sm.PASSED
+
+
+async def test_run_machine_does_not_advance_on_terminated_cluster_c7239(repo):
+    """Driver must not keep executing Lakebase steps after autoterminate [C7239][defect]."""
+    state = sm.initial_state(["realtime"])
+    for key in sm.validation_step_keys(state):
+        if key in ("realtime:read_back", "realtime:dbsql_read"):
+            continue
+        state = sm.set_step(state, key, sm.PASSED)
+    state = sm.mark_running(state, "realtime:read_back")
+    state["cluster_id"] = "1002-082401-3jzzquj4"
+    repo.setup["enabled_modes"] = ["realtime"]
+    repo.setup["validation_state"] = state
+
+    ran = []
+
+    async def track(name):
+        async def _fn(_ctx):
+            ran.append(name)
+            return vs.StepResult(sm.PASSED)
+        return _fn
+
+    execs = _all_pass_executors()
+    execs["read_back"] = await track("read_back")
+    execs["dbsql_read"] = await track("dbsql_read")
+    ws = _FakeWs(_FakeClusters(state_value="TERMINATED"))
+    out = await vs.run_machine(None, repo.setup, executors=execs, ws=ws)
+    assert ran == []
+    assert out["steps"]["realtime:read_back"]["status"] == sm.FAILED
+    assert "TERMINATED" in (out["steps"]["realtime:read_back"]["error"] or "")
+    assert out["steps"]["realtime:dbsql_read"]["status"] == sm.PENDING
+
+
+async def test_run_machine_still_provisions_when_prior_cluster_is_dead_c7239(repo):
+    """A fresh run may re-provision even if a stale cluster_id is TERMINATED [C7239][smoke]."""
+    execs = _all_pass_executors()
+    execs["provision_cluster"] = _pass(cluster_id="new-cluster")
+    repo.setup["validation_state"] = {
+        **sm.initial_state(["microbatch"]),
+        "cluster_id": "stale-dead",
+    }
+    ws = _FakeWs(_FakeClusters(state_value="TERMINATED"))
+    state = await vs.start_validation(
+        None, "pharmaceutical", executors=execs, ws=ws
+    )
+    # After provision_cluster the fake ws still reports TERMINATED, so the
+    # driver must halt rather than pretend later steps can use the dead cluster.
+    assert state["steps"]["provision_cluster"]["status"] == sm.PASSED
+    assert state["steps"]["source_connectivity"]["status"] == sm.FAILED
+    assert "TERMINATED" in (state["steps"]["source_connectivity"]["error"] or "")
+
+
 # ---------------------------------------------------------------------------
 # prepare_start readiness guard (spec §1.10 — never 500; 4xx on incomplete draft)
 # ---------------------------------------------------------------------------
@@ -468,6 +610,93 @@ async def test_prepare_start_resumes_reconciled_state_with_new_pending_lane(monk
 
     assert out["validation_state"]["steps"]["realtime:write_test"]["status"] == sm.PASSED
     assert out["validation_state"]["steps"]["zerobus:create_table"]["status"] == sm.PENDING
+
+
+def _manufacturing_stuck_state(cluster_id="1013-114619-s4mcy68g"):
+    state = sm.initial_state(["realtime"])
+    for key in sm.validation_step_keys(state):
+        if key in ("realtime:read_back", "realtime:dbsql_read",
+                   "realtime:metrics_check", "realtime:cleanup"):
+            continue
+        state = sm.set_step(state, key, sm.PASSED, updated_at="2026-10-13T11:55:00+00:00")
+    state = sm.set_step(state, "realtime:read_back", sm.FAILED, error="no validation row")
+    state["cluster_id"] = cluster_id
+    return state
+
+
+async def test_prepare_start_reprovisions_when_cluster_terminated_c7240(monkeypatch):
+    """Re-run after autoterminate must not resume at read_back on a dead cluster [C7240][defect]."""
+    fake = _repo_with(
+        monkeypatch,
+        _ready_setup(enabled_modes=["realtime"],
+                     validation_state=_manufacturing_stuck_state()),
+    )
+    out = await vs.prepare_start(
+        None, "automotive", ws=_FakeWs(_FakeClusters(state_value="TERMINATED"))
+    )
+    state = out["validation_state"]
+    assert state["steps"]["provision_cluster"]["status"] == sm.PENDING
+    assert state["steps"]["realtime:write_test"]["status"] == sm.PENDING
+    assert state["steps"]["realtime:read_back"]["status"] == sm.PENDING
+    assert sm.next_runnable_step(state) == "provision_cluster"
+    assert fake.setup["validation_state"]["steps"]["provision_cluster"]["status"] == sm.PENDING
+
+
+async def test_prepare_start_resumes_failed_step_when_cluster_running_c7240(monkeypatch):
+    """A live cluster keeps the resume-from-failure behaviour [C7240][regression]."""
+    _repo_with(
+        monkeypatch,
+        _ready_setup(enabled_modes=["realtime"],
+                     validation_state=_manufacturing_stuck_state()),
+    )
+    out = await vs.prepare_start(
+        None, "automotive", ws=_FakeWs(_FakeClusters(state_value="RUNNING"))
+    )
+    state = out["validation_state"]
+    assert state["steps"]["provision_cluster"]["status"] == sm.PASSED
+    assert state["steps"]["realtime:write_test"]["status"] == sm.PASSED
+    assert sm.next_runnable_step(state) == "realtime:read_back"
+
+
+async def test_prepare_start_keeps_green_lane_when_reprovisioning_c7240(monkeypatch):
+    """Dead cluster resets only the unfinished lane; a fully green lane stays green [C7240][regression]."""
+    previous = sm.initial_state(["realtime", "microbatch"])
+    for key in sm.validation_step_keys(previous):
+        previous = sm.set_step(previous, key, sm.PASSED)
+    previous = sm.set_step(previous, "realtime:read_back", sm.FAILED, error="boom")
+    previous["cluster_id"] = "dead"
+    _repo_with(
+        monkeypatch,
+        _ready_setup(enabled_modes=["realtime", "microbatch"],
+                     validation_state=previous),
+    )
+    out = await vs.prepare_start(
+        None, "automotive", ws=_FakeWs(_FakeClusters(state_value="TERMINATED"))
+    )
+    state = out["validation_state"]
+    assert state["steps"]["provision_cluster"]["status"] == sm.PENDING
+    assert state["steps"]["microbatch:write_test"]["status"] == sm.PASSED
+    assert state["steps"]["realtime:write_test"]["status"] == sm.PENDING
+
+
+async def test_run_machine_halts_retried_failed_step_on_dead_cluster_c7240(repo):
+    """Driver must not re-execute a failed step against a dead cluster [C7240][defect]."""
+    repo.setup["enabled_modes"] = ["realtime"]
+    repo.setup["validation_state"] = _manufacturing_stuck_state()
+    ran = []
+
+    async def read_back(_ctx):
+        ran.append("read_back")
+        return vs.StepResult(sm.FAILED, error="no validation row")
+
+    execs = _all_pass_executors()
+    execs["read_back"] = read_back
+    out = await vs.run_machine(
+        None, repo.setup, executors=execs,
+        ws=_FakeWs(_FakeClusters(state_value="TERMINATED")),
+    )
+    assert ran == []
+    assert "TERMINATED" in out["steps"]["realtime:read_back"]["error"]
 
 
 async def test_prepare_start_incomplete_missing_warehouse_raises(monkeypatch):

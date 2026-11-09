@@ -201,8 +201,12 @@ def test_deploy_and_start_zerobus_with_job_triggers_run(monkeypatch):
     async def fake_get_job_id(_state, _pipeline_id):
         return "555"
 
+    async def fake_sync(_w=None):
+        return {"status": "updated"}
+
     fake_w = _FakeWorkspace()
     monkeypatch.setattr(isvc, "_get_job_id", fake_get_job_id)
+    monkeypatch.setattr(isvc.deployment_service, "sync_runtime_oauth_secret", fake_sync)
 
     class _State:
         workspace_client = fake_w

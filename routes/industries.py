@@ -6,18 +6,37 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
+from domain.catalog import (
+    assets_payload,
+    get_domain,
+    reference_payload,
+    to_record_industry,
+    to_simulator_industry,
+)
 from services import app_permissions, industry_service
 from services.industry_templates import CURATED_INDUSTRIES, MODES
 
+try:
+    from iot_simulator import DataGenerator, IndustryType
+except Exception:  # mismatched host wheels must not break route import
+    DataGenerator = None
+    IndustryType = None
+
 router = APIRouter()
+
+
+def _unknown_industry(industry: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=400, content={"error": f"Unknown industry: {industry}"}
+    )
 
 
 @router.get("/api/industries")
 async def list_industries():
     """Return all built-in industry types with sensor counts."""
-    from iot_simulator import DataGenerator, IndustryType
-
     result = []
+    if IndustryType is None or DataGenerator is None:
+        return result
     for industry in IndustryType:
         try:
             gen = DataGenerator(industries=[industry.value])
@@ -38,10 +57,10 @@ async def list_industries():
 @router.get("/api/industries/{name}/sensors")
 async def get_industry_sensors(name: str):
     """Generate one tick and return the SensorRecord fields as config-like dicts."""
-    from iot_simulator import DataGenerator
-
+    if DataGenerator is None:
+        return JSONResponse(status_code=400, content={"error": "simulator unavailable"})
     try:
-        gen = DataGenerator(industries=[name])
+        gen = DataGenerator(industries=[to_simulator_industry(name)])
         records = gen.tick()
 
         sensor_cfgs = {s.name: s for s in gen._sensors} if hasattr(gen, "_sensors") else {}
@@ -76,21 +95,21 @@ async def get_industry_sensors(name: str):
 @router.post("/api/generate-sample")
 async def generate_sample(request: Request, state: AppState = Depends(get_app_state)):
     """Generate sample SensorRecords via DataGenerator.tick()."""
-    from iot_simulator import DataGenerator
-
     body = await request.json()
     industry = body.get("industry", "pharmaceutical")
     num_ticks = min(int(body.get("ticks", 3)), 10)
     rate_hz = float(body.get("update_rate_hz", state.update_rate_hz))
 
+    if DataGenerator is None:
+        return JSONResponse(status_code=500, content={"error": "simulator unavailable"})
     try:
-        gen = DataGenerator(industries=[industry])
+        gen = DataGenerator(industries=[to_simulator_industry(industry)])
         collected: list[dict] = []
         for _ in range(num_ticks):
             for r in gen.tick():
                 collected.append({
                     "sensor_name": r.sensor_name,
-                    "industry": r.industry,
+                    "industry": to_record_industry(r.industry),
                     "value": round(r.value, 3),
                     "unit": r.unit,
                     "sensor_type": r.sensor_type,
@@ -124,6 +143,26 @@ async def get_industries_catalog(
     """Return the curated industry catalog plus whether the caller is an admin."""
     catalog = await industry_service.get_catalog(state)
     return {"industries": catalog, "is_admin": app_permissions.is_admin(request)}
+
+
+@router.get("/api/industries/{industry}/assets")
+async def get_industry_assets(industry: str):
+    """Return the read-only site/asset/component/sensor tree."""
+    try:
+        get_domain(industry)
+    except KeyError:
+        return _unknown_industry(industry)
+    return assets_payload(industry)
+
+
+@router.get("/api/industries/{industry}/reference")
+async def get_industry_reference(industry: str):
+    """Return KPI bindings, alert rules, and maintenance fixtures."""
+    try:
+        get_domain(industry)
+    except KeyError:
+        return _unknown_industry(industry)
+    return reference_payload(industry)
 
 
 def _validate_industry_mode(industry: str, mode: str) -> JSONResponse | None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -32,6 +33,7 @@ from services import (
     industry_service,
 )
 from services.industry_templates import CURATED_INDUSTRIES
+from services.alert_engine import evaluate_and_emit
 from services.uc_ident import sql_fqn
 
 logger = logging.getLogger("iot_digital_twin.routes.sensor_data")
@@ -41,11 +43,65 @@ router = APIRouter()
 # instead of waiting on the reverse-proxy upstream timeout.
 _LAKEBASE_PROBE_TIMEOUT_SECONDS = 8.0
 _LAKEBASE_RESOLVE_TIMEOUT_SECONDS = 25.0
+_LAKEBASE_ANALYTICS_SENSOR_LIMIT = 6
+_CHUNK_TABLE_RE = re.compile(r"^(?:public\.)?(sensor_readings_\d{8}_\d{6})$")
 
 
 async def _probe_wait(coro, *, timeout: float = _LAKEBASE_PROBE_TIMEOUT_SECONDS):
     """Await ``coro`` with a deadline and fully reap cancellation."""
     return await asyncio.wait_for(coro, timeout=timeout)
+
+
+def _chunk_table_names(rows: list[Any] | None) -> list[str]:
+    """Return validated ChronoTable child names from ``_chunk_metadata`` rows."""
+    tables: list[str] = []
+    for row in rows or []:
+        raw = ""
+        if hasattr(row, "get"):
+            raw = str(row.get("chunk_name") or "")
+        match = _CHUNK_TABLE_RE.match(raw)
+        if match:
+            tables.append(match.group(1))
+    return tables
+
+
+def _readings_relation(tables: list[str], columns: str = "event_time, sensor_name, value") -> str:
+    """SQL relation that reads recent chunks, or the parent table as a fallback."""
+    if not tables:
+        return "sensor_readings"
+    unions = " UNION ALL ".join(
+        f"SELECT {columns} FROM public.{table}" for table in tables
+    )
+    return f"({unions})"
+
+
+async def _recent_chunk_tables(
+    lb: "PipelineLakebaseHandle",
+    minutes: int,
+) -> list[str]:
+    """Child partitions overlapping the lookback window.
+
+    Parent ``sensor_readings`` COUNT/aggregates do not prune under load and
+    trip the dashboard probe timeout even while inserts are flowing.
+    """
+    try:
+        rows = await lb.fetch(
+            """
+            SELECT chunk_name
+            FROM lakets._chunk_metadata
+            WHERE status = 'active'
+              AND range_end > NOW() - make_interval(mins => $1)
+              AND range_start < NOW() + interval '1 minute'
+            ORDER BY range_start
+            LIMIT 8
+            """,
+            minutes,
+        )
+    except Exception as exc:
+        if _is_undefined_relation(exc):
+            return []
+        raise
+    return _chunk_table_names(rows)
 
 
 def _is_undefined_relation(exc: Exception) -> bool:
@@ -70,16 +126,20 @@ async def _resolve_lakebase(
     required), else the legacy per-pipeline ``sink_config`` lookup."""
     if industry:
         industry = industry.strip().lower()
-        if (
-            industry not in CURATED_INDUSTRIES
-            or not await _is_industry_deployment(
-                state, pipeline_id, industry, "realtime"
-            )
-        ):
+        if industry not in CURATED_INDUSTRIES:
             raise HTTPException(
                 status_code=404, detail="Realtime industry deployment not found"
             )
-        return await get_industry_lakebase(state, industry)
+        kind = await _authorize_mode_pipeline(
+            state, pipeline_id, industry, "realtime", user_email=""
+        )
+        if kind == "deployment":
+            return await get_industry_lakebase(state, industry)
+        if kind == "legacy":
+            return await get_pipeline_lakebase(state, pipeline_id)
+        raise HTTPException(
+            status_code=404, detail="Realtime industry deployment not found"
+        )
     return await get_pipeline_lakebase(state, pipeline_id)
 
 
@@ -233,6 +293,19 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
         "write_latency_ms": 0,
         "e2e_latency_ms": round(e2e_ms, 1) if e2e_ms is not None else 0,
     })
+
+    try:
+        reading_industry = industry_id
+        if not reading_industry and data and isinstance(data[0], dict):
+            reading_industry = data[0].get("industry")
+        await evaluate_and_emit(
+            state,
+            data,
+            industry=reading_industry,
+            pipeline_id=pipeline_id,
+        )
+    except Exception:
+        logger.exception("sss_ingest: alert evaluation failed")
 
     write_ms = (time.time() - t0) * 1000
     state.sources["sss"].record_write(len(data), write_ms, e2e_ms)
@@ -760,19 +833,25 @@ async def get_lakebase_perf(
         return empty_perf_payload
 
     try:
-        rows = await _probe_wait(
-            lb.fetch(
-                """
-            SELECT date_trunc('minute', event_time) AS bucket,
+        async def _load_perf_buckets():
+            tables = await _recent_chunk_tables(lb, minutes)
+            relation = _readings_relation(tables, columns="event_time")
+            return await lb.fetch(
+                f"""
+            SELECT date_trunc('minute', readings.event_time) AS bucket,
                    COUNT(*) AS cnt
-            FROM sensor_readings
-            WHERE event_time > NOW() - make_interval(mins => $1)
+            FROM {relation} readings
+            WHERE readings.event_time > NOW() - make_interval(mins => $1)
+              AND readings.event_time < NOW() + interval '1 minute'
             GROUP BY bucket
             ORDER BY bucket ASC
             LIMIT 5000
             """,
                 minutes,
-            ),
+            )
+
+        rows = await _probe_wait(
+            _load_perf_buckets(),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -881,19 +960,25 @@ async def get_lakets_gapfill(
         return {"rows": [], "reason": reason or "LakeTS not installed"}
 
     try:
-        rows = await lb.fetch(
-            """
+        async def _load_gapfill():
+            tables = await _recent_chunk_tables(lb, minutes)
+            relation = _readings_relation(tables)
+            return await lb.fetch(
+                f"""
             WITH bounds AS (
                 SELECT date_trunc('minute', now())
                            - make_interval(mins => $1 - 1) AS window_start,
                        date_trunc('minute', now()) AS window_end
             ),
             active_sensors AS (
-                SELECT DISTINCT readings.sensor_name
-                FROM sensor_readings readings
+                SELECT readings.sensor_name
+                FROM {relation} readings
                 CROSS JOIN bounds
                 WHERE readings.event_time >= bounds.window_start
                   AND readings.event_time < bounds.window_end + interval '1 minute'
+                GROUP BY readings.sensor_name
+                ORDER BY MAX(readings.event_time) DESC
+                LIMIT {_LAKEBASE_ANALYTICS_SENSOR_LIMIT}
             ),
             buckets AS (
                 SELECT generate_series(
@@ -907,10 +992,11 @@ async def get_lakets_gapfill(
                 SELECT lakets.time_bucket('1 minute'::interval, event_time) AS bucket,
                        sensor_name,
                        AVG(value) AS avg_value
-                FROM sensor_readings
+                FROM {relation} readings
                 CROSS JOIN bounds
                 WHERE event_time >= bounds.window_start
                   AND event_time < bounds.window_end + interval '1 minute'
+                  AND sensor_name IN (SELECT sensor_name FROM active_sensors)
                 GROUP BY bucket, sensor_name
             ),
             spine AS (
@@ -941,8 +1027,20 @@ async def get_lakets_gapfill(
             ORDER BY spine.bucket ASC, spine.sensor_name
             LIMIT 5000
             """,
-            minutes,
+                minutes,
+            )
+
+        rows = await _probe_wait(
+            _load_gapfill(),
+            timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "LakeTS gapfill query timed out after %.0fs for pipeline %s",
+            _LAKEBASE_PROBE_TIMEOUT_SECONDS,
+            pipeline_id,
+        )
+        return {"rows": [], "reason": "Lakebase query timed out"}
     except Exception as exc:
         if industry and _is_undefined_relation(exc):
             return {"rows": [], "reason": "sensor_readings not provisioned yet"}
@@ -990,14 +1088,27 @@ async def get_lakets_rate(
         return {"rows": [], "reason": reason or "LakeTS not installed"}
 
     try:
-        rows = await lb.fetch(
-            """
-            WITH base AS (
+        async def _load_rate():
+            tables = await _recent_chunk_tables(lb, minutes)
+            relation = _readings_relation(tables)
+            return await lb.fetch(
+                f"""
+            WITH ranked AS (
+                SELECT sensor_name,
+                       MAX(event_time) AS last_seen
+                FROM {relation} readings
+                WHERE event_time > NOW() - make_interval(mins => $1)
+                GROUP BY sensor_name
+                ORDER BY last_seen DESC
+                LIMIT {_LAKEBASE_ANALYTICS_SENSOR_LIMIT}
+            ),
+            base AS (
                 SELECT lakets.time_bucket('1 minute'::interval, event_time) AS bucket,
                        sensor_name,
                        AVG(value) AS avg_value
-                FROM sensor_readings
+                FROM {relation} readings
                 WHERE event_time > NOW() - make_interval(mins => $1)
+                  AND sensor_name IN (SELECT sensor_name FROM ranked)
                 GROUP BY bucket, sensor_name
             )
             SELECT bucket,
@@ -1017,8 +1128,20 @@ async def get_lakets_rate(
             ORDER BY bucket ASC
             LIMIT 5000
             """,
-            minutes,
+                minutes,
+            )
+
+        rows = await _probe_wait(
+            _load_rate(),
+            timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "LakeTS rate query timed out after %.0fs for pipeline %s",
+            _LAKEBASE_PROBE_TIMEOUT_SECONDS,
+            pipeline_id,
+        )
+        return {"rows": [], "reason": "Lakebase query timed out"}
     except Exception as exc:
         if industry and _is_undefined_relation(exc):
             return {"rows": [], "reason": "sensor_readings not provisioned yet"}
@@ -1062,11 +1185,14 @@ async def get_lakets_histogram(
         return {"rows": [], "reason": reason or "LakeTS not installed"}
 
     try:
-        rows = await lb.fetch(
-            """
+        async def _load_histogram():
+            tables = await _recent_chunk_tables(lb, minutes)
+            relation = _readings_relation(tables)
+            return await lb.fetch(
+                f"""
             WITH bounds AS (
                 SELECT MIN(value) AS min_v, MAX(value) AS max_v
-                FROM sensor_readings
+                FROM {relation} readings
                 WHERE sensor_name = $1
                   AND event_time > NOW() - make_interval(mins => $2)
             ),
@@ -1079,7 +1205,7 @@ async def get_lakets_histogram(
                        ) AS bucket_idx,
                        b.min_v,
                        b.max_v
-                FROM sensor_readings r
+                FROM {relation} r
                 CROSS JOIN bounds b
                 WHERE r.sensor_name = $1
                   AND r.event_time > NOW() - make_interval(mins => $2)
@@ -1095,10 +1221,22 @@ async def get_lakets_histogram(
             GROUP BY bucket_idx
             ORDER BY bucket_idx ASC
             """,
-            sensor,
-            minutes,
-            buckets,
+                sensor,
+                minutes,
+                buckets,
+            )
+
+        rows = await _probe_wait(
+            _load_histogram(),
+            timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "LakeTS histogram query timed out after %.0fs for pipeline %s",
+            _LAKEBASE_PROBE_TIMEOUT_SECONDS,
+            pipeline_id,
+        )
+        return {"rows": [], "reason": "Lakebase query timed out"}
     except Exception as exc:
         if industry and _is_undefined_relation(exc):
             return {"rows": [], "reason": "sensor_readings not provisioned yet"}
@@ -1163,24 +1301,46 @@ async def get_streaming_metrics(
             },
         )
 
+    use_one_schema = False
     if industry:
         try:
             industry = industry.strip().lower()
-            if not await _is_industry_deployment(
-                state, pipeline_id, industry, normalized_mode
-            ):
+            kind = await _authorize_mode_pipeline(
+                state,
+                pipeline_id,
+                industry,
+                normalized_mode,
+                user_email,
+                is_admin=is_admin,
+            )
+            if kind is None:
                 return JSONResponse(
                     status_code=404,
                     content={"error": "Industry deployment not found"},
                 )
-            metrics_table = industry_catalog_service.industry_table(
-                industry, "metrics"
-            )
+            if kind == "deployment":
+                use_one_schema = True
+                metrics_table = industry_catalog_service.industry_table(
+                    industry, "metrics"
+                )
+                catalog_part = metrics_table.split(".")[0]
+                if not validate_catalog(catalog_part):
+                    return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+            else:
+                catalog = await get_pipeline_catalog(
+                    state.db, state.db_available, pipeline_id, user_email,
+                    is_admin=is_admin,
+                )
+                if not catalog:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"error": "Pipeline not found or no UC catalog"},
+                    )
+                if not validate_catalog(catalog):
+                    return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+                metrics_table = f"{catalog}.metrics.streaming_metrics"
         except (ValueError, RuntimeError) as exc:
             return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
-        catalog_part = metrics_table.split(".")[0]
-        if not validate_catalog(catalog_part):
-            return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
     else:
         # Legacy path: resolve catalog from the pipeline row.
         catalog = await get_pipeline_catalog(
@@ -1203,7 +1363,7 @@ async def get_streaming_metrics(
         return JSONResponse(status_code=400, content={"error": "No SQL warehouse configured"})
 
     try:
-        if industry:
+        if use_one_schema:
             # One-schema columnar table: typed columns, leading ``mode`` column.
             mode_filter = f"WHERE mode = '{normalized_mode}'" if normalized_mode else ""
             summary_sql = f"""
@@ -1413,6 +1573,72 @@ async def _is_industry_deployment(
     return row is not None
 
 
+async def _is_legacy_pipeline(
+    state: AppState,
+    pipeline_id: str,
+    industry: str,
+    mode: str | None,
+    user_email: str,
+    *,
+    is_admin: bool = False,
+) -> bool:
+    """Validate a legacy ``pipelines`` row for the requested industry/mode."""
+    industry = industry.strip().lower()
+    if industry not in CURATED_INDUSTRIES:
+        return False
+    db = getattr(state, "db", None)
+    if db is None or not getattr(state, "db_available", False):
+        return False
+    try:
+        row = await db.fetchrow(
+            """
+            SELECT source_config, user_email
+            FROM pipelines
+            WHERE id = $1::uuid
+              AND industry = $2
+              AND status != 'deleted'
+            """,
+            pipeline_id,
+            industry,
+        )
+    except Exception as exc:
+        logger.warning("Failed to validate legacy pipeline %s: %s", pipeline_id, exc)
+        return False
+    if row is None:
+        return False
+    owner = str(row.get("user_email") or "")
+    if not is_admin and user_email and owner and owner != user_email:
+        return False
+    if mode:
+        inferred = industry_service._infer_mode(dict(row))
+        if inferred != mode:
+            return False
+    return True
+
+
+async def _authorize_mode_pipeline(
+    state: AppState,
+    pipeline_id: str,
+    industry: str,
+    mode: str | None,
+    user_email: str,
+    *,
+    is_admin: bool = False,
+) -> str | None:
+    """Return ``deployment`` or ``legacy`` when the id is valid for industry/mode."""
+    industry = (industry or "").strip().lower()
+    if industry not in CURATED_INDUSTRIES:
+        return None
+    exact_mode = (mode or "").strip().lower() or None
+    if await _is_industry_deployment(state, pipeline_id, industry, exact_mode):
+        return "deployment"
+    if await _is_legacy_pipeline(
+        state, pipeline_id, industry, exact_mode, user_email, is_admin=is_admin
+    ):
+        return "legacy"
+    return None
+
+
 @router.get("/api/pipelines/{pipeline_id}/zerobus-metrics")
 async def get_zerobus_metrics(
     pipeline_id: str,
@@ -1433,16 +1659,32 @@ async def get_zerobus_metrics(
     returned.
     """
     if industry:
-        if not await _is_industry_deployment(state, pipeline_id, industry, "zerobus"):
+        kind = await _authorize_mode_pipeline(
+            state, pipeline_id, industry, "zerobus", user_email
+        )
+        if kind is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Industry deployment not found"},
             )
-        try:
-            target_table = industry_catalog_service.industry_table(industry, "zerobus")
-        except (ValueError, RuntimeError) as exc:
-            return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
-        catalog = target_table.split(".", 1)[0]
+        if kind == "legacy":
+            catalog = await get_pipeline_catalog(
+                state.db, state.db_available, pipeline_id, user_email
+            )
+            if not catalog:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Pipeline not found or no UC catalog"},
+                )
+            target_table = await _resolve_zerobus_target(
+                state, pipeline_id, user_email, catalog
+            )
+        else:
+            try:
+                target_table = industry_catalog_service.industry_table(industry, "zerobus")
+            except (ValueError, RuntimeError) as exc:
+                return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
+            catalog = target_table.split(".", 1)[0]
     else:
         catalog = await get_pipeline_catalog(
             state.db, state.db_available, pipeline_id, user_email
@@ -1713,30 +1955,45 @@ async def get_dbsql_timeseries(
                 status_code=400,
                 content={"error": f"Unknown industry: {industry}"},
             )
-        if not await _is_industry_deployment(
-            state, pipeline_id, industry, resolved_mode
-        ):
+        kind = await _authorize_mode_pipeline(
+            state,
+            pipeline_id,
+            industry,
+            resolved_mode,
+            user_email,
+            is_admin=is_admin,
+        )
+        if kind is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Industry deployment not found"},
             )
-        try:
-            if resolved_mode == "realtime":
-                table = cdf_reconciliation_service.delta_table_fqn(
-                    industry,
-                    catalog=industry_catalog_service.uc_catalog_name(),
-                    schema=industry_catalog_service.uc_schema_name(),
-                )
-            else:
-                table = industry_catalog_service.industry_table(
-                    industry, resolved_mode
-                )
-        except (ValueError, RuntimeError) as exc:
-            return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
-        # Validate the catalog portion.
-        catalog_part = table.split(".")[0]
-        if not validate_catalog(catalog_part):
-            return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+        if kind == "legacy":
+            catalog = await get_pipeline_catalog(
+                state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
+            )
+            if not catalog:
+                return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
+            if not validate_catalog(catalog):
+                return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
+            table = f"{catalog}.{_LEGACY_MODE_TABLES[resolved_mode]}"
+        else:
+            try:
+                if resolved_mode == "realtime":
+                    table = cdf_reconciliation_service.delta_table_fqn(
+                        industry,
+                        catalog=industry_catalog_service.uc_catalog_name(),
+                        schema=industry_catalog_service.uc_schema_name(),
+                    )
+                else:
+                    table = industry_catalog_service.industry_table(
+                        industry, resolved_mode
+                    )
+            except (ValueError, RuntimeError) as exc:
+                return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
+            catalog_part = table.split(".")[0]
+            if not validate_catalog(catalog_part):
+                return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
     else:
         catalog = await get_pipeline_catalog(
             state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,

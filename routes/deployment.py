@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -10,6 +11,8 @@ import traceback
 from datetime import timedelta
 from typing import Any
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.workspace import ImportFormat
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -17,6 +20,12 @@ from core.auth import get_current_user
 from core.state import AppState, get_app_state
 from services.databricks_sdk import detect_cloud
 from services.pipeline_service import track_resource
+from services.runtime_wheel_service import (
+    WHEEL_FILENAME,
+    RuntimeWheelError,
+    augment_runtime_wheel,
+    bundled_wheel_path,
+)
 
 # LakeTS operational jobs (partition manager, rollup, retention). Owned by a
 # sibling refactor in services.lakets_deploy_service; tolerate its absence so
@@ -34,19 +43,12 @@ logger = logging.getLogger("iot_digital_twin.routes.deployment")
 
 router = APIRouter(tags=["deployment"])
 
-WHEEL_FILENAME = "iot_data_simulator-0.1.0-py3-none-any.whl"
-
 
 @router.post("/api/test-connectivity/upload-wheel")
 async def upload_wheel(user_email: str = Depends(get_current_user)):
     """Upload the bundled iot-data-simulator wheel to the Databricks workspace."""
     try:
-        import base64
-        from pathlib import Path
-        from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.workspace import ImportFormat
-
-        local_wheel = Path(__file__).parent.parent / "lib" / WHEEL_FILENAME
+        local_wheel = bundled_wheel_path()
         if not local_wheel.exists():
             return JSONResponse(status_code=404, content={
                 "error": f"Wheel not found at {local_wheel}. Ensure lib/{WHEEL_FILENAME} is packaged with the app.",
@@ -63,7 +65,7 @@ async def upload_wheel(user_email: str = Depends(get_current_user)):
         except Exception:
             pass
 
-        raw = local_wheel.read_bytes()
+        raw = augment_runtime_wheel(local_wheel)
         w.workspace.import_(
             path=ws_path,
             content=base64.b64encode(raw).decode(),
@@ -73,9 +75,12 @@ async def upload_wheel(user_email: str = Depends(get_current_user)):
         logger.info("Uploaded wheel to %s (%d bytes)", ws_path, len(raw))
         return {"wheel_path": ws_path}
 
+    except RuntimeWheelError as exc:
+        logger.error("Wheel upload rejected: %s\n%s", exc, traceback.format_exc())
+        return JSONResponse(status_code=400, content={"error": "Wheel upload failed"})
     except Exception as exc:
         logger.error("Wheel upload failed: %s\n%s", exc, traceback.format_exc())
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "Wheel upload failed"})
 
 
 @router.post("/api/test-connectivity/submit")

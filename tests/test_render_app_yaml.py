@@ -37,6 +37,7 @@ _EXPECTED_ENV_NAMES = (
     "ADMIN_GROUP",
     "ADMIN_EMAILS",
     "LAKETS_SQL_PATH",
+    "GENIE_SPACE_ID",
 )
 
 _MINIMAL_PROFILE = {
@@ -107,6 +108,8 @@ def test_render_includes_runtime_command_and_all_env_names(renderer) -> None:
     assert 'uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}' in rendered
     for env_name in _EXPECTED_ENV_NAMES:
         assert f"name: {env_name}" in rendered
+    assert "valueFrom: genie-space" in rendered
+    assert "GENIE_SPACE_ID" in rendered
 
 
 def test_render_quotes_values(renderer) -> None:

@@ -85,6 +85,18 @@ def test_rtm_write_test_lands_data_not_noop():
     assert "psycopg2.connect" in code
 
 
+def test_rtm_write_test_retries_transient_postgres_failures_with_backoff():
+    """[C7232][defect][regression] Validation RTM tolerates Lakebase recovery."""
+    code = _rtm_write_test_code()
+
+    assert "MAX_RECONNECT_ATTEMPTS = 12" in code
+    assert "BACKOFF_BASE_S = 1.0" in code
+    assert "BACKOFF_MAX_S = 30.0" in code
+    assert "def _connect_with_backoff(self):" in code
+    assert "def _execute_with_backoff(self, params):" in code
+    assert "_t.sleep(delay)" in code
+
+
 def test_rtm_write_test_wires_buffered_metrics_listener():
     """The buffered Zerobus metrics listener must match the production transport."""
     code = _rtm_write_test_code()

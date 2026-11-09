@@ -23,7 +23,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -51,12 +51,18 @@ from services import validation_snippets as snip
 from services import validation_state_machine as sm
 from services.dbsql_service import execute_dbsql
 from services.uc_ident import sql_fqn
-from services.validation_service import StepContext, StepResult
+from services.validation_service import StepContext, StepResult, format_executor_error
 
 # Source marker stamped on the RTM write-test rows so cleanup can purge exactly
 # the test data it produced (test-data isolation, §1.13).
 VALIDATION_SOURCE = "validation"
 RTM_TABLE = "sensor_readings"
+# ChronoTables are partitioned on event_time and also hold live SSS traffic.
+# Never COUNT(*) / unbounded SELECT: pin the existence probe to the write-test
+# window (or a short fallback) so partition pruning still applies on retry.
+_WRITE_TEST_WINDOW_BEFORE = timedelta(minutes=30)
+_WRITE_TEST_WINDOW_AFTER = timedelta(minutes=5)
+_FALLBACK_LOOKBACK = timedelta(minutes=15)
 
 logger = logging.getLogger("iot_digital_twin.services.validation_steps")
 
@@ -748,50 +754,105 @@ async def cdf_verify(ctx: StepContext) -> StepResult:
     return StepResult(sm.FAILED, error=result.get("detail") or "CDF not STREAMING/advancing")
 
 
-async def _count_validation_rows(conn: Any, industry: str) -> int:
-    rows = await conn.fetchval(
-        f"SELECT count(*) FROM {RTM_TABLE} WHERE source = $1 AND industry = $2",
+def _read_back_window(ctx: StepContext) -> tuple[datetime, datetime]:
+    """Return an event_time window that covers the write-test rows.
+
+    Prefer the passed write_test step's ``updated_at`` so a delayed retry still
+    finds those rows without scanning later live partitions. Fall back to a
+    short lookback from now when that stamp is missing.
+    """
+    now = datetime.now(timezone.utc)
+    key = sm.step_key(ctx.mode, "write_test") if ctx.mode else "write_test"
+    raw = ((ctx.state or {}).get("steps") or {}).get(key, {}).get("updated_at")
+    if raw:
+        try:
+            stamped = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if stamped.tzinfo is None:
+                stamped = stamped.replace(tzinfo=timezone.utc)
+            return (
+                stamped - _WRITE_TEST_WINDOW_BEFORE,
+                stamped + _WRITE_TEST_WINDOW_AFTER,
+            )
+        except ValueError:
+            pass
+    return now - _FALLBACK_LOOKBACK, now + timedelta(minutes=1)
+
+
+async def _validation_row_exists(
+    conn: Any, industry: str, start: datetime, end: datetime
+) -> bool:
+    """Return whether one validation row is visible in ``[start, end)``.
+
+    ChronoTables also hold unbounded live SSS traffic. A full-table COUNT(*)
+    times out on busy industry branches; SELECT 1 LIMIT 1 with an event_time
+    bound is enough to prove the write-test round-trip.
+    """
+    row = await conn.fetchval(
+        f"SELECT 1 FROM {RTM_TABLE} "
+        "WHERE source = $1 AND industry = $2 "
+        "AND event_time >= $3 AND event_time < $4 "
+        "LIMIT 1",
         VALIDATION_SOURCE,
         industry,
+        start,
+        end,
     )
-    return int(rows or 0)
+    return row is not None
+
+
+async def _close_conn(conn: Any) -> None:
+    if conn is None:
+        return
+    try:
+        await conn.close()
+    except Exception:  # pragma: no cover - best-effort
+        pass
 
 
 async def read_back(ctx: StepContext) -> StepResult:
-    # Immediate round-trip: verify the test rows landed in the ChronoTable via
-    # Lakebase.  The PRIMARY must have them; the REPLICA count is best-effort
-    # (replication is async, so a lower/zero replica count is not a failure).
+    # Immediate round-trip: the PRIMARY must show a recent validation row.
+    # Replica visibility is best-effort (async replication).
     cfg = _cfg(ctx)
+    start, end = _read_back_window(ctx)
     primary = None
     try:
         primary = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
-        primary_rows = await _count_validation_rows(primary, cfg["industry"])
-    finally:
-        if primary is not None:
-            try:
-                await primary.close()
-            except Exception:  # pragma: no cover
-                pass
-    if primary_rows <= 0:
+        found_primary = await _validation_row_exists(
+            primary, cfg["industry"], start, end
+        )
+    except Exception as exc:
         return StepResult(
-            sm.FAILED, error="no validation rows in Lakebase primary after write test"
+            sm.FAILED,
+            error=f"Lakebase primary existence probe failed: {format_executor_error(exc)}",
+        )
+    finally:
+        await _close_conn(primary)
+    if not found_primary:
+        return StepResult(
+            sm.FAILED,
+            error=(
+                "no validation row on Lakebase primary in the write-test window "
+                f"({start.isoformat()} .. {end.isoformat()}, source={VALIDATION_SOURCE})"
+            ),
         )
 
-    replica_rows: int | None = None
+    found_replica: bool | None = None
     replica = None
     try:
         replica = await pps.get_read_conn(cfg["branch"], ws=ctx.ws)
-        replica_rows = await _count_validation_rows(replica, cfg["industry"])
+        found_replica = await _validation_row_exists(
+            replica, cfg["industry"], start, end
+        )
     except Exception as exc:  # replica lag / transient — non-fatal
-        logger.info("read_back replica read failed (non-fatal): %s", exc)
+        logger.info(
+            "read_back replica read failed (non-fatal): %s",
+            format_executor_error(exc),
+        )
     finally:
-        if replica is not None:
-            try:
-                await replica.close()
-            except Exception:  # pragma: no cover
-                pass
+        await _close_conn(replica)
     return StepResult(
-        sm.PASSED, data={"rows_primary": primary_rows, "rows_replica": replica_rows}
+        sm.PASSED,
+        data={"found_primary": found_primary, "found_replica": found_replica},
     )
 
 

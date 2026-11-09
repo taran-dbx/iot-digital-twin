@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -80,6 +81,22 @@ def _pre_mock_sdk() -> None:
 _pre_mock_sdk()
 
 from core.state import AppState
+from domain.catalog import list_alert_rules
+
+
+@pytest.fixture()
+def instant_alert_rules():
+    """Catalog alert rules with their sustain duration removed.
+
+    Route and plumbing tests post one reading and expect an alert; the
+    duration debounce has its own engine-level tests.
+    """
+
+    def _rules(industry: str):
+        return tuple(replace(rule, duration_s=0.0) for rule in list_alert_rules(industry))
+
+    with patch("services.alert_engine.list_alert_rules", side_effect=_rules):
+        yield
 
 
 # ---------------------------------------------------------------------------

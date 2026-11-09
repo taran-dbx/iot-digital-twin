@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -161,6 +162,32 @@ class TestLaketsGapfill:
         assert "limit 5000" in query
         assert "lag(avg_value)" not in query
         assert "lakets.locf" not in query
+
+    @pytest.mark.asyncio
+    async def test_gapfill_timeout_returns_reason_c7271_defect(self) -> None:
+        """[C7271][defect] Gapfill must fail closed instead of hanging the chart."""
+
+        async def _slow(*_args, **_kwargs):
+            await asyncio.sleep(1)
+            return []
+
+        db = _mock_db(fetchval_return="0.1.0")
+        db.fetch = AsyncMock(side_effect=_slow)
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        with patch(
+            "routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01
+        ), _patch_pipeline_lakebase(db):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/gapfill?minutes=15")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rows"] == []
+        assert "timed out" in body["reason"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +518,45 @@ class TestLakebasePerf:
         mock_pipeline.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_legacy_pipeline_id_with_industry_uses_legacy_model(self) -> None:
+        """Industry query + legacy pipelines id authorizes via the legacy model."""
+        from routes.sensor_data import _authorize_mode_pipeline
+
+        state = _state_with_db(_mock_db())
+        state.db.fetchrow = AsyncMock(
+            return_value={
+                "source_type": "sss",
+                "source_config": {"rtm_sink": "lakebase"},
+                "user_email": "anonymous",
+            }
+        )
+        state.app_backend_db.fetchrow = AsyncMock(return_value=None)
+        kind = await _authorize_mode_pipeline(
+            state,
+            "00000000-0000-4000-8000-000000000001",
+            "pharmaceutical",
+            "realtime",
+            "anonymous",
+        )
+        assert kind == "legacy"
+
+    @pytest.mark.asyncio
+    async def test_deployment_id_with_industry_uses_deployment_model(self) -> None:
+        """Industry-first deployment ids authorize via pipeline_deployment."""
+        from routes.sensor_data import _authorize_mode_pipeline
+
+        state = _state_with_db(_mock_db())
+        state.app_backend_db.fetchrow = AsyncMock(return_value={"exists": 1})
+        kind = await _authorize_mode_pipeline(
+            state,
+            "00000000-0000-4000-8000-000000000099",
+            "pharmaceutical",
+            "realtime",
+            "anonymous",
+        )
+        assert kind == "deployment"
+
+    @pytest.mark.asyncio
     async def test_industry_no_data_yet_returns_graceful_empty(self) -> None:
         """A fresh industry branch with no ``sensor_readings`` table yet (realtime
         not deployed) must return the graceful-empty payload, never a 500."""
@@ -516,6 +582,60 @@ class TestLakebasePerf:
         assert body["rows_per_sec"] == 0
         assert body["rows_per_min"] == 0
         assert body["series"] == []
+
+    @pytest.mark.asyncio
+    async def test_query_timeout_returns_graceful_zeros_c7270_defect(self) -> None:
+        """[C7270][defect] Hung COUNT(*) probes must not look like zero writes."""
+
+        async def _slow(*_args, **_kwargs):
+            await asyncio.sleep(1)
+            return []
+
+        db = _mock_db()
+        db.fetch = AsyncMock(side_effect=_slow)
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        with patch(
+            "routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01
+        ), _patch_pipeline_lakebase(db):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=15")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rows_per_sec"] == 0
+        assert body["series"] == []
+
+    @pytest.mark.asyncio
+    async def test_counts_recent_chunks_instead_of_parent_c7270_defect(self) -> None:
+        """[C7270][defect] Throughput must scan ChronoTable children, not the parent."""
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        db = _mock_db()
+        db.fetch = AsyncMock(
+            side_effect=[
+                [{"chunk_name": "public.sensor_readings_20260421_100000"}],
+                [{"bucket": bucket_a, "cnt": 180}],
+            ]
+        )
+        state = _state_with_db(db)
+        app = _build_app_with_state(state)
+        with _patch_pipeline_lakebase(db):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rows_per_min"] == 36
+        metadata_sql = db.fetch.call_args_list[0].args[0].lower()
+        count_sql = db.fetch.call_args_list[1].args[0].lower()
+        assert "lakets._chunk_metadata" in metadata_sql
+        assert "sensor_readings_20260421_100000" in count_sql
+        assert "from sensor_readings\n" not in count_sql
+        assert "from sensor_readings readings" not in count_sql
 
 
 # ---------------------------------------------------------------------------

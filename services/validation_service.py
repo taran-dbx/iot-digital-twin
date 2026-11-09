@@ -60,6 +60,13 @@ class IncompleteSetupError(ValidationError):
 # Zerobus is serverless (Delta Ingest), so it needs no ``bootstrap_servers``.
 _KAFKA_MODES: frozenset[str] = frozenset({"realtime", "microbatch"})
 
+# Interactive-cluster states that mean the harness cannot run further steps.
+# Autoterminate (90 min idle) lands here while a mid-run step can still look
+# ``running`` to the UI poller — halt instead of walking Lakebase-only steps.
+_DEAD_CLUSTER_STATES: frozenset[str] = frozenset(
+    {"TERMINATED", "ERROR", "TERMINATING"}
+)
+
 
 def _missing_start_inputs(setup: dict) -> list[str]:
     """Return the required setup inputs missing for an interactive validation run.
@@ -126,6 +133,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def format_executor_error(exc: BaseException) -> str:
+    """Return a UI-safe executor failure string.
+
+    ``str(TimeoutError())`` is empty, which previously persisted as ``""`` and
+    rendered as "No failure reason was returned by the validation service."
+    Always include the exception type; append the message when it is non-empty.
+    """
+    name = type(exc).__name__
+    message = str(exc).strip()
+    if not message:
+        return name
+    return f"{name}: {message}"[:500]
+
+
 # ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
@@ -139,6 +160,100 @@ async def _require_setup(db: Any, industry: str) -> dict:
     if setup is None:
         raise ValidationError(f"no pipeline setup for industry {industry!r}")
     return setup
+
+
+def cluster_gone_error(cluster_state: str) -> str:
+    """UI-safe reason when validation stops because the harness cluster died."""
+    return (
+        f"interactive cluster is {cluster_state}; validation stopped. "
+        "Retry from provision_cluster to bring up a new cluster."
+    )
+
+
+def _should_halt_for_dead_cluster(
+    state: dict,
+    cluster_state: str | None,
+    key: str,
+    *,
+    preserve_failed: bool = False,
+) -> bool:
+    """True when ``key`` must fail because the interactive cluster is gone.
+
+    ``provision_cluster`` is allowed through so a retry can replace a stale
+    cluster. A fully green run is left untouched — autoterminate after success
+    is expected. ``preserve_failed`` (status poll only) keeps an existing
+    failure reason instead of overwriting it.
+    """
+    if cluster_state not in _DEAD_CLUSTER_STATES:
+        return False
+    if sm.bare_step(key) == sm.PROVISION_CLUSTER_STEP:
+        return False
+    if sm.is_gate_open(state):
+        return False
+    rec = ((state.get("steps") or {}).get(key) or {})
+    status = rec.get("status")
+    if status == sm.WAITING_ADMIN:
+        return False
+    if (
+        preserve_failed
+        and status == sm.FAILED
+        and str(rec.get("error") or "").strip()
+    ):
+        return False
+    return True
+
+
+def _reset_for_new_cluster(state: dict) -> dict:
+    """Re-provision and restart every unfinished lane; keep fully green lanes.
+
+    A lane's write-test rows and checkpoints belong to the old cluster's run,
+    so a partially-run lane restarts from its first step. An unfinished common
+    step means nothing downstream is trustworthy — start fresh.
+    """
+    steps = state.get("steps") or {}
+    for key in state["sequence"]:
+        if sm.is_terminal(key) or sm.mode_of(key) is not None:
+            continue
+        if sm.bare_step(key) == sm.PROVISION_CLUSTER_STEP:
+            continue
+        if steps[key]["status"] != sm.PASSED:
+            return sm.initial_state(state.get("enabled_modes") or [])
+
+    unfinished_lanes = {
+        sm.mode_of(key)
+        for key in state["sequence"]
+        if sm.mode_of(key) is not None
+        and steps[key]["status"] in (sm.FAILED, sm.RUNNING, sm.WAITING_ADMIN)
+    }
+    for key in state["sequence"]:
+        mode = sm.mode_of(key)
+        if (
+            sm.bare_step(key) == sm.PROVISION_CLUSTER_STEP
+            or sm.is_terminal(key)
+            or (mode is not None and mode in unfinished_lanes)
+        ):
+            state = sm.set_step(state, key, sm.PENDING)
+    return state
+
+
+async def _halt_if_cluster_dead(
+    db: Any,
+    setup_id: Any,
+    state: dict,
+    *,
+    cluster_state: str | None,
+) -> dict:
+    """Fail the next runnable step and persist when the harness cluster is dead."""
+    key = sm.next_runnable_step(state)
+    if key is None or not _should_halt_for_dead_cluster(
+        state, cluster_state, key, preserve_failed=True
+    ):
+        return state
+    error = cluster_gone_error(str(cluster_state))
+    logger.warning("validation step %s failed: %s", key, error)
+    state = _apply_result(state, key, StepResult(sm.FAILED, error=error))
+    await _persist(db, setup_id, state)
+    return state
 
 
 def _apply_result(state: dict, key: str, result: StepResult) -> dict:
@@ -189,6 +304,16 @@ async def run_machine(
         if key is None:
             break  # complete or parked on waiting_admin
 
+        cluster_state = await _lookup_cluster_state(state.get("cluster_id"), ws=ws)
+        if _should_halt_for_dead_cluster(state, cluster_state, key):
+            error = cluster_gone_error(str(cluster_state))
+            logger.warning("validation step %s failed: %s", key, error)
+            state = _apply_result(
+                state, key, StepResult(sm.FAILED, error=error)
+            )
+            await _persist(db, setup_id, state)
+            break
+
         # Mark running + persist (so a crash mid-step is visible on resume).
         state = sm.mark_running(state, key, updated_at=_now_iso())
         await _persist(db, setup_id, state)
@@ -206,8 +331,9 @@ async def run_machine(
             try:
                 result = await executor(ctx)
             except Exception as exc:  # any executor error → failed step, halt
-                logger.warning("validation step %s failed: %s", key, exc)
-                result = StepResult(sm.FAILED, error=str(exc)[:500])
+                error = format_executor_error(exc)
+                logger.warning("validation step %s failed: %s", key, error)
+                result = StepResult(sm.FAILED, error=error)
 
         state = _apply_result(state, key, result)
         await _persist(db, setup_id, state)
@@ -226,7 +352,7 @@ async def run_machine(
 # The routes call these, return the state to the client, then run the driver in
 # the background (a full run can take minutes provisioning the cluster).
 # ---------------------------------------------------------------------------
-async def prepare_start(db: Any, industry: str) -> dict:
+async def prepare_start(db: Any, industry: str, *, ws: Any | None = None) -> dict:
     """Prepare validation state, preserving green lanes when modes changed.
 
     Raises :class:`ValidationError` (→404) when no setup exists and
@@ -256,6 +382,10 @@ async def prepare_start(db: Any, industry: str) -> dict:
     else:
         state = sm.initial_state(enabled)
     state = sm.reset_legacy_cdf_park(state)
+    if (state["steps"].get(sm.PROVISION_CLUSTER_STEP) or {}).get("status") == sm.PASSED:
+        cluster_state = await _lookup_cluster_state(state.get("cluster_id"), ws=ws)
+        if cluster_state != "RUNNING":
+            state = _reset_for_new_cluster(state)
     await _persist(db, setup["id"], state)
     return {**setup, "validation_state": state}
 
@@ -298,7 +428,7 @@ async def start_validation(
     Overwrites any prior ``validation_state`` (a restart-from-scratch).  Use
     :func:`resume_validation` to continue an existing run.
     """
-    setup = await prepare_start(db, industry)
+    setup = await prepare_start(db, industry, ws=ws)
     return await run_machine(db, setup, executors=executors, ws=ws)
 
 
@@ -354,7 +484,15 @@ async def _lookup_cluster_state(cluster_id: str | None, *, ws: Any | None = None
         return "UNKNOWN"
 
 
-async def _enrich_state(state: dict, *, ws: Any | None = None) -> dict:
+_CLUSTER_STATE_UNSET = object()
+
+
+async def _enrich_state(
+    state: dict,
+    *,
+    ws: Any | None = None,
+    cluster_state: Any = _CLUSTER_STATE_UNSET,
+) -> dict:
     """Return a copy of ``state`` with live progress fields for the UI poll.
 
     Adds (additive, backwards-compatible):
@@ -371,7 +509,8 @@ async def _enrich_state(state: dict, *, ws: Any | None = None) -> dict:
     returned untouched so the UI can show elapsed / per-step timing.
     """
     cluster_id = state.get("cluster_id")
-    cluster_state = await _lookup_cluster_state(cluster_id, ws=ws)
+    if cluster_state is _CLUSTER_STATE_UNSET:
+        cluster_state = await _lookup_cluster_state(cluster_id, ws=ws)
     enriched = copy.deepcopy(state)
     enriched["cluster_id"] = cluster_id
     enriched["cluster_state"] = cluster_state
@@ -395,7 +534,13 @@ async def get_state(db: Any, industry: str, *, ws: Any | None = None) -> dict | 
     state = setup.get("validation_state") or None
     if not state:
         return None
-    return await _enrich_state(state, ws=ws)
+    # Settle a stuck in-progress run when the interactive cluster is gone so
+    # the health-page poller stops treating ``running`` + TERMINATED as live.
+    cluster_state = await _lookup_cluster_state(state.get("cluster_id"), ws=ws)
+    state = await _halt_if_cluster_dead(
+        db, setup["id"], state, cluster_state=cluster_state
+    )
+    return await _enrich_state(state, ws=ws, cluster_state=cluster_state)
 
 
 async def retry_step(

@@ -69,3 +69,6 @@ env:
 
   - name: LAKETS_SQL_PATH
     value: "/app/python/source_code/databricks/vendor/lakets.sql"
+
+  - name: GENIE_SPACE_ID
+    valueFrom: genie-space

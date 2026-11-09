@@ -109,6 +109,24 @@ class TestGenerationSemantics:
         assert "TARGET_RECORDS_PER_SEC / sensor_count" in section
         assert "update_rate_hz=SIM_TICK_HZ" in section
 
+    def test_wires_scenario_engine_and_fails_loud_c7314_regression(self) -> None:
+        """[C7314][regression] Industry producer wraps ticks and fails if scenario_engine is missing."""
+        section = _producer_section()
+        assert "from scenario_engine import ScenarioEngine" in section
+        assert "wrap_records" in section
+        assert 'electric_power' in section
+        assert "emitting unwrapped simulator ticks" not in section
+        assert "scenario_engine is not importable" not in section
+
+    def test_zerobus_producer_maps_energy_and_wraps_c7314_defect(self) -> None:
+        """[C7314][defect] Zerobus producers alias energy, wrap records, and fail loud on missing engine."""
+        text = PRODUCER_TS.read_text()
+        assert "function generateZerobusProducer" in text
+        assert "SIMULATOR_INDUSTRY = \"electric_power\" if INDUSTRY == \"energy\" else INDUSTRY" in text
+        assert "wrap_records(records)" in text
+        assert 'Simulator(industries=[SIMULATOR_INDUSTRY]' in text
+        assert "emitting unwrapped simulator ticks" not in text
+
     def test_does_not_create_topic(self) -> None:
         # Topic is created up-front by the provisioning engine (§1.8).
         section = _producer_section()

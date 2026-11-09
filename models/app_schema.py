@@ -99,6 +99,106 @@ PROVISIONED_RESOURCE_INDEXES = (
     "ON provisioned_resource (deployment_id)",
 )
 
+ALERT_DDL = """
+CREATE TABLE IF NOT EXISTS alert (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    fingerprint TEXT NOT NULL UNIQUE,
+    industry TEXT,
+    pipeline_id TEXT,
+    rule_id TEXT NOT NULL,
+    sensor_id TEXT,
+    sensor_ids TEXT[] NOT NULL DEFAULT '{}'::text[],
+    severity TEXT NOT NULL
+        CHECK (severity IN ('info', 'warn', 'crit')),
+    status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'acknowledged', 'cleared')),
+    fault_code TEXT,
+    value DOUBLE PRECISION,
+    threshold DOUBLE PRECISION,
+    opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    acknowledged_at TIMESTAMPTZ,
+    acknowledged_by TEXT,
+    cleared_at TIMESTAMPTZ,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    version INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+ALERT_EVENT_DDL = """
+CREATE TABLE IF NOT EXISTS alert_event (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alert_id UUID NOT NULL
+        REFERENCES alert(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL
+        CHECK (event_type IN ('opened', 'updated', 'acknowledged', 'cleared')),
+    fingerprint TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+ALERT_RESPONSE_DDL = """
+CREATE TABLE IF NOT EXISTS alert_response (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alert_id UUID NOT NULL
+        REFERENCES alert(id) ON DELETE CASCADE,
+    episode_opened_at TIMESTAMPTZ NOT NULL,
+    action TEXT NOT NULL
+        CHECK (action IN ('hold_batch', 'send_to_inspect', 'request_maintenance')),
+    recorded_by TEXT NOT NULL,
+    reference JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (alert_id, episode_opened_at, action)
+)
+"""
+
+PRODUCTION_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS production_state (
+    industry TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK (state IN ('running', 'stopped')),
+    assets JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reason TEXT,
+    alert_id UUID,
+    changed_by TEXT NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+PRODUCTION_EVENT_DDL = """
+CREATE TABLE IF NOT EXISTS production_event (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    industry TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('running', 'stopped')),
+    assets JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reason TEXT,
+    alert_id UUID,
+    changed_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+PRODUCTION_EVENT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_production_event_industry_created "
+    "ON production_event (industry, created_at DESC)",
+)
+
+ALERT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_alert_status_updated "
+    "ON alert (status, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_industry "
+    "ON alert (industry)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_pipeline "
+    "ON alert (pipeline_id)",
+)
+
+ALERT_EVENT_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_event_fingerprint "
+    "ON alert_event (fingerprint)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_event_alert_created "
+    "ON alert_event (alert_id, created_at)",
+)
+
 
 # ---------------------------------------------------------------------------
 # Idempotent creators
@@ -139,13 +239,57 @@ async def ensure_provisioned_resource_table(db: _Executor) -> None:
             raise
 
 
+async def _ensure_indexes(db: _Executor, statements: tuple[str, ...]) -> None:
+    """Create indexes, tolerating ownership errors on already-existing objects."""
+    for index_ddl in statements:
+        try:
+            await db.execute(index_ddl)
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            if "must be owner" in msg or "insufficientprivilege" in type(exc).__name__.lower():
+                continue
+            raise
+
+
+async def ensure_alert_table(db: _Executor) -> None:
+    """Create the current-state ``alert`` table + indexes."""
+    await db.execute(ALERT_DDL)
+    await db.execute(
+        "ALTER TABLE alert ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+    )
+    await _ensure_indexes(db, ALERT_INDEXES)
+
+
+async def ensure_alert_event_table(db: _Executor) -> None:
+    """Create the append-only ``alert_event`` table + idempotent indexes."""
+    await db.execute(ALERT_EVENT_DDL)
+    await _ensure_indexes(db, ALERT_EVENT_INDEXES)
+
+
+async def ensure_alert_response_table(db: _Executor) -> None:
+    """Create the ``alert_response`` table for recorded operator decisions."""
+    await db.execute(ALERT_RESPONSE_DDL)
+
+
+async def ensure_production_tables(db: _Executor) -> None:
+    """Create the cell ``production_state`` row table and its ``production_event`` log."""
+    await db.execute(PRODUCTION_STATE_DDL)
+    await db.execute(PRODUCTION_EVENT_DDL)
+    await _ensure_indexes(db, PRODUCTION_EVENT_INDEXES)
+
+
 async def ensure_app_schema(db: _Executor) -> None:
-    """Create all three app-backend tables in FK-dependency order.
+    """Create all app-backend tables in FK-dependency order.
 
     Order matters: ``pipeline_deployment`` and ``provisioned_resource``
     reference ``pipeline_setup``; ``provisioned_resource`` also references
-    ``pipeline_deployment``.
+    ``pipeline_deployment``; ``alert_event`` and ``alert_response`` reference
+    ``alert``.
     """
     await ensure_pipeline_setup_table(db)
     await ensure_pipeline_deployment_table(db)
     await ensure_provisioned_resource_table(db)
+    await ensure_alert_table(db)
+    await ensure_alert_event_table(db)
+    await ensure_alert_response_table(db)
+    await ensure_production_tables(db)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -327,3 +328,47 @@ class TestDeployLakeTSOpsJobs:
 
         assert len(results) == 1
         assert results[0]["job"] == "LakeTS Rollup Refresh — iot-lakets-demo/production"
+
+
+def test_all_lakets_notebooks_retry_postgres_recovery_with_backoff() -> None:
+    """[C7233][defect][regression] Every LakeTS job retries transient Postgres."""
+    sources = (
+        lakets_deploy_service._RETENTION_NOTEBOOK_SOURCE,
+        lakets_deploy_service._PARTITION_MANAGER_NOTEBOOK_SOURCE,
+        lakets_deploy_service._ROLLUP_REFRESH_NOTEBOOK_SOURCE,
+        lakets_deploy_service._TIERING_NOTEBOOK_SOURCE,
+    )
+
+    for source in sources:
+        text = source.decode("utf-8")
+        assert "MAX_CONNECT_ATTEMPTS = 12" in text
+        assert "BACKOFF_BASE_S = 1.0" in text
+        assert "BACKOFF_MAX_S = 30.0" in text
+        assert "def connect_with_backoff():" in text
+        assert "def run_with_backoff(sql, params=None, fetch=None):" in text
+        operation_retry = text.split(
+            "def run_with_backoff(sql, params=None, fetch=None):", 1
+        )[1]
+        assert "conn = connect_once()" in operation_retry
+        assert "conn = connect_with_backoff()" not in operation_retry
+        assert "time.sleep(delay)" in text
+        assert "except (psycopg2.OperationalError, psycopg2.InterfaceError):" in text
+
+
+def test_lakets_tasks_have_job_level_retry_safety_net() -> None:
+    """[C7235][defect][regression] Exhausted DB retries restart LakeTS tasks."""
+    for deployer in (
+        lakets_deploy_service.deploy_retention_job,
+        lakets_deploy_service._deploy_ops_job,
+    ):
+        source = inspect.getsource(deployer)
+        assert "max_retries=3" in source
+        assert "min_retry_interval_millis=30_000" in source
+        assert "retry_on_timeout=True" in source
+
+
+def test_rollup_cleanup_preserves_exhausted_postgres_error() -> None:
+    """[C7236][defect][regression] Cleanup never masks the retry root cause."""
+    text = lakets_deploy_service._ROLLUP_REFRESH_NOTEBOOK_SOURCE.decode("utf-8")
+
+    assert "finally:\n    if conn is not None:\n        conn.close()" in text

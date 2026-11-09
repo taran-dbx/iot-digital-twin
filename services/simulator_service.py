@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from core.state import AppState
+from domain.catalog import map_simulator_industries, to_record_industry
 
 logger = logging.getLogger("iot_digital_twin.simulator")
 
@@ -54,7 +55,7 @@ def _records_to_dicts(records: Any, source_tag: str) -> list[dict]:
     for r in records:
         latest[r.sensor_name] = {
             "sensor_name": r.sensor_name,
-            "industry": r.industry,
+            "industry": to_record_industry(r.industry),
             "value": round(r.value, 3),
             "unit": r.unit,
             "sensor_type": r.sensor_type,
@@ -73,7 +74,7 @@ async def run_simulator(state: AppState) -> None:
         from iot_simulator import Simulator
 
         sim = Simulator(
-            industries=state.industries.split(","),
+            industries=map_simulator_industries(state.industries.split(",")),
             update_rate_hz=state.update_rate_hz,
         )
         logger.info("Simulator created — industries=%s", state.industries)

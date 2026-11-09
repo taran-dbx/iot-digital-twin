@@ -22,6 +22,7 @@ from typing import Any
 from core.workspace_config import get_secret_scope
 
 from core.state import AppState
+from services import deployment_service
 from services.industry_templates import (
     CURATED_INDUSTRIES,
     MODES,
@@ -616,6 +617,7 @@ async def _deploy_and_start(
 
         w = getattr(state, "workspace_client", None) or WorkspaceClient()
         try:
+            await deployment_service.sync_runtime_oauth_secret(w)
             run = w.jobs.run_now(job_id=int(zerobus_job_id))
             return {
                 "status": "running",
@@ -645,13 +647,14 @@ async def _deploy_and_start(
 
     w = getattr(state, "workspace_client", None) or WorkspaceClient()
     try:
+        await deployment_service.sync_runtime_oauth_secret(w)
         w.jobs.update(
             job_id=int(job_id),
             new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.UNPAUSED)),
         )
     except Exception as exc:
         logger.warning(
-            "Failed to unpause job %s for %s: %s", job_id, pipeline_name(industry, mode), exc,
+            "Failed to start job %s for %s: %s", job_id, pipeline_name(industry, mode), exc,
         )
         return {"status": "starting", "job_id": job_id, "error": str(exc)[:200]}
     return {"status": "running", "job_id": job_id}

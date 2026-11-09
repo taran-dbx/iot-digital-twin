@@ -22,6 +22,10 @@ from routes.pipelines import router as pipelines_router
 from routes.lakets import router as lakets_router
 from routes.pipeline_deploy import router as pipeline_deploy_router
 from routes.streaming_latency import router as streaming_latency_router
+from routes.alerts import router as alerts_router
+from routes.production import router as production_router
+from routes.genie import router as genie_router
+from routes.intelligence import router as intelligence_router
 
 
 def create_api_router() -> APIRouter:
@@ -45,4 +49,8 @@ def create_api_router() -> APIRouter:
     api.include_router(lakets_router)
     api.include_router(pipeline_deploy_router)
     api.include_router(streaming_latency_router)
+    api.include_router(alerts_router)
+    api.include_router(production_router)
+    api.include_router(genie_router)
+    api.include_router(intelligence_router)
     return api

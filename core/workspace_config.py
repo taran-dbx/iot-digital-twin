@@ -21,6 +21,14 @@ Optional env var → WorkspaceConfig field mapping
 SECRET_SCOPE (alias ZEROBUS_SECRET_SCOPE) → secret_scope
 UC_SERVICE_CREDENTIAL                     → service_credential
 PIPELINES_LAKEBASE_PROJECT                → pipelines_project
+GENIE_SPACE_ID                            → genie_space_id
+
+``GENIE_SPACE_ID`` is injected by the Databricks Apps runtime from the
+``genie-space`` resource (``valueFrom: genie-space`` in ``app.yaml``).  The
+resource permission contract is **CAN_VIEW**.  Genie is called server-side
+with the **app service principal** only — never with a user token and never
+with a hardcoded space id.  When the env var is blank the copilot is
+disabled and API routes return a clear disabled/503 response.
 
 All required fields raise ``RuntimeError`` at ``get_config()`` call time when
 unset.  Optional fields default to ``""`` — the app must tolerate empty values
@@ -71,6 +79,7 @@ class WorkspaceConfig:
     secret_scope: str       # SECRET_SCOPE or ZEROBUS_SECRET_SCOPE
     service_credential: str # UC_SERVICE_CREDENTIAL
     pipelines_project: str  # PIPELINES_LAKEBASE_PROJECT
+    genie_space_id: str     # GENIE_SPACE_ID from genie-space resource (CAN_VIEW)
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +130,16 @@ def get_app_sp_client_id() -> str:
     return os.getenv("DATABRICKS_CLIENT_ID", "")
 
 
+def get_genie_space_id() -> str:
+    """Return the Genie space id injected from the ``genie-space`` app resource.
+
+    Reads ``GENIE_SPACE_ID`` on every call.  Returns ``""`` when the resource
+    is not bound — callers must treat that as disabled (no Genie API traffic).
+    Permission contract: the app SP needs **CAN_VIEW** on the space.
+    """
+    return os.getenv("GENIE_SPACE_ID", "").strip()
+
+
 def get_config() -> WorkspaceConfig:
     """Return the workspace configuration read from environment variables.
 
@@ -151,4 +170,5 @@ def get_config() -> WorkspaceConfig:
         secret_scope=get_secret_scope(),
         service_credential=get_service_credential(),
         pipelines_project=get_pipelines_project(),
+        genie_space_id=get_genie_space_id(),
     )

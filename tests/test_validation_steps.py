@@ -15,6 +15,7 @@ Focus (the Phase-7 design-gap fix):
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -230,22 +231,34 @@ async def test_microbatch_write_test_unchanged(monkeypatch):
     assert captured["code"] == "MICROBATCH"
 
 
+def _assert_existence_probe(sql: str, args: tuple) -> None:
+    lowered = sql.lower()
+    assert "count(" not in lowered
+    assert "limit 1" in lowered
+    assert "event_time >=" in lowered
+    assert "event_time <" in lowered
+    assert args[0] == vs.VALIDATION_SOURCE
+    assert args[1] == "pharmaceutical"
+    assert len(args) == 4
+    assert args[2] < args[3]
+
+
 @pytest.mark.asyncio
-async def test_read_back_checks_primary_and_replica(monkeypatch):
+async def test_read_back_probes_existence_not_count_c7237(monkeypatch):
     class FakeConn:
-        def __init__(self, n):
-            self.n = n
+        def __init__(self, value):
+            self.value = value
             self.queries: list = []
 
         async def fetchval(self, sql, *args):
             self.queries.append((sql, args))
-            return self.n
+            return self.value
 
         async def close(self):
             pass
 
-    primary = FakeConn(100)
-    replica = FakeConn(97)
+    primary = FakeConn(1)
+    replica = FakeConn(1)
 
     async def fake_write_conn(branch, *, ws=None):
         return primary
@@ -258,17 +271,18 @@ async def test_read_back_checks_primary_and_replica(monkeypatch):
 
     result = await vs.read_back(_ctx("realtime"))
     assert result.status == sm.PASSED
-    assert result.data["rows_primary"] == 100
-    assert result.data["rows_replica"] == 97
-    # Only the test rows are counted (source-scoped isolation).
-    assert any("source" in q[0] for q in primary.queries)
+    assert result.data["found_primary"] is True
+    assert result.data["found_replica"] is True
+    assert primary.queries
+    _assert_existence_probe(*primary.queries[0])
+    _assert_existence_probe(*replica.queries[0])
 
 
 @pytest.mark.asyncio
-async def test_read_back_fails_when_no_rows(monkeypatch):
+async def test_read_back_fails_when_no_recent_row_c7237(monkeypatch):
     class FakeConn:
         async def fetchval(self, sql, *args):
-            return 0
+            return None
 
         async def close(self):
             pass
@@ -281,6 +295,76 @@ async def test_read_back_fails_when_no_rows(monkeypatch):
 
     result = await vs.read_back(_ctx("realtime"))
     assert result.status == sm.FAILED
+    assert result.error
+    assert "count" not in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_read_back_surfaces_empty_timeout_c7237(monkeypatch):
+    class FakeConn:
+        async def fetchval(self, sql, *args):
+            raise TimeoutError()
+
+        async def close(self):
+            pass
+
+    async def fake_write_conn(branch, *, ws=None):
+        return FakeConn()
+
+    monkeypatch.setattr(vs.pps, "get_write_conn", fake_write_conn)
+
+    result = await vs.read_back(_ctx("realtime"))
+    assert result.status == sm.FAILED
+    assert result.error
+    assert "TimeoutError" in result.error
+
+
+@pytest.mark.asyncio
+async def test_read_back_window_uses_write_test_stamp_on_retry_c7237(monkeypatch):
+    class FakeConn:
+        def __init__(self):
+            self.queries: list = []
+
+        async def fetchval(self, sql, *args):
+            self.queries.append((sql, args))
+            return 1
+
+        async def close(self):
+            pass
+
+    conn = FakeConn()
+
+    async def fake_conn(branch, *, ws=None):
+        return conn
+
+    monkeypatch.setattr(vs.pps, "get_write_conn", fake_conn)
+    monkeypatch.setattr(vs.pps, "get_read_conn", fake_conn)
+
+    written_at = datetime(2026, 10, 13, 8, 0, tzinfo=timezone.utc)
+    ctx = _ctx("realtime")
+    ctx = StepContext(
+        db=ctx.db,
+        setup=ctx.setup,
+        state={
+            "cluster_id": "c-1",
+            "steps": {
+                "realtime:write_test": {
+                    "status": sm.PASSED,
+                    "error": None,
+                    "updated_at": written_at.isoformat(),
+                }
+            },
+        },
+        key=ctx.key,
+        step=ctx.step,
+        mode=ctx.mode,
+        ws=ctx.ws,
+    )
+    result = await vs.read_back(ctx)
+    assert result.status == sm.PASSED
+    start, end = conn.queries[0][1][2], conn.queries[0][1][3]
+    assert start == written_at - timedelta(minutes=30)
+    assert end == written_at + timedelta(minutes=5)
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,7 @@ async def shutdown(state: AppState) -> None:
             state.retention_task,
             state.simulator_task,
             state.industry_runtime_refresh_task,
+            getattr(state, "alert_snapshot_sync_task", None),
         )
         if task is not None
     }

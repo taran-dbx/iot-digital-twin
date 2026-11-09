@@ -251,6 +251,7 @@ class TestSseThresholdAlertBroadcastE2E:
         queue = _register_sse_queue(state)
         alert = {
             "pipeline_id": "pipe-1",
+            "industry": "pharmaceutical",
             "sensor_id": "temp-01",
             "sensor_type": "temperature",
             "value": 120.5,
@@ -263,11 +264,11 @@ class TestSseThresholdAlertBroadcastE2E:
         assert resp.status_code == 200
 
         event = await asyncio.wait_for(queue.get(), timeout=1.0)
-        assert event["type"] == "threshold_alert"
+        assert event["type"] == "alert_opened"
         assert event["pipeline_id"] == alert["pipeline_id"]
         assert event["sensor_id"] == alert["sensor_id"]
         assert event["value"] == alert["value"]
-        assert event["threshold_max"] == alert["threshold_max"]
+        assert event["threshold"] == alert["threshold_max"]
 
     @pytest.mark.asyncio
     async def test_alerts_events_route_is_streaming(

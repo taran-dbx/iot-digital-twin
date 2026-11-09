@@ -12,7 +12,8 @@ Verified invariants asserted here:
     ``kafka.sasl.*`` / ``kafka.security.protocol`` (UC credential handles MSK-IAM).
   * Real-time writer: ``.outputMode("update").foreach(LakebaseWriter())
     .trigger(realTime=...)`` with a POSITIONAL-tuple ForeachWriter INSERTing into
-    the LakeTS ChronoTable via ``w.postgres.generate_database_credential``.
+    the LakeTS ChronoTable using a driver-minted ``generate_database_credential``
+    token broadcast to executors.
   * Micro-batch writer: Delta ``.foreachBatch(write_micro_batch)`` (saveAsTable)
     on ``.trigger(processingTime="15 seconds")``.
   * Metrics: buffered Zerobus listener (queue + daemon thread + Zerobus SDK
@@ -195,6 +196,52 @@ class TestRealtimeWriter:
         assert "postgres.get_endpoint" in text
         assert 'sslmode="require"' in text
 
+    def test_lakebase_connect_uses_driver_minted_token_c7258(self) -> None:
+        """Executors must not call WorkspaceClient; driver only fail-fast mints [C7258][defect]."""
+        block = _lakebase_writer_block()
+        before, _, _rest = block.partition("class LakebaseWriter:")
+        assert "generate_database_credential" in before
+        assert "WorkspaceClient()" in before
+        assert "_lb_primary_name_bc = spark.sparkContext.broadcast(" in before
+        connect = re.search(
+            r"    def _connect\(self\):(.*?)\n    def _disconnect",
+            block,
+            re.DOTALL,
+        )
+        assert connect is not None
+        body = connect.group(1)
+        assert "generate_database_credential" not in body
+        assert "WorkspaceClient(" not in body
+        assert "self._fresh_pg_token()" in body
+        assert "_lb_token_bc" not in body
+        assert "user=_lb_user_bc.value" in body
+
+    def test_lakebase_reconnect_remints_oauth_via_oidc_c7272(self) -> None:
+        """Reconnect must mint a new Postgres OAuth token, not reuse a broadcast [C7272][defect]."""
+        block = _lakebase_writer_block()
+        assert "_lb_token_bc" not in block
+        assert 'TOKEN_TTL_S = 20 * 60' in block
+        mint = re.search(
+            r"    def _fresh_pg_token\(self\):(.*?)\n    def _connect",
+            block,
+            re.DOTALL,
+        )
+        assert mint is not None
+        body = mint.group(1)
+        assert "/oidc/v1/token" in body
+        assert "/api/2.0/postgres/credentials" in body
+        assert "WorkspaceClient(" not in body
+        assert 'json={"endpoint": _lb_primary_name_bc.value}' in body
+        assert 'return cred.json()["token"]' in body
+        reconnect = re.search(
+            r"    def _reconnect\(self\):(.*?)\n    def _delay",
+            block,
+            re.DOTALL,
+        )
+        assert reconnect is not None
+        assert "self._connect_with_backoff()" in reconnect.group(1)
+        assert "_lb_req.RequestException" in block
+
     def test_inserts_into_chronotable_with_all_columns(self) -> None:
         text = _ts()
         # The INSERT column list must carry all SSOT columns + source.
@@ -232,7 +279,7 @@ class TestRealtimeWriter:
             re.DOTALL,
         )
         assert open_block is not None
-        assert open_block.group(1).index("self._connect()") < open_block.group(1).index(
+        assert open_block.group(1).index("self._connect_with_backoff()") < open_block.group(1).index(
             "self._last_flush = _lb_time.monotonic()"
         )
         close_block = re.search(r"    def close\(self, error\):(.*)$", block, re.DOTALL)
@@ -251,7 +298,7 @@ class TestRealtimeWriter:
         assert "self._reconnect()" in block
         assert "raise" in block
         flush_block = re.search(
-            r"    def _flush\(self\):(.*?)\n    def open",
+            r"    def _flush_with_backoff\(self\):(.*?)\n    def _flush",
             block,
             re.DOTALL,
         )

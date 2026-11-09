@@ -9,8 +9,12 @@ import logging
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from core.auth import get_current_user
+from core.auth import require_identity
 from core.state import AppState, get_app_state
+from domain.catalog import to_record_industry
+from services.alert_engine import engine_for
+from services.alert_snapshot_sync import mark_snapshot_dirty
+from services.alert_sse import build_lifecycle_payload, enqueue_alert_events
 
 logger = logging.getLogger("iot_digital_twin.routes.websocket")
 router = APIRouter()
@@ -21,9 +25,16 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 @router.get("/api/events")
-async def sse_events(request: Request, state: AppState = Depends(get_app_state)):
+async def sse_events(
+    request: Request,
+    state: AppState = Depends(get_app_state),
+    _user: str = Depends(require_identity),
+):
     """Server-Sent Events endpoint for real-time sensor data."""
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    industry = (request.query_params.get("industry") or "").strip()
+    if industry:
+        queue.filter_industry = to_record_industry(industry)
     state.sse_clients.append(queue)
     logger.info("SSE client connected (%d total)", len(state.sse_clients))
 
@@ -80,38 +91,44 @@ async def websocket_endpoint(ws: WebSocket, state: AppState = Depends(get_app_st
 # ---------------------------------------------------------------------------
 
 @router.post("/api/sss/alerts")
-async def sss_alerts_ingest(request: Request, user_email: str = Depends(get_current_user)):
-    """Accept threshold alerts from the SSS notebook and fan out to all SSE clients."""
+async def sss_alerts_ingest(request: Request, user_email: str = Depends(require_identity)):
+    """Accept legacy SSS threshold alerts and emit full lifecycle events."""
     state: AppState = request.app.state.app_state
     body = await request.json()
     alerts = body.get("alerts", [])
+    if isinstance(alerts, list) and len(alerts) > 200:
+        alerts = alerts[:200]
 
     if not alerts:
         return JSONResponse(content={"status": "ok", "count": 0})
 
-    dispatched = 0
-    for alert in alerts:
-        event_data = {
-            "type": "threshold_alert",
-            "pipeline_id": alert.get("pipeline_id"),
-            "sensor_id": alert.get("sensor_id"),
-            "sensor_type": alert.get("sensor_type"),
-            "value": alert.get("value"),
-            "threshold_min": alert.get("threshold_min"),
-            "threshold_max": alert.get("threshold_max"),
-            "timestamp": alert.get("timestamp"),
-        }
-        for client_queue in state.sse_clients:
-            try:
-                client_queue.put_nowait(event_data)
-                dispatched += 1
-            except Exception:
-                pass
+    accepted: list[dict] = []
+    for raw in alerts:
+        if not isinstance(raw, dict):
+            continue
+        if not str(raw.get("industry") or "").strip():
+            logger.warning("sss_alerts_ingest: rejecting alert without industry")
+            continue
+        accepted.append(raw)
+    if not accepted:
+        return JSONResponse(content={"status": "ok", "count": 0})
+
+    engine = engine_for(state)
+    db = state.app_backend_db if state.app_backend_available else None
+    transitions = await engine.ingest_threshold_alerts(accepted, db=db)
+    payloads = [
+        build_lifecycle_payload(item.event_type, item.alert, item.extra)
+        for item in transitions
+    ]
+    enqueue_alert_events(state, payloads)
+    if transitions:
+        mark_snapshot_dirty(state)
 
     logger.info(
-        "sss_alerts_ingest: %d alerts received, %d events dispatched to %d clients",
+        "sss_alerts_ingest: %d alerts received, %d lifecycle events dispatched to %d clients (user=%s)",
         len(alerts),
-        dispatched,
+        len(payloads),
         len(state.sse_clients),
+        user_email,
     )
     return JSONResponse(content={"status": "ok", "count": len(alerts)})

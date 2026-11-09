@@ -55,6 +55,7 @@ from services import (
 )
 from services.app_repo_common import DBExecutor
 from services.databricks_sdk import detect_cloud
+from services.production_control import PRODUCTION_CONTROL_TOKEN, control_file_path
 from services.resource_ledger import record_resource
 
 # Validation hard-gate (spec §1.12) lives in its own module; re-exported here so
@@ -162,12 +163,13 @@ def _new_ws() -> Any:
     return WorkspaceClient()
 
 
-async def sync_runtime_oauth_secret(w: Any) -> dict:
+async def sync_runtime_oauth_secret(w: Any | None = None) -> dict:
     """Refresh the UC secret with the current app SP client secret.
 
-    Databricks Apps can rotate ``DATABRICKS_CLIENT_SECRET`` between deploys.
-    Updating immediately before job deploy/start keeps the secret paired with
-    ``DATABRICKS_CLIENT_ID`` instead of letting a stale value fail in Zerobus.
+    Databricks Apps rotate ``DATABRICKS_CLIENT_SECRET`` and restart the app with
+    the new value. Running jobs re-read the UC secret when token minting is
+    rejected, so it must be refreshed on app startup as well as before job
+    deploy/start.
     """
     values = {
         "DATABRICKS_CLIENT_ID": os.getenv("DATABRICKS_CLIENT_ID", ""),
@@ -186,7 +188,7 @@ async def sync_runtime_oauth_secret(w: Any) -> dict:
         values["UC_SCHEMA"],
         APP_SP_OAUTH_SECRET_KEY,
         values["DATABRICKS_CLIENT_SECRET"],
-        ws=w,
+        ws=w or _new_ws(),
     )
     if result.get("status") == "failed":
         raise RuntimeOAuthCredentialError(
@@ -403,6 +405,11 @@ def build_producer_cluster_spec(
     )
 
 
+# The producer watches its sibling tasks (PEER_TASK_WATCH_PYTHON); notebook
+# context tags are not readable on locked-down compute, so pass the ids in.
+PRODUCER_RUN_PARAMETERS = {"job_run_id": "{{job.run_id}}", "task_run_id": "{{task.run_id}}"}
+
+
 def build_spark_tasks(
     *,
     mode: str,
@@ -430,6 +437,9 @@ def build_spark_tasks(
             ),
             notebook_task=NotebookTask(notebook_path=consumer_notebook_path),
             libraries=build_cluster_libraries(CLASSIC_CONSUMER_LIBRARIES),
+            max_retries=3,
+            min_retry_interval_millis=30_000,
+            retry_on_timeout=True,
         )
     ]
     if producer_notebook_path:
@@ -441,8 +451,14 @@ def build_spark_tasks(
                     single_user_name=single_user_name,
                     cloud=cloud,
                 ),
-                notebook_task=NotebookTask(notebook_path=producer_notebook_path),
+                notebook_task=NotebookTask(
+                    notebook_path=producer_notebook_path,
+                    base_parameters=dict(PRODUCER_RUN_PARAMETERS),
+                ),
                 libraries=build_cluster_libraries(PRODUCER_LIBRARIES),
+                max_retries=3,
+                min_retry_interval_millis=30_000,
+                retry_on_timeout=True,
             )
         )
     return tasks
@@ -462,6 +478,9 @@ def build_zerobus_task(
             base_parameters=base_parameters or {},
         ),
         environment_key=environment_key,
+        max_retries=3,
+        min_retry_interval_millis=30_000,
+        retry_on_timeout=True,
     )
 
 
@@ -603,6 +622,8 @@ async def _deploy_spark_pipeline(
     producer_path = None
     if producer_notebook:
         producer_path = _notebook_path(single_user_name, industry, mode, "producer")
+        control_path = control_file_path(producer_path.rsplit("/", 1)[0], industry)
+        producer_notebook = producer_notebook.replace(PRODUCTION_CONTROL_TOKEN, control_path)
         _upload_notebook(w, producer_path, producer_notebook)
 
     tasks = build_spark_tasks(
