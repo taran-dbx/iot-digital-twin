@@ -49,13 +49,35 @@ def _quoted(fqn: str) -> str:
     return sql_fqn(*fqn.split("."))
 
 
-CDC_INSERT_FILTER = "_pg_change_type = 'insert'"
+# Same row filter the dashboard applies to the realtime shadow table
+# (routes/sensor_data.py): current row images only, scoped to the industry.
+CDC_CHANGE_FILTER = "_pg_change_type IN ('insert', 'update_postimage')"
 _CDC_HIDDEN_COLUMNS: tuple[str, ...] = ("_pg_lsn", "_pg_xid", "_sort_by", "_timestamp")
 
 
-def _cdc_where(cdc: bool) -> str:
-    """Leading WHERE predicate for CDC shadow tables (empty for plain Delta)."""
-    return f"{CDC_INSERT_FILTER} AND " if cdc else ""
+def telemetry_row_filter(mode: str, industry: str, qualifier: str = "") -> str | None:
+    """Row predicate for ``mode``'s telemetry table, or None when none is needed.
+
+    Realtime reads the Lakehouse Sync shadow table (CDC rows, all industries);
+    ``qualifier`` (e.g. ``"tbl."``) prefixes each column for Genie snippets.
+    """
+    if mode != "realtime":
+        return None
+    q = qualifier
+    return (
+        f"{q}_pg_change_type IN ('insert', 'update_postimage') "
+        f"AND {q}industry = {_literal(industry)}"
+    )
+
+
+def _cdc_where(row_filter: str | None) -> str:
+    """Leading WHERE predicate (empty when the table needs no row filter)."""
+    return f"{row_filter} AND " if row_filter else ""
+
+
+def _guard(expr: str, row_filter: str | None) -> str:
+    """Restrict an aggregate's input rows: non-matching rows become NULL (ignored)."""
+    return f"CASE WHEN {row_filter} THEN {expr} END" if row_filter else expr
 
 
 def _literal(value: str) -> str:
@@ -123,11 +145,13 @@ def text_instructions(
 def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -> list[str]:
     t = _short(telemetry)
     lit = _literal(industry)
+    row_filter = telemetry_row_filter(mode, industry, f"{t}.")
     cdc_note = (
         f"{telemetry} is the Lakehouse Sync mirror of the real-time Lakebase "
-        f"stream: ALWAYS filter {t}.{CDC_INSERT_FILTER} (one row per reading) and "
-        "ignore the _pg_* / _timestamp / _sort_by bookkeeping columns."
-        if mode == "realtime"
+        f"stream (all industries): ALWAYS filter {row_filter} (current reading "
+        "rows for this industry) and ignore the _pg_* / _timestamp / _sort_by "
+        "bookkeeping columns."
+        if row_filter
         else None
     )
     zerobus_note = (
@@ -176,16 +200,16 @@ def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -
     ]
 
 
-def _downtime_sql(tel: str, cdc: bool = False) -> str:
+def _downtime_sql(tel: str, row_filter: str | None = None) -> str:
     return (
         "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) "
-        f"AS downtime_minutes FROM {tel} WHERE {_cdc_where(cdc)}fault_active "
+        f"AS downtime_minutes FROM {tel} WHERE {_cdc_where(row_filter)}fault_active "
         "AND event_time >= current_timestamp() - INTERVAL 24 HOURS "
         "GROUP BY sensor_name ORDER BY downtime_minutes DESC"
     )
 
 
-def _oee_sql(tel: str, cdc: bool = False) -> str:
+def _oee_sql(tel: str, row_filter: str | None = None) -> str:
     return (
         "WITH m AS (SELECT sensor_name, "
         "COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, "
@@ -196,7 +220,7 @@ def _oee_sql(tel: str, cdc: bool = False) -> str:
         "AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL "
         "WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) "
         f"AS quality FROM {tel} "
-        f"WHERE {_cdc_where(cdc)}event_time >= current_timestamp() - INTERVAL 24 HOURS "
+        f"WHERE {_cdc_where(row_filter)}event_time >= current_timestamp() - INTERVAL 24 HOURS "
         "GROUP BY sensor_name) "
         "SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, "
         "ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, "
@@ -206,25 +230,25 @@ def _oee_sql(tel: str, cdc: bool = False) -> str:
     )
 
 
-def _anomaly_sql(tel: str, cdc: bool = False) -> str:
+def _anomaly_sql(tel: str, row_filter: str | None = None) -> str:
     return (
         "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, "
         f"MAX(value) AS max_seen FROM {tel} "
-        f"WHERE {_cdc_where(cdc)}(value < min_value OR value > max_value) "
+        f"WHERE {_cdc_where(row_filter)}(value < min_value OR value > max_value) "
         "AND event_time >= current_timestamp() - INTERVAL 1 HOUR "
         "GROUP BY sensor_name ORDER BY anomalies DESC"
     )
 
 
 def _maintenance_sql(
-    tel: str, refs: dict[str, str], industry: str, cdc: bool = False
+    tel: str, refs: dict[str, str], industry: str, row_filter: str | None = None
 ) -> str:
     bindings = _quoted(refs["sensor_bindings"])
     maint = _quoted(refs["maintenance_records"])
     lit = _literal(industry)
     return (
         "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings "
-        f"FROM {tel} WHERE {_cdc_where(cdc)}fault_active "
+        f"FROM {tel} WHERE {_cdc_where(row_filter)}fault_active "
         "AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) "
         "SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, "
         "MAX(r.completed_at) AS last_maintenance "
@@ -257,43 +281,53 @@ def example_sqls(
 ) -> list[tuple[str, str]]:
     """Return ``(question, sql)`` pairs scoped to this pipeline's tables."""
     tel = _quoted(telemetry)
-    cdc = mode == "realtime"
+    rf = telemetry_row_filter(mode, industry)
     return [
         ("How many minutes of downtime did each sensor have in the last 24 hours?",
-         _downtime_sql(tel, cdc)),
-        ("What is the approximate OEE per sensor over the last 24 hours?", _oee_sql(tel, cdc)),
-        ("Which sensors had the most anomalies in the last hour?", _anomaly_sql(tel, cdc)),
+         _downtime_sql(tel, rf)),
+        ("What is the approximate OEE per sensor over the last 24 hours?", _oee_sql(tel, rf)),
+        ("Which sensors had the most anomalies in the last hour?", _anomaly_sql(tel, rf)),
         ("Which assets had the most faults this week and when were they last maintained?",
-         _maintenance_sql(tel, refs, industry, cdc)),
+         _maintenance_sql(tel, refs, industry, rf)),
         _mode_sql(tel, _quoted(metrics), mode),
     ]
 
 
-def sql_snippets(telemetry: str) -> dict[str, list[dict[str, Any]]]:
-    """Reusable measures / filters / expressions qualified with the table name."""
+def sql_snippets(
+    telemetry: str, mode: str = "microbatch", industry: str = "manufacturing"
+) -> dict[str, list[dict[str, Any]]]:
+    """Reusable measures / filters / expressions qualified with the table name.
+
+    For realtime, measures and filters also apply the CDC/industry row filter.
+    """
     t = _short(telemetry)
+    rf = telemetry_row_filter(mode, industry, f"{t}.")
+    fault = f"CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END"
+    anomaly = (
+        f"CASE WHEN {t}.min_value IS NULL OR {t}.max_value IS NULL THEN NULL "
+        f"WHEN {t}.value < {t}.min_value OR {t}.value > {t}.max_value THEN 1.0 ELSE 0.0 END"
+    )
     return {
         "measures": [
             {"alias": "fault_rate_pct", "display_name": "Fault rate %",
-             "sql": [f"100 * AVG(CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END)"],
+             "sql": [f"100 * AVG({_guard(fault, rf)})"],
              "synonyms": ["downtime rate", "fault ratio"]},
             {"alias": "availability_pct", "display_name": "Availability % (reading-based)",
-             "sql": [f"100 * (1 - AVG(CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END))"],
+             "sql": [f"100 * (1 - AVG({_guard(fault, rf)}))"],
              "synonyms": ["availability", "uptime"]},
             {"alias": "anomaly_rate_pct", "display_name": "Anomaly rate %",
-             "sql": [f"100 * AVG(CASE WHEN {t}.min_value IS NULL OR {t}.max_value IS NULL "
-                     f"THEN NULL WHEN {t}.value < {t}.min_value OR "
-                     f"{t}.value > {t}.max_value THEN 1.0 ELSE 0.0 END)"],
+             "sql": [f"100 * AVG({_guard(f'({anomaly})', rf)})"],
              "synonyms": ["out of range rate"]},
         ],
         "filters": [
-            {"display_name": "Fault active (downtime)", "sql": [f"{t}.fault_active = TRUE"],
+            {"display_name": "Fault active (downtime)",
+             "sql": [_cdc_where(rf) + f"{t}.fault_active = TRUE"],
              "synonyms": ["down", "faulted", "stopped"]},
             {"display_name": "Anomalous reading",
-             "sql": [f"({t}.value < {t}.min_value OR {t}.value > {t}.max_value)"],
+             "sql": [_cdc_where(rf) + f"({t}.value < {t}.min_value OR {t}.value > {t}.max_value)"],
              "synonyms": ["out of range", "anomaly"]},
             {"display_name": "Last 24 hours",
-             "sql": [f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS"]},
+             "sql": [_cdc_where(rf) + f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS"]},
         ],
         "expressions": [
             {"alias": "deviation_from_nominal", "display_name": "Deviation from nominal",
