@@ -61,31 +61,56 @@ const tableResult = {
   truncated: false,
 };
 
+/** What the backend echoes as `content`: the trusted prompt wrapper. Must never render. */
+export const WRAPPED_PROMPT = "[TRUSTED CONTEXT] pipeline=setup-mfg-1 [UNTRUSTED QUESTION] …";
+
 const messages: Record<string, Record<string, unknown>> = {
   "msg-1": {
     conversation_id: "conv-1",
     message_id: "msg-1",
     status: "COMPLETED",
-    content: starterQuestions[0],
+    content: WRAPPED_PROMPT,
     error: null,
     attachments: [
-      { attachment_id: "att-text-1", text: "Spindle temperature climbed 6°C over the window." },
+      {
+        attachment_id: "att-text-1",
+        text: "Spindle temperature climbed 6°C over the window.",
+        query: null,
+        suggested_questions: [],
+      },
       {
         attachment_id: "att-line",
+        text: null,
         query: { sql: "SELECT window_start, avg(temp) FROM spindle GROUP BY 1", description: "Average spindle temperature per 5 minutes" },
+        suggested_questions: [],
       },
-      { attachment_id: "att-suggest", suggested_questions: ["Which station raised the most alerts?"] },
+      {
+        attachment_id: "att-suggest",
+        text: null,
+        query: null,
+        suggested_questions: ["Which station raised the most alerts?"],
+      },
     ],
   },
   "msg-2": {
     conversation_id: "conv-1",
     message_id: "msg-2",
     status: "COMPLETED",
-    content: "Which station raised the most alerts?",
+    content: WRAPPED_PROMPT,
     error: null,
     attachments: [
-      { attachment_id: "att-bar", query: { sql: "SELECT station, count(*) FROM alerts GROUP BY 1", description: null } },
-      { attachment_id: "att-table", query: { sql: "SELECT station, fault_code, operator FROM alerts", description: "Raw alerts" } },
+      {
+        attachment_id: "att-bar",
+        text: null,
+        query: { sql: "SELECT station, count(*) FROM alerts GROUP BY 1", description: null },
+        suggested_questions: [],
+      },
+      {
+        attachment_id: "att-table",
+        text: null,
+        query: { sql: "SELECT station, fault_code, operator FROM alerts", description: "Raw alerts" },
+        suggested_questions: [],
+      },
     ],
   },
 };
@@ -96,12 +121,35 @@ const results: Record<string, unknown> = {
   "att-table": tableResult,
 };
 
-export async function mockPipelineGenie(
-  page: Page,
-  options: { available?: boolean; reason?: string; failResults?: boolean } = {},
-) {
+export interface PipelineGenieMockOptions {
+  available?: boolean;
+  spaceId?: string | null;
+  reason?: string;
+  /** /status answers 404 (unknown setup / non-UUID id). */
+  statusNotFound?: boolean;
+  failResults?: boolean;
+  /** Polls for the first message answer 404 (conversation lost after an app restart). */
+  expireFirstMessage?: boolean;
+  /** Polls never reach a terminal status. */
+  neverFinish?: boolean;
+}
+
+/** Non-terminal statuses served before COMPLETED on every poll sequence. */
+export const PENDING_SEQUENCE = ["SUBMITTED", "ASKING_AI"] as const;
+
+/** Speed up polling and shorten the 3-minute deadline (read by lib/genie-poll.ts). */
+export async function setGeniePollHooks(page: Page, hooks: { pollIntervalMs?: number; pollDeadlineMs?: number }) {
+  await page.addInitScript((value) => {
+    (window as unknown as { __genieTestHooks?: unknown }).__genieTestHooks = value;
+  }, hooks);
+}
+
+export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOptions = {}) {
   const available = options.available ?? true;
+  const spaceId = options.spaceId !== undefined ? options.spaceId : available ? "space-1" : null;
   let nextMessage = 1;
+  const pollCounts = new Map<string, number>();
+  const polledStatuses: string[] = [];
 
   await page.route("**/api/industries/catalog", async (route) => {
     await route.fulfill({ json: deployedManufacturingCatalog });
@@ -112,9 +160,15 @@ export async function mockPipelineGenie(
     const path = new URL(request.url()).pathname.slice(GENIE_BASE.length);
 
     if (path === "/status") {
-      await route.fulfill({
-        json: { available, space_id: available ? "space-1" : null, reason: options.reason },
-      });
+      if (options.statusNotFound) {
+        await route.fulfill({ status: 404, json: { detail: "unknown setup" } });
+        return;
+      }
+      await route.fulfill({ json: { available, space_id: spaceId, reason: options.reason } });
+      return;
+    }
+    if (options.expireFirstMessage && path === "/conversations/conv-1/messages/msg-1") {
+      await route.fulfill({ status: 404, json: { detail: "unknown conversation" } });
       return;
     }
     if (path === "/starters") {
@@ -138,9 +192,16 @@ export async function mockPipelineGenie(
     }
     const messageMatch = path.match(/^\/conversations\/conv-1\/messages\/(msg-\d)$/);
     if (messageMatch && messages[messageMatch[1]]) {
-      await route.fulfill({ json: messages[messageMatch[1]] });
+      const id = messageMatch[1];
+      const count = pollCounts.get(id) ?? 0;
+      pollCounts.set(id, count + 1);
+      const status = options.neverFinish ? "ASKING_AI" : (PENDING_SEQUENCE[count] ?? "COMPLETED");
+      polledStatuses.push(status);
+      const body = status === "COMPLETED" ? messages[id] : { ...messages[id], status, attachments: [] };
+      await route.fulfill({ json: body });
       return;
     }
     await route.fulfill({ status: 404, json: { detail: `Unexpected Genie request: ${path}` } });
   });
+  return { polledStatuses };
 }

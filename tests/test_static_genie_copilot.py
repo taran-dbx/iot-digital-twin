@@ -149,3 +149,17 @@ def test_production_bundle_ships_pipeline_genie_smoke() -> None:
         "truncated to",
     ):
         assert marker in bundle, marker
+
+
+def test_genie_polling_is_shared_and_status_aware_regression() -> None:
+    """[regression] Both copilots poll via the shared helper; only terminal statuses stop it."""
+    types = _read("lib", "types.ts")
+    for status in ("SUBMITTED", "ASKING_AI", "PENDING_WAREHOUSE", "QUERY_RESULT_EXPIRED"):
+        assert status in types, status
+    poll = _read("lib", "genie-poll.ts")
+    assert "setInterval" not in poll
+    assert "This conversation expired - ask again." in poll
+    for name in ("genie-copilot.tsx",):
+        assert "startGeniePoll" in _read("components", "dashboard", name)
+    assert "startGeniePoll" in _read("hooks", "use-pipeline-genie.ts")
+    assert "class ApiError" in _read("lib", "api.ts")
