@@ -44,7 +44,10 @@ the allowlist and the telemetry summary use the same function.
 
 If the deploy hook's or the admin endpoint's 60 s timeout fires while a space is being created, creation
 and the ledger write keep running in the background (`asyncio.shield`). The space therefore still gets
-its ledger row and can be torn down later.
+its ledger row and can be torn down later. The background task is tracked in a module-level set until it finishes.
+A done-callback logs the outcome (space id, error or cancellation) and drops the task, so failures after
+a timeout are logged rather than lost. For realtime, each filter snippet is fully parenthesized:
+`(<row filter> AND <condition>)`.
 
 Microbatch and zerobus write `manufacturing_{mode}` directly (`services/pipeline_freshness.py`). Those
 tables exist but were empty in that workspace, because only realtime was running for manufacturing. The
@@ -184,7 +187,7 @@ Poll until `status` is terminal (`COMPLETED`, `FAILED` or `CANCELLED`). Other va
   "conversation_id": "01ef…",
   "message_id": "01ef…",
   "status": "COMPLETED",
-  "content": "…the prompt as sent to Genie…",
+  "content": "How much downtime did we have today?",
   "error": null,
   "attachments": [
     {
@@ -202,6 +205,12 @@ Poll until `status` is terminal (`COMPLETED`, `FAILED` or `CANCELLED`). Other va
   ]
 }
 ```
+
+`content` is only the user's original question. Genie receives the question inside the
+trusted/untrusted prompt wrapper (catalog, allowed tables, observations), but the API never returns that
+wrapper. `genie_service.extract_user_question` strips it deterministically from Genie's stored message,
+so this keeps working after an app restart. If the wrapper can't be parsed, `content` is `null`, never
+the wrapper. The static `/api/genie/conversations/…` poll route behaves the same way.
 
 Every attachment always has all four keys. `text`, `query` and `query.description` can be null, and
 `suggested_questions` is always an array. `error` is a string or null.

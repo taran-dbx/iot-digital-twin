@@ -75,6 +75,11 @@ def _cdc_where(row_filter: str | None) -> str:
     return f"{row_filter} AND " if row_filter else ""
 
 
+def _filter_sql(condition: str, row_filter: str | None) -> str:
+    """Filter snippet SQL; realtime combines the row filter, fully parenthesized."""
+    return f"({row_filter} AND {condition})" if row_filter else condition
+
+
 def _guard(expr: str, row_filter: str | None) -> str:
     """Restrict an aggregate's input rows: non-matching rows become NULL (ignored)."""
     return f"CASE WHEN {row_filter} THEN {expr} END" if row_filter else expr
@@ -321,13 +326,13 @@ def sql_snippets(
         ],
         "filters": [
             {"display_name": "Fault active (downtime)",
-             "sql": [_cdc_where(rf) + f"{t}.fault_active = TRUE"],
+             "sql": [_filter_sql(f"{t}.fault_active = TRUE", rf)],
              "synonyms": ["down", "faulted", "stopped"]},
             {"display_name": "Anomalous reading",
-             "sql": [_cdc_where(rf) + f"({t}.value < {t}.min_value OR {t}.value > {t}.max_value)"],
+             "sql": [_filter_sql(f"({t}.value < {t}.min_value OR {t}.value > {t}.max_value)", rf)],
              "synonyms": ["out of range", "anomaly"]},
             {"display_name": "Last 24 hours",
-             "sql": [_cdc_where(rf) + f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS"]},
+             "sql": [_filter_sql(f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS", rf)]},
         ],
         "expressions": [
             {"alias": "deviation_from_nominal", "display_name": "Deviation from nominal",

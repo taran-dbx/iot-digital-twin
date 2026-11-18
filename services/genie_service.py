@@ -184,10 +184,33 @@ def _serialize_attachments(attachments: object) -> list[dict[str, Any]]:
     return [_serialize_attachment(item) for item in attachments]
 
 
+_WRAPPER_OPEN = "[TRUSTED_CONTEXT]"
+_UNTRUSTED_CLOSE = "[/UNTRUSTED_OBSERVATIONS]"
+_QUESTION_MARKER = "\n\nUser question:\n"
+
+
+def extract_user_question(content: str | None) -> str | None:
+    """Return only the user's question from a :func:`render_trusted_prompt` text.
+
+    Plain content passes through.  The marker is searched after the untrusted
+    block (JSON there cannot hold a raw newline), so observation data cannot
+    forge it.  A wrapper without the marker yields None — never the wrapper.
+    """
+    if not content or _WRAPPER_OPEN not in content:
+        return content
+    tail_start = content.find(_UNTRUSTED_CLOSE)
+    marker = content.find(_QUESTION_MARKER, max(tail_start, 0))
+    if tail_start < 0 or marker < 0:
+        return None
+    question = content[marker + len(_QUESTION_MARKER):]
+    return question[:-1] if question.endswith("\n") else question
+
+
 def serialize_message(message: object, *, conversation_id: str, message_id: str) -> dict[str, Any]:
     content = getattr(message, "content", None)
     if content is None:
         content = getattr(message, "text", None)
+    content = extract_user_question(content) if isinstance(content, str) else content
     error = getattr(message, "error", None)
     if error is not None and not isinstance(error, str):
         error = getattr(error, "message", None) or str(error)
