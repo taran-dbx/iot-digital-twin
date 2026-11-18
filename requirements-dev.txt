@@ -1,0 +1,8 @@
+# Local development and CI tooling. Keep in lockstep with
+# [project.optional-dependencies].dev in pyproject.toml.
+-r requirements.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.17.4
+mypy==2.4.1
+pre-commit==4.7.0
