@@ -16,6 +16,9 @@ from core.state import AppState
 from routes.genie import router as genie_router
 from services.genie_service import GenieDisabledError, GenieValidationError
 
+# Hang guard for the event-loop regression test; never a timing budget.
+_HANG_GUARD_S = 30.0
+
 
 def _build_app(state: AppState) -> FastAPI:
     app = FastAPI()
@@ -236,15 +239,30 @@ class TestGenieRoutes:
         """[C7502][regression] Synchronous SDK network stays off the event loop."""
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
+        loop_thread = threading.get_ident()
+        entered = threading.Event()
         release = threading.Event()
+        sdk_threads: list[int] = []
 
         def blocking_start(*_args, **_kwargs):
-            release.wait(timeout=5)
+            sdk_threads.append(threading.get_ident())
+            entered.set()
+            # Parks the SDK call until the test releases it. The timeout is a
+            # hang guard only: it is reached solely when the call wrongly runs
+            # on the event-loop thread (nothing can then set ``release``).
+            if not release.wait(timeout=_HANG_GUARD_S):
+                raise AssertionError("SDK call blocked the event loop")
             return {"conversation_id": "c-block", "message_id": "m-block"}
 
-        with patch(
-            "routes.genie.genie_service.start_conversation",
-            side_effect=blocking_start,
+        with (
+            patch(
+                "routes.genie.genie_service.require_table_allowlist",
+                return_value={"authorization_enforced": True},
+            ),
+            patch(
+                "routes.genie.genie_service.start_conversation",
+                side_effect=blocking_start,
+            ),
         ):
             started = asyncio.create_task(
                 genie_client.post(
@@ -256,17 +274,22 @@ class TestGenieRoutes:
                     },
                 )
             )
-            heartbeats: list[int] = []
+            # The loop keeps turning until the SDK call is parked in a worker.
+            while not entered.is_set():
+                if started.done():
+                    pytest.fail(f"request ended before the SDK call: {started.result()}")
+                await asyncio.sleep(0)
 
-            async def beat() -> None:
-                for i in range(5):
-                    heartbeats.append(i)
-                    await asyncio.sleep(0)
+            # While the SDK call is still blocked, the loop must stay responsive.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert not release.is_set()
+            assert not started.done()
 
-            await asyncio.wait_for(beat(), timeout=1)
-            assert heartbeats == [0, 1, 2, 3, 4]
             release.set()
-            conv = await asyncio.wait_for(started, timeout=2)
+            conv = await asyncio.wait_for(started, timeout=_HANG_GUARD_S)
+
+        assert sdk_threads and sdk_threads[0] != loop_thread
         assert conv.status_code == 200
         assert conv.json()["conversation_id"] == "c-block"
 
