@@ -36,7 +36,18 @@ mockups/
 # not read from disk — there is no databricks/notebooks/ dir.
 /notebooks/
 capture_screenshots.py
-client/
+# Client (React/Vite) source is tracked; ignore its deps and generated output.
+# The production build goes to ../static/dist (tracked, see note below).
+client/node_modules
+client/dist/
+client/test-results/
+client/playwright-report/
+client/coverage/
+client/.ruff_cache/
+client/.vite/
+client/*.tsbuildinfo
+client/.env*
+client/*.local
 # NOTE: static/dist/ is NOT gitignored — databricks sync honours gitignore
 # patterns, so excluding it here means the frontend bundle never reaches the
 # deployed app.  Keep untracked in git via individual file ignores if needed,
