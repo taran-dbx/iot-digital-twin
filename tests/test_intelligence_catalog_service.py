@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -59,7 +59,7 @@ class TestProvision:
         assert result["schema"] == SCHEMA
         joined = "\n".join(executed)
         for name in ics.TABLE_NAMES:
-            assert f"CREATE TABLE IF NOT EXISTS" in joined
+            assert "CREATE TABLE IF NOT EXISTS" in joined
             assert name in joined
             assert "USING DELTA" in joined
         assert "intelligence_alert_snapshot" in joined

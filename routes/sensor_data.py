@@ -202,7 +202,6 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
     # Diagnostic: stamp every call's outcome on the sources object so we can
     # see at a glance (via /api/sources) what headers the consumer sent and
     # whether the INSERT path executed.
-    import time as _t
 
     src = state.sources["sss"]
     # Attach counters on first use

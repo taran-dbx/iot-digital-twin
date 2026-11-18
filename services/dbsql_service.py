@@ -97,7 +97,7 @@ def _execute_dbsql_sync(sql: str, warehouse_id: str, timeout: str) -> dict:
         else []
     )
     data_array = (resp.result.data_array if resp.result else None) or []
-    rows: list[dict] = [dict(zip(columns, chunk)) for chunk in data_array]
+    rows: list[dict] = [dict(zip(columns, chunk, strict=False)) for chunk in data_array]
     return {"columns": columns, "data": rows, "row_count": len(rows)}
 
 

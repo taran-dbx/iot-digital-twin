@@ -18,7 +18,6 @@ import os
 
 import pytest
 
-from services import validation_config as vc
 from services import validation_state_machine as sm
 
 _ENABLED = os.getenv("IOT_VALIDATION_INTEGRATION") == "1"
@@ -98,5 +97,5 @@ def test_verified_cluster_config_is_locked(monkeypatch):
     assert "autoscale" not in spec
     assert spec["aws_attributes"]["availability"] == "ON_DEMAND"
     # Verify the env-read value, not a hardcoded workspace string.
-    assert _vc.SERVICE_CREDENTIAL == expected_cred
+    assert expected_cred == _vc.SERVICE_CREDENTIAL
     assert _vc.MSK_PUBLIC_PORT == 9198

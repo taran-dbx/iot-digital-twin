@@ -210,20 +210,19 @@ class LakebaseConnectionManager:
         Returns the COUNT(*) seen on this same connection immediately after
         insert, inside the same transaction, for verification.
         """
-        async with self.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(query, args)
-                # In-transaction sanity check. If this returns 0 after an INSERT,
-                # the INSERT statement is a no-op (e.g., WHERE clause false,
-                # wrong table, trigger drops rows).
-                try:
-                    # Match the INSERT target — assumes INSERT INTO sensor_readings
-                    if "sensor_readings" in query.lower():
-                        n = await conn.fetchval("SELECT COUNT(*) FROM sensor_readings")
-                        return int(n or 0)
-                except Exception:
-                    pass
-                return -1
+        async with self.acquire() as conn, conn.transaction():
+            await conn.executemany(query, args)
+            # In-transaction sanity check. If this returns 0 after an INSERT,
+            # the INSERT statement is a no-op (e.g., WHERE clause false,
+            # wrong table, trigger drops rows).
+            try:
+                # Match the INSERT target — assumes INSERT INTO sensor_readings
+                if "sensor_readings" in query.lower():
+                    n = await conn.fetchval("SELECT COUNT(*) FROM sensor_readings")
+                    return int(n or 0)
+            except Exception:
+                pass
+            return -1
 
     async def ensure_pipelines_table(self) -> None:
         """Create the pipelines table if it does not exist.

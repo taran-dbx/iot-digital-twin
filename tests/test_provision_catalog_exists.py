@@ -178,7 +178,7 @@ class TestOrchestratorWritesUcSecret:
         kwargs = put_mock.await_args.kwargs
         args = put_mock.await_args.args
         # Accept positional or keyword call styles.
-        called = {**dict(zip(("catalog", "schema", "name", "value"), args)), **kwargs}
+        called = {**dict(zip(("catalog", "schema", "name", "value"), args, strict=False)), **kwargs}
         assert called["catalog"] == CATALOG
         assert called["schema"] == SCHEMA
         assert called["name"] == "app_sp_oauth"

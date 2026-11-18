@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from services.industry_templates import (
     CURATED_INDUSTRIES,
-    MODES,
     get_template,
     mode_config,
 )

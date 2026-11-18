@@ -12,7 +12,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Iterable
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from core.workspace_config import get_genie_space_id, get_uc_catalog, get_uc_schema

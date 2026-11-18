@@ -145,7 +145,9 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
     table_name = (params.get("table_name") or "sensor_readings").strip()
     secret_scope = (params.get("secret_scope") or get_secret_scope()).strip()
     tiering = params.get("tiering")
-    retention = params.get("retention")
+    # ``params["retention"]`` (the UI drop-after interval) is intentionally not
+    # read here: no plain-retention LakeTS policy is wired up yet. Hot-store
+    # retention is enforced by the tiering policy's ``drop`` interval.
     rollups = params.get("rollups") or []
 
     w = _new_ws()

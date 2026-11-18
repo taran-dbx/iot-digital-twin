@@ -20,7 +20,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -99,7 +99,7 @@ def _running_since_boot(industry: str) -> dict[str, Any]:
 
 def _row_to_change(row: Any, *, id_key: str = "id", at_key: str = "created_at") -> ProductionChange:
     return ProductionChange(
-        id=str(row[id_key]) if id_key in row.keys() else "",
+        id=str(row[id_key]) if id_key in row else "",
         industry=str(row["industry"]),
         state=str(row["state"]),
         assets=_assets(row["assets"]),

@@ -98,14 +98,14 @@ class TestRuntimeWheelAugmentation:
         finally:
             sys.path.remove(str(extract))
             for module in list(sys.modules):
-                if (
+                ours = (
                     module == "domain"
                     or module.startswith("domain.")
                     or module == "scenario_engine"
                     or module.startswith("scenario_engine.")
-                ):
-                    if str(extract) in getattr(sys.modules[module], "__file__", ""):
-                        sys.modules.pop(module, None)
+                )
+                if ours and str(extract) in getattr(sys.modules[module], "__file__", ""):
+                    sys.modules.pop(module, None)
 
     def test_wheel_filename_stays_pip_installable_c7315_smoke(self) -> None:
         """[C7315][smoke] Uploaded artifact keeps the bundled simulator wheel filename."""

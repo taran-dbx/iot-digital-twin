@@ -183,7 +183,7 @@ async def stage_verify_provision():
 
     # Lakebase branch + chronotable + partitions.
     try:
-        b = w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
         out["branch"] = "exists"
     except Exception as e:
         out["branch_error"] = str(e)[:200]
@@ -673,7 +673,7 @@ async def stage_verify_gone():
 
     w = WorkspaceClient()
     out: dict = {}
-    st = _load_state()
+    _load_state()
 
     # setup row gone?
     db = await _db()

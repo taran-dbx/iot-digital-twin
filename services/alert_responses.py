@@ -15,7 +15,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from domain.catalog import list_assets, list_maintenance_history, list_sensors

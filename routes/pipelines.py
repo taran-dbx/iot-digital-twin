@@ -1051,8 +1051,6 @@ async def pipeline_history(
     if not catalog:
         return JSONResponse(status_code=400, content={"error": "Pipeline has no UC catalog"})
 
-    import re
-
     if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", catalog):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
     table = f"{catalog}.raw.iot_sensor_data"
@@ -1119,7 +1117,7 @@ async def pipeline_history(
         ]
         rows_data = []
         for chunk in result.get("data_array", []):
-            rows_data.append(dict(zip(columns, chunk)))
+            rows_data.append(dict(zip(columns, chunk, strict=False)))
 
         return {"columns": columns, "data": rows_data, "row_count": len(rows_data)}
 

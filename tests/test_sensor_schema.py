@@ -232,7 +232,7 @@ class TestSqlDdlDerivedFromSsot:
     def test_sensor_readings_ddl_matches_ssot(self) -> None:
         from models import sql_ddl
 
-        assert sql_ddl.SENSOR_READINGS_DDL == ss.pg_chronotable_ddl("{table_name}")
+        assert ss.pg_chronotable_ddl("{table_name}") == sql_ddl.SENSOR_READINGS_DDL
 
     def test_sensor_readings_ddl_now_has_the_missing_four_columns(self) -> None:
         from models import sql_ddl

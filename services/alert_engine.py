@@ -9,7 +9,7 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from domain.catalog import (
@@ -781,9 +781,7 @@ class AlertEngine:
             self._store(canonical)
             if not applied and canonical_status != alert.status:
                 return False
-            if not applied and transition.event_type in {EVENT_OPENED, EVENT_UPDATED}:
-                return False
-            return True
+            return applied or transition.event_type not in {EVENT_OPENED, EVENT_UPDATED}
         except Exception:
             logger.exception("alert persist failed; continuing in memory")
             return True

@@ -31,7 +31,7 @@ import copy
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from services import pipeline_setup_repo
@@ -194,9 +194,7 @@ def _should_halt_for_dead_cluster(
     status = rec.get("status")
     if status == sm.WAITING_ADMIN:
         return False
-    if preserve_failed and status == sm.FAILED and str(rec.get("error") or "").strip():
-        return False
-    return True
+    return not (preserve_failed and status == sm.FAILED and str(rec.get("error") or "").strip())
 
 
 def _reset_for_new_cluster(state: dict) -> dict:

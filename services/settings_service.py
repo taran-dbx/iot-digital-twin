@@ -7,10 +7,6 @@ workspace resources (UC, Lakebase, secrets, cluster, warehouses).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from core.state import AppState
 
 logger = logging.getLogger("iot_digital_twin.services.settings")
 
@@ -159,7 +155,7 @@ async def validate_lakebase(body: dict) -> dict:
                 if "authentication" in err.lower() or "password" in err.lower():
                     checks.append(
                         _check(
-                            "Host connectable", "pass", f"Host reachable (auth needed at runtime)"
+                            "Host connectable", "pass", "Host reachable (auth needed at runtime)"
                         )
                     )
                 else:

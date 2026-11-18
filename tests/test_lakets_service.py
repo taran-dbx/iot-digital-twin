@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
-import os
-import subprocess
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch

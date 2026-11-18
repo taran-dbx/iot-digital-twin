@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any
 
 import httpx
 
 from models.sql_ddl import (
     LAKEBASE_ROLE_ID,
-    LAKEBASE_ROLE_NAME,
     MATVIEW_1M_DDL,
     MATVIEW_5M_DDL,
     MATVIEW_INDEX_DDL,
@@ -737,16 +735,16 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
                 ),
                 endpoint_id="primary",
             )
-            results.append({"resource": f"Lakebase endpoint 'primary'", "status": "created"})
+            results.append({"resource": "Lakebase endpoint 'primary'", "status": "created"})
         except Exception as exc:
             if "already exists" in str(exc).lower():
                 results.append(
-                    {"resource": f"Lakebase endpoint 'primary'", "status": "already_exists"}
+                    {"resource": "Lakebase endpoint 'primary'", "status": "already_exists"}
                 )
             else:
                 results.append(
                     {
-                        "resource": f"Lakebase endpoint 'primary'",
+                        "resource": "Lakebase endpoint 'primary'",
                         "status": "failed",
                         "error": str(exc)[:200],
                     }
@@ -953,7 +951,7 @@ async def provision_lakebase_role(
             role_id=_lb_role_id,
         )
         results.append({"resource": role_resource, "status": "created"})
-    except AttributeError as exc:
+    except AttributeError:
         # SDK too old — fall back to raw REST.
         try:
             w.api_client.do(

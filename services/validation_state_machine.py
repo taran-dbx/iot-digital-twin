@@ -462,10 +462,7 @@ def _key_status(state: dict, key: str) -> str:
     reports every required step as outstanding rather than raising.
     """
     rec = (state or {}).get("steps")
-    if isinstance(rec, dict):
-        value = rec.get(key)
-    else:
-        value = (state or {}).get(key)
+    value = rec.get(key) if isinstance(rec, dict) else (state or {}).get(key)
     if isinstance(value, dict):
         return value.get("status", PENDING)
     return value or PENDING

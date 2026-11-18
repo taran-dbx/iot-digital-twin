@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import datetime as _dt
-from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from databricks.sdk.errors import NotFound
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient

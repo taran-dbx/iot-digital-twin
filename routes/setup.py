@@ -57,12 +57,13 @@ async def post_setup_pipeline_lakebase(
             )
 
     tiering = body.get("tiering")
-    if tiering is not None:
-        if not isinstance(tiering, dict) or not tiering.get("hot") or not tiering.get("drop"):
-            return JSONResponse(
-                status_code=400,
-                content={"error": "tiering requires 'hot' and 'drop'"},
-            )
+    if tiering is not None and (
+        not isinstance(tiering, dict) or not tiering.get("hot") or not tiering.get("drop")
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "tiering requires 'hot' and 'drop'"},
+        )
 
     params = {
         "pipeline_id": pipeline_id,

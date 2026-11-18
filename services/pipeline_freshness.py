@@ -172,9 +172,8 @@ async def mode_flowing(
             )
             if handle is not None:
                 flowing = await _realtime_flowing(handle, window_minutes)
-        elif mode in _DELTA_MODES:
-            if run_sql is not None:
-                flowing = await _dbsql_flowing(run_sql, industry, mode, window_minutes)
+        elif mode in _DELTA_MODES and run_sql is not None:
+            flowing = await _dbsql_flowing(run_sql, industry, mode, window_minutes)
     except Exception as exc:  # pragma: no cover - blanket safety net
         logger.warning("freshness check for %s/%s failed: %s", industry, mode, exc)
         flowing = False

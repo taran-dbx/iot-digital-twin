@@ -567,10 +567,6 @@ async def deploy_job(
         elif cloud == "azure":
             no_spot_kwargs["azure_attributes"] = AzureAttributes(first_on_demand=num_workers + 1)
 
-        from databricks.sdk.service.compute import Environment
-        from databricks.sdk.service.jobs import JobEnvironment as JE
-        from databricks.sdk.service.jobs import Source
-
         tasks = [
             JobTaskSettings(
                 task_key="sss_consumer",

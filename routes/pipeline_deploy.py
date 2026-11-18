@@ -107,9 +107,9 @@ async def deploy_pipeline_endpoint(
         raise HTTPException(
             status_code=409,
             detail={"error": str(exc), "outstanding": exc.outstanding},
-        )
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except cdf_reconciliation_service.RealtimeCdfError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except deployment_service.RuntimeOAuthCredentialError as exc:

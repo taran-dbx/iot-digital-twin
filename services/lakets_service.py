@@ -25,7 +25,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from models.sql_ddl import LAKETS_VERSION_CHECK_SQL
 

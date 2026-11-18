@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
-from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 

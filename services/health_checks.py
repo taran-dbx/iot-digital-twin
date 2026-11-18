@@ -471,7 +471,7 @@ _WAL2DELTA_SQL = (
 def _shadow_match(table_name: Any, shadow: str, qualified: str) -> bool:
     """True when ``table_name`` is THIS pipeline's shadow row (§1.10.3)."""
     tn = str(table_name)
-    return tn == shadow or tn == qualified or tn.endswith("." + shadow)
+    return tn in (shadow, qualified) or tn.endswith("." + shadow)
 
 
 async def check_cdf_sync(

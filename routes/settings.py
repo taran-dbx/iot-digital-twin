@@ -118,7 +118,7 @@ async def provision_settings(request: Request, user_email: str = Depends(get_cur
 
     results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
 
-    for (label, _), result in zip(tasks, results):
+    for (label, _), result in zip(tasks, results, strict=True):
         if isinstance(result, Exception):
             provisioned.append({"resource": label, "status": "failed", "error": str(result)[:200]})
         elif isinstance(result, list):

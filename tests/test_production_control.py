@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 

@@ -369,7 +369,7 @@ class TestNonFatal:
 
 
 def _build_app() -> FastAPI:
-    from core.state import AppState, get_app_state
+    from core.state import get_app_state
     from routes.setup import router as setup_router
 
     app = FastAPI()

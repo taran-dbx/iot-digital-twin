@@ -92,7 +92,7 @@ async def producer_stop_endpoint(pipeline_id: str, state: AppState = Depends(get
 @router.get("/api/kafka-producer/status")
 async def kafka_producer_status_compat(state: AppState = Depends(get_app_state)):
     """Legacy endpoint — returns the first active producer or IDLE."""
-    for pid, ps in state.producer_states.items():
+    for ps in state.producer_states.values():
         if ps.get("running") or ps.get("state") not in ("IDLE", None):
             return poll_producer_state(ps)
     return new_producer_state()

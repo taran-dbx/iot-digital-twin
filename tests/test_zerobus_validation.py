@@ -13,8 +13,6 @@ from __future__ import annotations
 import ast
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from services import zerobus_validation as zbv
 
 
