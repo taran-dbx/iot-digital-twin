@@ -95,7 +95,7 @@ def get_secret_scope() -> str:
     Checks ``SECRET_SCOPE`` first (future canonical name), then falls back to
     ``ZEROBUS_SECRET_SCOPE`` (legacy name).  Returns ``""`` when neither is set.
     """
-    return os.getenv("SECRET_SCOPE") or os.getenv("ZEROBUS_SECRET_SCOPE", "")
+    return os.getenv("SECRET_SCOPE") or os.getenv("ZEROBUS_SECRET_SCOPE") or ""
 
 
 def get_service_credential() -> str:
