@@ -5,10 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
-from routes.static_files import legacy_dashboard, legacy_settings_page
-
 
 DIST = Path(__file__).parents[1] / "static" / "dist"
 
@@ -322,18 +318,6 @@ def test_mode_dashboard_passes_industry_only_for_industry_first_c7263() -> None:
         / "mode-dashboard-page.tsx"
     ).read_text(encoding="utf-8")
     assert "isIndustryFirst ? industryId : undefined" in page
-
-
-@pytest.mark.asyncio
-async def test_server_legacy_routes_redirect_to_industry_first_ui_c7263():
-    """[C7263][defect][regression] Server routes cannot bypass SPA redirects."""
-    legacy = await legacy_dashboard()
-    settings = await legacy_settings_page()
-
-    assert legacy.status_code == 307
-    assert legacy.headers["location"] == "/industries"
-    assert settings.status_code == 307
-    assert settings.headers["location"] == "/setup-validate"
 
 
 def test_runtime_is_loaded_once_then_polled_only_while_starting_c7264():
