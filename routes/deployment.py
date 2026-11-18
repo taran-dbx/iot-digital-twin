@@ -97,10 +97,11 @@ async def submit_connectivity_test(request: Request, user_email: str = Depends(g
 
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.workspace import ImportFormat, Language
-        from databricks.sdk.service.jobs import SubmitTask, NotebookTask, Source, JobEnvironment
         from databricks.sdk.service.compute import Environment
+        from databricks.sdk.service.jobs import JobEnvironment, NotebookTask, Source, SubmitTask
+        from databricks.sdk.service.workspace import ImportFormat, Language
 
         w = WorkspaceClient()
         me = w.current_user.me()
@@ -234,6 +235,7 @@ async def validate_on_cluster(cluster_id: str, request: Request, user_email: str
 
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.workspace import ImportFormat, Language
 
@@ -469,15 +471,18 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
 
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
+        from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode
+        from databricks.sdk.service.jobs import (
+            Continuous,
+            JobSettings,
+            NotebookTask,
+            PauseStatus,
+        )
         from databricks.sdk.service.jobs import (
             Task as JobTaskSettings,
-            NotebookTask,
-            Continuous,
-            PauseStatus,
-            JobSettings,
         )
-        from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode
 
         w = WorkspaceClient()
 
@@ -534,8 +539,9 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
         elif cloud == "azure":
             no_spot_kwargs["azure_attributes"] = AzureAttributes(first_on_demand=num_workers + 1)
 
-        from databricks.sdk.service.jobs import Source, JobEnvironment as JE
         from databricks.sdk.service.compute import Environment
+        from databricks.sdk.service.jobs import JobEnvironment as JE
+        from databricks.sdk.service.jobs import Source
 
         tasks = [
             JobTaskSettings(

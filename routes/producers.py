@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
 from models.producer_state import new_producer_state
 from services.producer_service import (
+    poll_producer_state,
     start_data_producer,
     stop_data_producer,
-    poll_producer_state,
 )
 
 logger = logging.getLogger("iot_digital_twin.routes.producers")

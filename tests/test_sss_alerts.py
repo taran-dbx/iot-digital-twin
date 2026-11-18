@@ -12,7 +12,6 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -20,6 +19,7 @@ from core.state import AppState
 def _build_alerts_app(state: AppState):
     """Create a minimal FastAPI app that includes the websocket router."""
     from fastapi import FastAPI
+
     from routes.websocket import router as ws_router
 
     app = FastAPI()
@@ -269,6 +269,7 @@ class TestSssAlertsIngest:
     async def test_transitions_mark_snapshot_dirty_c7410_regression(self) -> None:
         """[C7410][regression] SSS lifecycle transitions dirty the alert snapshot."""
         from httpx import ASGITransport, AsyncClient
+
         from services.alert_snapshot_sync import AlertSnapshotSynchronizer
 
         state = AppState()

@@ -17,7 +17,6 @@ import pytest
 
 from models import sensor_schema as ss
 
-
 # ---------------------------------------------------------------------------
 # Canonical field expectations — mirror the ``SensorRecord`` in the
 # ``iot_data_simulator`` wheel (11 fields).

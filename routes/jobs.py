@@ -81,7 +81,7 @@ async def stop_job(job_id: int):
     """Cancel all active runs and pause the continuous schedule."""
     try:
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.jobs import Continuous, PauseStatus, JobSettings
+        from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
         w = WorkspaceClient()
         w.jobs.cancel_all_runs(job_id=job_id)
@@ -103,7 +103,7 @@ async def restart_job(job_id: int):
     """Unpause the continuous schedule and trigger a new run."""
     try:
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.jobs import Continuous, PauseStatus, JobSettings
+        from databricks.sdk.service.jobs import Continuous, JobSettings, PauseStatus
 
         w = WorkspaceClient()
         w.jobs.update(

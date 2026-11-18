@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 CLIENT = ROOT / "client" / "src"
 DIST = ROOT / "static" / "dist"

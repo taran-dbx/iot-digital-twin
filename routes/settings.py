@@ -12,27 +12,27 @@ from fastapi.responses import JSONResponse
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
 from models.sql_ddl import LAKEBASE_ROLE_NAME
-from services.settings_service import (
-    validate_uc,
-    validate_lakebase,
-    validate_secrets,
-    validate_cluster,
-    status_uc,
-    status_lakebase,
-    status_secrets,
-    status_warehouse,
-)
+from services.app_permissions import _app_name, grant_app_can_use
 from services.provisioning_service import (
-    provision_secrets_scope,
-    provision_uc_catalog,
-    provision_lakebase_table,
+    ensure_streaming_sp,
     provision_lakebase_project_and_branch,
     provision_lakebase_role,
-    save_direct_creds_to_secrets,
+    provision_lakebase_table,
     provision_metrics_table,
-    ensure_streaming_sp,
+    provision_secrets_scope,
+    provision_uc_catalog,
+    save_direct_creds_to_secrets,
 )
-from services.app_permissions import grant_app_can_use, _app_name
+from services.settings_service import (
+    status_lakebase,
+    status_secrets,
+    status_uc,
+    status_warehouse,
+    validate_cluster,
+    validate_lakebase,
+    validate_secrets,
+    validate_uc,
+)
 
 logger = logging.getLogger("iot_digital_twin.routes.settings")
 

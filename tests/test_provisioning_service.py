@@ -15,7 +15,6 @@ import pytest
 
 from services import lakets_service, provisioning_service
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------

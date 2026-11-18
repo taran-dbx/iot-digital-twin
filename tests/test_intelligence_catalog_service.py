@@ -8,7 +8,6 @@ import pytest
 
 from services import intelligence_catalog_service as ics
 
-
 CATALOG = "test_catalog"
 SCHEMA = "test_schema"
 

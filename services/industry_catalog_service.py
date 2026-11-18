@@ -36,12 +36,12 @@ import os
 import re
 from typing import Any
 
+from core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_secret_scope
 from models.metrics_schema import metrics_managed_table_ddl
 from models.sensor_schema import delta_table_ddl
 from services.dbsql_service import execute_dbsql
-from core.workspace_config import APP_SP_OAUTH_SECRET_KEY, get_secret_scope
-from services.uc_ident import sql_fqn, sql_ident
 from services.resource_ledger import record_resource
+from services.uc_ident import sql_fqn, sql_ident
 
 logger = logging.getLogger("iot_digital_twin.services.industry_catalog")
 

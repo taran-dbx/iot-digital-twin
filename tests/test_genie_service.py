@@ -12,7 +12,6 @@ from domain.catalog import CURATED_DOMAIN_INDUSTRIES
 from services import genie_service as gs
 from services.industry_templates import MODES
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

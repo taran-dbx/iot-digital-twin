@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.auth import require_identity

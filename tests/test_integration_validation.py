@@ -35,6 +35,7 @@ skip_live = pytest.mark.skipif(
 async def test_provision_cluster_live(app_backend_conn):
     """Provision the verified validation cluster and confirm it reaches RUNNING."""
     from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo, validation_service, validation_steps
 
     profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
@@ -75,6 +76,7 @@ def test_verified_cluster_config_is_locked(monkeypatch):
     expected_cred = "iot-rtm-sc"
     monkeypatch.setenv("UC_SERVICE_CREDENTIAL", expected_cred)
     import importlib
+
     import services.validation_config as _vc
     importlib.reload(_vc)
 

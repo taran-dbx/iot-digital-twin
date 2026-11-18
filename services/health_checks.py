@@ -53,17 +53,17 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from models.sensor_schema import ID_COLUMN_NAME, insert_columns
-from services import deployment_repo, deployment_service, pipeline_setup_repo
-from services import pipeline_view as pv
-from services import industry_catalog_service as cat
 from services import cdf_reconciliation_service as cdf
+from services import deployment_repo, deployment_service, pipeline_setup_repo
+from services import industry_catalog_service as cat
+from services import pipeline_view as pv
 from services import pipelines_project_service as pps
-from services.uc_ident import sql_fqn, sql_ident
 from services.provisioning_service import (
     SHARED_STREAMING_SP_ID_KEY,
     SHARED_STREAMING_SP_SECRET_KEY,
     SHARED_STREAMING_SP_SECRET_SCOPE,
 )
+from services.uc_ident import sql_fqn, sql_ident
 
 logger = logging.getLogger("iot_digital_twin.services.health_checks")
 

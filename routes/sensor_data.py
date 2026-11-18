@@ -14,26 +14,26 @@ from fastapi.responses import JSONResponse
 
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
-from services.pipeline_db import (
-    get_industry_lakebase,
-    get_pipeline_lakebase,
-    PipelineLakebaseHandle,
-)
-from services.simulator_service import broadcast
-from services.dbsql_service import (
-    validate_catalog,
-    resolve_warehouse_id,
-    execute_dbsql,
-    get_pipeline_catalog,
-)
 from services import (
     app_permissions,
     cdf_reconciliation_service,
     industry_catalog_service,
     industry_service,
 )
-from services.industry_templates import CURATED_INDUSTRIES
 from services.alert_engine import evaluate_and_emit
+from services.dbsql_service import (
+    execute_dbsql,
+    get_pipeline_catalog,
+    resolve_warehouse_id,
+    validate_catalog,
+)
+from services.industry_templates import CURATED_INDUSTRIES
+from services.pipeline_db import (
+    PipelineLakebaseHandle,
+    get_industry_lakebase,
+    get_pipeline_lakebase,
+)
+from services.simulator_service import broadcast
 from services.uc_ident import sql_fqn
 
 logger = logging.getLogger("iot_digital_twin.routes.sensor_data")

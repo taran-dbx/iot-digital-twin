@@ -17,16 +17,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config import INDUSTRIES, UPDATE_RATE_HZ
-from core.state import AppState
 from core.shutdown import install_sigterm_handler, shutdown
+from core.state import AppState
 from routes import create_api_router
-from routes.setup import router as setup_router
 from routes.industries_admin import (
     router as industries_admin_router,
+)
+from routes.industries_admin import (
     start_industry_runtime_refresh,
 )
-from routes.validation_admin import router as validation_admin_router
+from routes.setup import router as setup_router
 from routes.static_files import router as static_files_router
+from routes.validation_admin import router as validation_admin_router
 from services.alert_snapshot_sync import start_alert_snapshot_sync
 from services.deployment_service import RuntimeOAuthCredentialError, sync_runtime_oauth_secret
 from services.simulator_service import run_simulator
@@ -74,8 +76,8 @@ async def lifespan(application: FastAPI):
     # so existing callsites on either field keep working without modification.
     if os.getenv("PGHOST"):
         try:
-            from services.app_backend_db import build_app_backend_manager
             from models import app_schema
+            from services.app_backend_db import build_app_backend_manager
 
             app_db = build_app_backend_manager()
             await app_db.initialize()

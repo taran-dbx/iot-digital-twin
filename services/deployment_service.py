@@ -55,21 +55,21 @@ from services import (
 )
 from services.app_repo_common import DBExecutor
 from services.databricks_sdk import detect_cloud
-from services.production_control import PRODUCTION_CONTROL_TOKEN, control_file_path
-from services.resource_ledger import record_resource
 
 # Validation hard-gate (spec §1.12) lives in its own module; re-exported here so
 # callers can use ``deployment_service.assert_gate_passed`` / ``REQUIRED_STEPS``.
 from services.deployment_gate import (  # noqa: F401  (re-export)
     COMMON_STEPS,
-    DeployGateError,
     REQUIRED_STEPS,
     VALID_MODES,
+    DeployGateError,
     assert_gate_passed,
     gate_passed,
     gate_status,
     outstanding_steps,
 )
+from services.production_control import PRODUCTION_CONTROL_TOKEN, control_file_path
+from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.deployment")
 

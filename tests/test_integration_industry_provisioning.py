@@ -63,8 +63,8 @@ async def _catalog_exists(ws, wh, catalog: str) -> bool:
 
 @pytest.mark.asyncio
 async def test_integration_full_provision_and_teardown() -> None:
-    from services import industry_provisioning_service as ips
     from services import industry_catalog_service as ics
+    from services import industry_provisioning_service as ips
     from services import pipelines_project_service as pps
     from services.dbsql_service import execute_dbsql
 

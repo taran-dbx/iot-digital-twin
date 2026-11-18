@@ -11,10 +11,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from routes.lakets import router as lakets_router
 from core.state import AppState
+from routes.lakets import router as lakets_router
 from services import lakets_service
-
 
 DEPLOYMENT_ID = "00000000-0000-0000-0000-000000000001"
 

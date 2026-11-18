@@ -9,24 +9,23 @@ import os
 import re
 from typing import Any
 
-from fastapi import APIRouter, Query, Request, Depends
-from fastapi.responses import JSONResponse
-
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
 from core.workspace_config import get_pipelines_project
+from routes.sensor_data import _is_industry_deployment, _is_undefined_relation
 from services import app_permissions
+from services.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
+from services.pipeline_service import pipeline_row_to_dict
 from services.pipelines_project_service import (
     PG_DATABASE,
     PRIMARY_ENDPOINT_ID,
     endpoint_resource_name,
 )
-from routes.sensor_data import _is_industry_deployment, _is_undefined_relation
-from services.pipeline_db import get_industry_lakebase, get_pipeline_lakebase
-from services.pipeline_service import pipeline_row_to_dict
 from services.producer_service import stop_data_producer
 from services.source_registry import check_source_available, claim_source, release_source
 
@@ -52,7 +51,7 @@ except ImportError:  # pragma: no cover — transitional fallback
 
 # App-permission grant (CAN_USE) for the streaming SP — fixes the SP's 401
 # when it authenticates back to the deployed app.
-from services.app_permissions import grant_app_can_use, _app_name  # noqa: E402
+from services.app_permissions import _app_name, grant_app_can_use  # noqa: E402
 
 # LakeTS operational jobs (partition manager, rollup, retention). Owned by a
 # sibling refactor in services.lakets_deploy_service; tolerate its absence so

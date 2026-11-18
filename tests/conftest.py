@@ -130,6 +130,7 @@ def mock_app_state(mock_db: MagicMock) -> AppState:
 def _build_test_app(state: AppState):
     """Create a minimal FastAPI app wired to the given AppState."""
     from fastapi import FastAPI
+
     from routes.health import router as health_router
 
     test_app = FastAPI()

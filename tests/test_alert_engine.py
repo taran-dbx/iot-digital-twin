@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+
 import pytest
 
-from domain.catalog import AlertRule, list_alert_rules
 from core.state import AppState
+from domain.catalog import AlertRule, list_alert_rules
 from services.alert_engine import AlertEngine, AlertRecord, evaluate_and_emit, fingerprint_for
 
 pytestmark = pytest.mark.asyncio

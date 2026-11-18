@@ -63,8 +63,8 @@ def _pp(label, obj):
 
 
 async def _db():
-    from services.app_backend_db import build_app_backend_manager
     from models import app_schema
+    from services.app_backend_db import build_app_backend_manager
 
     db = build_app_backend_manager()
     await db.initialize()
@@ -147,8 +147,9 @@ async def stage_provision():
 # ---------------------------------------------------------------------------
 async def stage_verify_provision():
     from databricks.sdk import WorkspaceClient
-    from services.dbsql_service import execute_dbsql
+
     from services import pipelines_project_service as pps
+    from services.dbsql_service import execute_dbsql
 
     w = WorkspaceClient()
     out: dict = {}
@@ -218,9 +219,10 @@ async def _has_lakets(conn) -> bool:
 # Stage: validate microbatch-only (fully green) via the integrated driver
 # ---------------------------------------------------------------------------
 async def stage_validate_mb():
+    from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo, validation_service
     from services import validation_state_machine as sm
-    from databricks.sdk import WorkspaceClient
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -264,9 +266,10 @@ async def stage_validate_mb():
 # Stage: validate realtime lane (through read_back) via the integrated driver
 # ---------------------------------------------------------------------------
 async def stage_validate_rt():
+    from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo, validation_service
     from services import validation_state_machine as sm
-    from databricks.sdk import WorkspaceClient
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -319,6 +322,7 @@ async def stage_probe_landing():
     readable via the read replica.
     """
     from databricks.sdk import WorkspaceClient
+
     from services import pipelines_project_service as pps
 
     w = WorkspaceClient()
@@ -471,9 +475,9 @@ q.awaitTermination()
 
 async def stage_deploy_mb():
     from services import deployment_service, pipeline_setup_repo, validation_service
+    from services import industry_catalog_service as cat
     from services import validation_state_machine as sm
     from services.dbsql_service import execute_dbsql
-    from services import industry_catalog_service as cat
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -540,7 +544,7 @@ async def stage_deploy_status():
 # ---------------------------------------------------------------------------
 async def stage_teardown():
     """Run teardown exactly as the admin DELETE path wires it, then report."""
-    from services import teardown_service, resource_ledger, pipeline_setup_repo
+    from services import pipeline_setup_repo, resource_ledger, teardown_service
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -593,6 +597,7 @@ async def stage_cleanup_cloud():
     Kafka topics (DeleteTopic denied).
     """
     from databricks.sdk import WorkspaceClient
+
     from services.dbsql_service import execute_dbsql
 
     w = WorkspaceClient()
@@ -623,6 +628,7 @@ async def stage_cleanup_cloud():
 
 async def stage_verify_gone():
     from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo
 
     w = WorkspaceClient()

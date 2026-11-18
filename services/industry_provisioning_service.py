@@ -32,12 +32,18 @@ from typing import Any
 from services import (
     cdf_config_service,
     cdf_reconciliation_service,
-    industry_catalog_service as cat,
-    industry_setup_service as setup,
-    pipelines_project_service as pps,
     provisioning_service,
     resource_ledger,
     uc_secrets,
+)
+from services import (
+    industry_catalog_service as cat,
+)
+from services import (
+    industry_setup_service as setup,
+)
+from services import (
+    pipelines_project_service as pps,
 )
 from services.industry_catalog_service import APP_SP_OAUTH_SECRET, TEARDOWN_ORDER_SP
 from services.resource_ledger import record_resource

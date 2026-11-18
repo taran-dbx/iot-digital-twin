@@ -20,9 +20,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from services import health_checks as hc
 from services import validation_state_machine as sm
 from services import validation_steps as vs
-from services import health_checks as hc
 from services.validation_service import StepContext, StepResult
 
 UC_CATALOG = "test_catalog"

@@ -19,9 +19,8 @@ import logging
 import os
 from typing import Any
 
-from core.workspace_config import get_secret_scope
-
 from core.state import AppState
+from core.workspace_config import get_secret_scope
 from services import deployment_service
 from services.industry_templates import (
     CURATED_INDUSTRIES,

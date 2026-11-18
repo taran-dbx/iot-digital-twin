@@ -124,7 +124,12 @@ async def provision_cluster(request: Request, state: AppState = Depends(get_app_
 
     try:
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.compute import AwsAttributes, AzureAttributes, DataSecurityMode, EbsVolumeType
+        from databricks.sdk.service.compute import (
+            AwsAttributes,
+            AzureAttributes,
+            DataSecurityMode,
+            EbsVolumeType,
+        )
 
         cloud = detect_cloud()
         no_spot_kwargs: dict[str, Any] = {}
@@ -254,8 +259,8 @@ async def test_source_connectivity(request: Request):
         )
 
     try:
-        from iot_simulator.sinks.kafka import KafkaSink
         from iot_simulator.models import SensorRecord
+        from iot_simulator.sinks.kafka import KafkaSink
 
         sink = KafkaSink(
             bootstrap_servers=bootstrap,

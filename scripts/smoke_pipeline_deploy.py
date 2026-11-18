@@ -76,8 +76,8 @@ def _build_app() -> FastAPI:
 
 async def _inspect_registries() -> None:
     """Query iot-lakets-demo directly to confirm provisioning landed."""
-    from databricks.sdk import WorkspaceClient
     import asyncpg
+    from databricks.sdk import WorkspaceClient
 
     w = WorkspaceClient()
     parent = f"projects/{PROJECT_ID}/branches/{BRANCH_ID}"

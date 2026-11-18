@@ -44,7 +44,6 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -118,8 +117,8 @@ class TestSseIngestBroadcastE2E:
 
     @pytest_asyncio.fixture()
     async def sse_client(self) -> AsyncGenerator[tuple[AsyncClient, AppState], None]:
-        from routes.websocket import router as ws_router
         from routes.sensor_data import router as sensor_router
+        from routes.websocket import router as ws_router
 
         state = _app_state_with_db()
         app = _build_app_with_routers(state, ws_router, sensor_router)

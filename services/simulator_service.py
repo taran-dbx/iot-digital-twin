@@ -102,8 +102,9 @@ async def run_simulator(state: AppState) -> None:
                 zb_scope = os.getenv("ZEROBUS_SECRET_SCOPE")
                 zb_key = os.getenv("ZEROBUS_SECRET_KEY")
                 if zb_scope and zb_key:
-                    from databricks.sdk import WorkspaceClient
                     import base64
+
+                    from databricks.sdk import WorkspaceClient
 
                     w = WorkspaceClient()
                     resp = w.secrets.get_secret(scope=zb_scope, key=zb_key)

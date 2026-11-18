@@ -9,9 +9,8 @@ import pytest
 
 from core.state import AppState
 from services import alert_snapshot_sync as snapshot_sync
-from services.alert_engine import AlertEngine, evaluate_and_emit
 from services import intelligence_catalog_service as ics
-
+from services.alert_engine import AlertEngine, evaluate_and_emit
 
 CATALOG = "test_catalog"
 SCHEMA = "test_schema"

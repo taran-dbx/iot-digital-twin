@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 
 from core.state import AppState, get_app_state
 from services.simulator_service import run_simulator

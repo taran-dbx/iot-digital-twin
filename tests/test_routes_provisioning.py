@@ -18,7 +18,6 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
-
 WORKSPACE_ID = 1234567890123456
 
 

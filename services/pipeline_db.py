@@ -44,12 +44,12 @@ from databricks.sdk.core import Config
 from backend import LakebaseConnectionManager
 from core.state import AppState
 from core.workspace_config import get_pipelines_project
+from services.industry_templates import CURATED_INDUSTRIES
 from services.pipelines_project_service import (
     PG_DATABASE,
     PRIMARY_ENDPOINT_ID,
     endpoint_resource_name,
 )
-from services.industry_templates import CURATED_INDUSTRIES
 
 logger = logging.getLogger("iot_digital_twin.services.pipeline_db")
 

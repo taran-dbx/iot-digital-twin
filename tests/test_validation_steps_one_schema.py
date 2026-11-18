@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from services import validation_state_machine as sm
 from services import validation_steps as vsteps
 from services.validation_service import StepContext, StepResult
-from services import validation_state_machine as sm
 
 UC_CATALOG = "classic_stable_realtime_demos_catalog"
 UC_SCHEMA = "rtm_lakets_zb"

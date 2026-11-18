@@ -137,7 +137,7 @@ class TestMetricsTableResolution:
 
     def test_mode_column_present_in_managed_metrics_ddl(self) -> None:
         """The managed metrics DDL includes a leading ``mode`` column."""
-        from models.metrics_schema import metrics_managed_columns, METRICS_MODE_COLUMN
+        from models.metrics_schema import METRICS_MODE_COLUMN, metrics_managed_columns
         cols = metrics_managed_columns()
         assert cols[0].column == METRICS_MODE_COLUMN
 
@@ -152,8 +152,8 @@ class TestMetricsTableResolution:
         This test drives the route implementation via a mock execute_dbsql —
         it bypasses routes/__init__.py by importing the module directly.
         """
-        import sys
         import importlib.util
+        import sys
         from pathlib import Path
 
         route_path = Path(__file__).parent.parent / "routes" / "streaming_latency.py"
@@ -200,6 +200,7 @@ class TestMetricsTableResolution:
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
+
         from core.state import AppState
 
         state = AppState()
@@ -246,8 +247,8 @@ class TestStreamingMetricsModeValidation:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``mode=realtime'; DROP TABLE ...; --`` must yield 400, not execute."""
-        import sys
         import importlib.util
+        import sys
         from pathlib import Path
 
         route_path = Path(__file__).parent.parent / "routes" / "sensor_data.py"
@@ -280,6 +281,7 @@ class TestStreamingMetricsModeValidation:
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
+
         from core.state import AppState
 
         state = AppState()
@@ -310,8 +312,8 @@ class TestStreamingMetricsModeValidation:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A valid ``mode=realtime`` must still work correctly."""
-        import sys
         import importlib.util
+        import sys
         from pathlib import Path
 
         route_path = Path(__file__).parent.parent / "routes" / "sensor_data.py"
@@ -344,6 +346,7 @@ class TestStreamingMetricsModeValidation:
 
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
+
         from core.state import AppState
 
         state = AppState()

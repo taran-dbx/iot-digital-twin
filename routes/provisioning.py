@@ -11,11 +11,11 @@ import traceback
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from core.state import AppState, get_app_state
 from core.auth import get_current_user
-from models.sql_ddl import SENSOR_READINGS_DDL, MATVIEW_1M_DDL, MATVIEW_5M_DDL, MATVIEW_INDEX_DDL
-from services.pipeline_service import track_resource
+from core.state import AppState, get_app_state
+from models.sql_ddl import MATVIEW_1M_DDL, MATVIEW_5M_DDL, MATVIEW_INDEX_DDL, SENSOR_READINGS_DDL
 from services import provisioning_service
+from services.pipeline_service import track_resource
 
 logger = logging.getLogger("iot_digital_twin.routes.provisioning")
 
@@ -257,7 +257,7 @@ def _grant_zerobus_sp(w, catalog_name: str, schemas: list[str], sp_app_id: str) 
     """
     results: list[dict] = []
     try:
-        from databricks.sdk.service.catalog import Privilege, PermissionsChange
+        from databricks.sdk.service.catalog import PermissionsChange, Privilege
     except ImportError as exc:
         logger.error("SDK grant enums unavailable; cannot grant Zerobus SP: %s", exc)
         return [{

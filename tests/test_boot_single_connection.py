@@ -63,6 +63,7 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
         patch("app.shutdown", AsyncMock()),
     ):
         from fastapi import FastAPI
+
         import app as app_module
 
         fa = FastAPI()

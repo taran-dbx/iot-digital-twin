@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = REPO_ROOT / "static" / "dist"
 APP_PY = REPO_ROOT / "app.py"

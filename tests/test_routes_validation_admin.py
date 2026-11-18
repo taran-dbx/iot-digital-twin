@@ -27,6 +27,7 @@ _STATE = {"sequence": ["provision_cluster", "done"],
 
 def _build_app(state: AppState):
     from fastapi import FastAPI
+
     from routes.validation_admin import router
 
     app = FastAPI()

@@ -32,10 +32,11 @@ async def start_data_producer(
 
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.workspace import ImportFormat, Language
-        from databricks.sdk.service.jobs import SubmitTask, NotebookTask, Source, JobEnvironment
         from databricks.sdk.service.compute import Environment
+        from databricks.sdk.service.jobs import JobEnvironment, NotebookTask, Source, SubmitTask
+        from databricks.sdk.service.workspace import ImportFormat, Language
 
         w = WorkspaceClient()
         me = w.current_user.me()

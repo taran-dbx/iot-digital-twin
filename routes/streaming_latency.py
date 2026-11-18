@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
 from models import metrics_schema  # noqa: F401 — kept for backward compat; new code uses _icat
+from routes.sensor_data import _is_industry_deployment
 from services import industry_catalog_service as _icat
 from services.dbsql_service import (
     execute_dbsql,
@@ -44,7 +45,6 @@ from services.dbsql_service import (
 )
 from services.industry_templates import CURATED_INDUSTRIES
 from services.uc_ident import sql_fqn
-from routes.sensor_data import _is_industry_deployment
 
 logger = logging.getLogger("iot_digital_twin.routes.streaming_latency")
 router = APIRouter()

@@ -23,7 +23,6 @@ from httpx import ASGITransport, AsyncClient
 
 from services import pipeline_setup_service
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -359,8 +358,8 @@ class TestNonFatal:
 
 
 def _build_app() -> FastAPI:
-    from routes.setup import router as setup_router
     from core.state import AppState, get_app_state
+    from routes.setup import router as setup_router
 
     app = FastAPI()
     app.include_router(setup_router)

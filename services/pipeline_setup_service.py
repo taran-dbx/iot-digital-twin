@@ -25,7 +25,6 @@ import logging
 from typing import Any
 
 from core.workspace_config import get_secret_scope
-
 from services import lakets_service
 from services.provisioning_service import (
     ensure_streaming_sp,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from models.producer_state import new_producer_state, source_label
 from models import sql_ddl
+from models.producer_state import new_producer_state, source_label
 
 
 class TestNewProducerState:

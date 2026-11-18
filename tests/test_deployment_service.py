@@ -10,8 +10,8 @@ integration test.
 from __future__ import annotations
 
 import base64
-import os
 import inspect
+import os
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest

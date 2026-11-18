@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
 CURATED_INDUSTRIES: list[str] = ["manufacturing", "pharmaceutical", "energy", "automotive"]
 
 MODES: list[str] = ["realtime", "microbatch", "zerobus"]

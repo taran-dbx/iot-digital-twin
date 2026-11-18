@@ -14,15 +14,15 @@ from typing import Any
 import httpx
 
 from models.sql_ddl import (
-    SENSOR_READINGS_DDL,
+    LAKEBASE_ROLE_ID,
+    LAKEBASE_ROLE_NAME,
     MATVIEW_1M_DDL,
     MATVIEW_5M_DDL,
     MATVIEW_INDEX_DDL,
-    LAKEBASE_ROLE_NAME,
-    LAKEBASE_ROLE_ID,
+    SENSOR_READINGS_DDL,
 )
 from services import lakets_service
-from services.app_permissions import grant_app_can_use, _app_name
+from services.app_permissions import _app_name, grant_app_can_use
 
 logger = logging.getLogger("iot_digital_twin.services.provisioning")
 
@@ -526,7 +526,7 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
-    from databricks.sdk.service.postgres import Project, Branch, BranchSpec
+    from databricks.sdk.service.postgres import Branch, BranchSpec, Project
     w = WorkspaceClient()
 
     # Step 1: Check if project exists
@@ -794,9 +794,9 @@ async def provision_lakebase_role(
     try:
         from databricks.sdk.service.postgres import (
             Role,
-            RoleRoleSpec,
             RoleAuthMethod,
             RoleMembershipRole,
+            RoleRoleSpec,
         )
 
         create_kwargs: dict[str, Any] = {

@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
-
 from fastapi import HTTPException
 
 from core import auth
