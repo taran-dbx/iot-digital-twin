@@ -219,20 +219,20 @@ databricks sync . "/Workspace/Users/$USER/iot-digital-twin" -p <profile>
 **Symptom:** App deployment fails with missing dependency.
 
 **Root cause:** `.databricksignore` excludes `*.whl` files, but `requirements.txt`
-references `./iot_data_simulator-0.1.0-py3-none-any.whl`.
+references `./lib/iot_data_simulator-0.1.0-py3-none-any.whl` (originally a root-level copy).
 
 **Fix applied:** Manually uploaded the `.whl` file:
 ```bash
 databricks workspace import \
-  /Workspace/Users/<user>/iot-digital-twin/iot_data_simulator-0.1.0-py3-none-any.whl \
-  --file iot_data_simulator-0.1.0-py3-none-any.whl -p <profile> --overwrite
+  /Workspace/Users/<user>/iot-digital-twin/lib/iot_data_simulator-0.1.0-py3-none-any.whl \
+  --file lib/iot_data_simulator-0.1.0-py3-none-any.whl -p <profile> --overwrite
 ```
 
 **Status (2026-08): RESOLVED.** `*.whl` is no longer excluded by
 `.databricksignore`, so `databricks sync` ships the wheel automatically and the
-manual upload above is only a fallback. The wheel is git-tracked at the repo
-root (installed via `requirements.txt`); `lib/…whl` is a runtime copy read by
-`routes/deployment.py`.
+manual upload above is only a fallback. The wheel is git-tracked once, at
+`lib/…whl`: `requirements.txt` installs it from there and the runtime wheel
+service reads the same file.
 
 ---
 
@@ -384,8 +384,8 @@ cd client && npm run build && cd ..
 databricks sync . "$TARGET" --watch=false -p $PROFILE
 
 # Upload .whl (fallback only — it now syncs automatically; not .databricksignore'd)
-databricks workspace import "$TARGET/iot_data_simulator-0.1.0-py3-none-any.whl" \
-  --file iot_data_simulator-0.1.0-py3-none-any.whl -p $PROFILE --overwrite
+databricks workspace import "$TARGET/lib/iot_data_simulator-0.1.0-py3-none-any.whl" \
+  --file lib/iot_data_simulator-0.1.0-py3-none-any.whl -p $PROFILE --overwrite
 
 # Deploy
 databricks api post /api/2.0/apps/iot-digital-twin/deployments -p $PROFILE \
@@ -461,8 +461,8 @@ echo "SP Client ID: $SP_CLIENT_ID"
 cd client && npm run build && cd ..
 TARGET="/Workspace/Users/$USER/$APP_NAME"
 databricks sync . "$TARGET" --watch=false -p "$PROFILE"
-databricks workspace import "$TARGET/iot_data_simulator-0.1.0-py3-none-any.whl" \
-  --file iot_data_simulator-0.1.0-py3-none-any.whl -p "$PROFILE" --overwrite
+databricks workspace import "$TARGET/lib/iot_data_simulator-0.1.0-py3-none-any.whl" \
+  --file lib/iot_data_simulator-0.1.0-py3-none-any.whl -p "$PROFILE" --overwrite
 databricks api post "/api/2.0/apps/$APP_NAME/deployments" -p "$PROFILE" \
   --json '{"source_code_path": "'$TARGET'", "mode": "SNAPSHOT"}'
 

@@ -1,4 +1,4 @@
-./iot_data_simulator-0.1.0-py3-none-any.whl
+./lib/iot_data_simulator-0.1.0-py3-none-any.whl
 asyncpg==0.31.0
 psycopg2-binary==2.9.11
 databricks-sdk==0.133.0
