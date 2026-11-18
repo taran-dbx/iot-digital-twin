@@ -6,6 +6,8 @@ Thin HTTP surface over ``services.deployment_service``:
     POST /api/admin/pipelines/{setup_id}/{mode}/start     trigger a run
     POST /api/admin/pipelines/{setup_id}/{mode}/stop      cancel active runs
     GET  /api/admin/pipelines/{setup_id}/{mode}/status    latest run state
+    POST /api/admin/pipelines/{setup_id}/genie/{mode}     Genie space for an
+         already-deployed manufacturing mode (no job/stream changes)
 
 The consumer/producer notebook sources are the P5a-generated artifacts
 (``client/src/lib/notebook-template.ts`` / ``data-producer-notebook.ts``),
@@ -31,6 +33,7 @@ from services import (
     cdf_reconciliation_service,
     deployment_repo,
     deployment_service,
+    genie_provisioning,
 )
 
 logger = logging.getLogger("iot_digital_twin.routes.pipeline_deploy")
@@ -118,6 +121,27 @@ async def deploy_pipeline_endpoint(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _invalidate_industry_runtime_cache(state)
     return result
+
+
+@router.post("/api/admin/pipelines/{setup_id}/genie/{mode}")
+async def provision_genie_space_endpoint(
+    setup_id: str,
+    mode: str,
+    request: Request,
+    state: AppState = Depends(get_app_state),
+):
+    """Create-or-update the Genie space of an EXISTING deployed manufacturing mode.
+
+    ``setup_id`` may be the ``pipeline_setup.id`` or the mode's
+    ``pipeline_deployment.id``.  Touches only the Genie space + its ledger row.
+    """
+    _require_admin(request)
+    _validate_mode(mode)
+    db = _require_db(state)
+    try:
+        return await genie_provisioning.provision_existing_pipeline_space(db, setup_id, mode)
+    except genie_provisioning.GenieProvisionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post("/api/admin/pipelines/{setup_id}/{mode}/start")

@@ -95,12 +95,13 @@ async def _list_pipelines(state: AppState) -> list[dict[str, Any]]:
 
 async def _list_industry_first_deployments(
     state: AppState,
-) -> dict[tuple[str, str], str]:
-    """Return dashboard ids for modes deployed through the admin data model.
+) -> dict[tuple[str, str], dict[str, str | None]]:
+    """Return ``{(industry, mode): {deployment_id, setup_id}}`` for admin deploys.
 
     Industry-first deployments intentionally do not create legacy ``pipelines``
     rows. Their ``pipeline_deployment.id`` is therefore the stable per-mode
-    identity used to unlock industry-aware dashboard endpoints.
+    identity used to unlock industry-aware dashboard endpoints; ``setup_id``
+    (``pipeline_setup.id``) addresses per-pipeline Genie routes.
     """
     db = getattr(state, "app_backend_db", None) if state else None
     if db is None:
@@ -108,7 +109,7 @@ async def _list_industry_first_deployments(
     try:
         rows = await db.fetch(
             """
-            SELECT pd.id AS deployment_id, ps.industry, pd.mode
+            SELECT pd.id AS deployment_id, ps.id AS setup_id, ps.industry, pd.mode
             FROM pipeline_deployment pd
             JOIN pipeline_setup ps ON ps.id = pd.setup_id
             WHERE pd.job_id IS NOT NULL
@@ -119,7 +120,10 @@ async def _list_industry_first_deployments(
         logger.warning("Failed to list industry-first deployments for catalog: %s", exc)
         return {}
     return {
-        (str(row["industry"]), str(row["mode"])): str(row["deployment_id"])
+        (str(row["industry"]), str(row["mode"])): {
+            "deployment_id": str(row["deployment_id"]),
+            "setup_id": str(row["setup_id"]) if row.get("setup_id") else None,
+        }
         for row in rows
         if row.get("deployment_id") and row.get("industry") and row.get("mode")
     }
@@ -314,7 +318,8 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
     """Return one gallery entry per curated industry, with per-mode status.
 
     Each entry: ``{id, name, accent, icon, twin_type, tag, modes, running_count}``
-    where ``modes`` is ``[{id, name, to, desc, status, pipeline_id}]`` and
+    where ``modes`` is ``[{id, name, to, desc, status, pipeline_id,
+    deployment_id, setup_id}]`` and
     ``status`` is one of ``"idle" | "starting" | "running"``.
 
     Per-mode matching is delegated to ``resolve_pipeline_for_mode`` (shared
@@ -338,6 +343,7 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
         running_count = 0
         for mode in MODES:
             cfg = mode_config(mode)
+            first_ids = industry_first_ids.get((industry, mode)) or {}
             row = await resolve_pipeline_for_mode(state, industry, mode, rows=rows)
             if row is None:
                 status = "idle"
@@ -361,7 +367,9 @@ async def get_catalog(state: AppState) -> list[dict[str, Any]]:
                     # Industry-first deliberately has no legacy ``pipelines``
                     # row. Keep its deployment identity separate so config
                     # links never send a deployment UUID to legacy CRUD.
-                    "deployment_id": industry_first_ids.get((industry, mode)),
+                    "deployment_id": first_ids.get("deployment_id"),
+                    # pipeline_setup.id — addresses /api/genie/pipelines/{setup_id}/{mode}.
+                    "setup_id": first_ids.get("setup_id"),
                 }
             )
 

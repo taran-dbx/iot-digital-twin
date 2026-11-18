@@ -47,6 +47,7 @@ from services import (
     dbsql_service,
     deployment_repo,
     deployment_service,
+    genie_space_service,
     health_checks,
     industry_provisioning_service,
     pipeline_freshness,
@@ -583,6 +584,42 @@ async def get_setup_for_industry(
     }
 
 
+def _mode_genie_spaces(resources: list[dict], mode: str, deployment_id: Any) -> list[dict]:
+    """Active genie_space rows for ``mode`` (deployment-attached or setup-scoped)."""
+    return [
+        resource
+        for resource in resources
+        if resource.get("resource_type") == genie_space_service.RESOURCE_TYPE
+        and (resource.get("status") or "active") == "active"
+        and (
+            str(resource.get("deployment_id")) == str(deployment_id)
+            or (resource.get("metadata") or {}).get("mode") == mode
+        )
+    ]
+
+
+async def _trash_mode_genie_spaces(
+    db: Any, resources: list[dict], mode: str, deployment_id: Any, attached: list[dict]
+) -> None:
+    """Trash a removed mode's Genie space(s); 502 (deployment kept) on failure."""
+    spaces = _mode_genie_spaces(resources, mode, deployment_id)
+    if not spaces:
+        return
+    deleter = genie_space_service.make_genie_space_deleter()
+    attached_ids = {resource.get("id") for resource in attached}
+    for space in spaces:
+        try:
+            await deleter(space)
+        except Exception as exc:
+            logger.exception("Failed to trash %s Genie space %s", mode, space.get("identifier"))
+            raise HTTPException(
+                status_code=502,
+                detail=f"failed to remove {mode} Genie space {space.get('identifier')}",
+            ) from exc
+        if space.get("id") not in attached_ids:
+            await resource_ledger.mark_resource_status(db, space.get("id"), "deleted")
+
+
 # ---------------------------------------------------------------------------
 # PATCH /api/admin/pipelines/{setup_id}/modes — incremental add/remove
 # ---------------------------------------------------------------------------
@@ -694,6 +731,9 @@ async def update_pipeline_modes(
                         status_code=502,
                         detail=f"failed to remove {mode} job {job_id}",
                     ) from exc
+            # The genie_space ledger row cascades with the deployment, so trash
+            # the workspace space first or it would be orphaned.
+            await _trash_mode_genie_spaces(db, resources, mode, deployment_id, attached)
             await deployment_repo.delete_deployment(db, deployment_id)
             for resource in attached:
                 await resource_ledger.mark_resource_status(

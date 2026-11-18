@@ -12,9 +12,12 @@ Genie may explain and recommend.  It cannot mutate alerts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +46,10 @@ _INJECTION_KEYS = frozenset({"tables", "context", "table", "uc_tables", "allowed
 MAX_QUESTION_CHARS = 4000
 SDK_TIMEOUT_S = 20.0
 ALLOWLIST_CONFIRM_ENV = "GENIE_ALLOWLIST_CONFIRMED"
+ALLOWLIST_CACHE_TTL_S = 60.0
+TELEMETRY_TIMEOUT_S = 5.0
+_KNOWN_DATA_SOURCE_KINDS = ("tables", "metric_views")
+UNSUPPORTED_SOURCE_PREFIX = "unsupported_data_source:"
 
 
 class GenieDisabledError(RuntimeError):
@@ -274,12 +281,19 @@ def parse_space_tables(serialized: object) -> list[str] | None:
     if not isinstance(sources, dict):
         return None
     names: list[str] = []
-    for key in ("tables", "metric_views"):
+    for key in _KNOWN_DATA_SOURCE_KINDS:
         for item in sources.get(key) or []:
             identifier = item.get("identifier") if isinstance(item, dict) else None
             if identifier:
                 names.append(str(identifier))
-    return sorted(names)
+    # Any other non-empty data-source kind can never be in an expected set, so
+    # it forces a mismatch (fail closed) instead of being silently ignored.
+    unknown = [
+        f"{UNSUPPORTED_SOURCE_PREFIX}{key}"
+        for key, value in sources.items()
+        if key not in _KNOWN_DATA_SOURCE_KINDS and value
+    ]
+    return sorted(names) + sorted(unknown)
 
 
 def _legacy_table_names(space: object) -> list[str] | None:
@@ -325,18 +339,46 @@ def _allowlist_manually_confirmed() -> bool:
     return raw in {"1", "true", "yes"}
 
 
+_STATIC_REQUIREMENT = (
+    "Configure the Genie space data sources to exactly the dedicated "
+    "intelligence_* tables/views listed in expected_tables. Prompt "
+    "text does not enforce Unity Catalog authorization."
+)
+_STATIC_MANUAL_REQUIREMENT = (
+    "Genie space table inspection is unavailable. Set "
+    f"{ALLOWLIST_CONFIRM_ENV}=true only after an admin verifies "
+    "the space data sources equal the intelligence tables in "
+    "expected_tables. Prompt text does not grant table access."
+)
+_PIPELINE_MISMATCH = (
+    "Genie space data sources do not match the tables expected for this "
+    "pipeline. Redeploy the pipeline to refresh its Genie space."
+)
+_PIPELINE_UNINSPECTABLE = (
+    "Genie space tables could not be inspected, so this pipeline's space "
+    "stays disabled. Try again shortly."
+)
+
+
+def _verdict(discovered: list[str], expected: list[str]) -> bool:
+    return bool(expected) and set(discovered) == set(expected)
+
+
 def space_table_allowlist_status(
     client: Any | None = None,
     space_id: str | None = None,
     expected_tables: list[str] | None = None,
+    allow_manual: bool | None = None,
 ) -> dict[str, Any]:
     """Compare the space's tables with ``expected_tables``.
 
-    ``expected_tables`` defaults to the static copilot's intelligence_* set;
-    per-pipeline spaces pass their own expected set.
+    ``expected_tables`` defaults to the static copilot's intelligence_* set.
+    Per-pipeline spaces pass their own set; for them the manual
+    ``GENIE_ALLOWLIST_CONFIRMED`` override is never honored (fail closed).
     """
-    source = allowed_uc_tables("", "") if expected_tables is None else expected_tables
-    expected = sorted(source)
+    pipeline = expected_tables is not None
+    manual_ok = (not pipeline) if allow_manual is None else allow_manual
+    expected = sorted(allowed_uc_tables("", "") if expected_tables is None else expected_tables)
     discovered = inspect_space_tables(client, space_id)
     payload: dict[str, Any] = {
         "authorization_enforced": False,
@@ -344,37 +386,73 @@ def space_table_allowlist_status(
         "space_tables": discovered,
         "verified": False,
         "manual_confirmed": False,
-        "requirement": (
-            "Configure the Genie space data sources to exactly the dedicated "
-            "intelligence_* tables/views listed in expected_tables. Prompt "
-            "text does not enforce Unity Catalog authorization."
-        ),
     }
     if discovered is None:
-        confirmed = _allowlist_manually_confirmed()
-        payload["status"] = "manual_required"
-        payload["manual_confirmed"] = confirmed
-        payload["authorization_enforced"] = confirmed
-        if not confirmed:
-            payload["requirement"] = (
-                "Genie space table inspection is unavailable. Set "
-                f"{ALLOWLIST_CONFIRM_ENV}=true only after an admin verifies "
-                "the space data sources equal the intelligence tables in "
-                "expected_tables. Prompt text does not grant table access."
-            )
-        return payload
-    expected_set = set(expected)
-    found_set = set(discovered)
-    payload["verified"] = expected_set == found_set and bool(expected_set)
-    payload["authorization_enforced"] = payload["verified"]
-    payload["status"] = "matched" if payload["verified"] else "mismatch"
-    if not payload["verified"]:
-        payload["requirement"] = (
-            "Genie space data sources must exactly match the dedicated "
-            "intelligence_* tables/views in expected_tables. Prompt text "
-            "does not enforce Unity Catalog authorization."
-        )
-    return payload
+        confirmed = manual_ok and _allowlist_manually_confirmed()
+        unconfirmed = _PIPELINE_UNINSPECTABLE if pipeline else _STATIC_MANUAL_REQUIREMENT
+        return {
+            **payload,
+            "status": "manual_required",
+            "manual_confirmed": confirmed,
+            "authorization_enforced": confirmed,
+            "requirement": _STATIC_REQUIREMENT if confirmed else unconfirmed,
+        }
+    verified = _verdict(discovered, expected)
+    return {
+        **payload,
+        "verified": verified,
+        "authorization_enforced": verified,
+        "status": "matched" if verified else "mismatch",
+        "requirement": _PIPELINE_MISMATCH if pipeline else _STATIC_REQUIREMENT,
+    }
+
+
+# --- Verified-allowlist cache (per-pipeline spaces only) ---------------------
+_cache_lock = threading.Lock()
+_allowlist_cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, Any]]] = {}
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def invalidate_allowlist_cache(space_id: str | None = None) -> None:
+    """Drop cached verifications for ``space_id`` (or all when None)."""
+    global _allowlist_cache
+    with _cache_lock:
+        _allowlist_cache = {
+            key: value
+            for key, value in _allowlist_cache.items()
+            if space_id is not None and key[0] != space_id
+        }
+
+
+def _cached_verification(key: tuple[str, tuple[str, ...]]) -> dict[str, Any] | None:
+    with _cache_lock:
+        entry = _allowlist_cache.get(key)
+    if entry is None or _monotonic() - entry[0] > ALLOWLIST_CACHE_TTL_S:
+        return None
+    return entry[1]
+
+
+def _store_verification(key: tuple[str, tuple[str, ...]], payload: dict[str, Any]) -> None:
+    global _allowlist_cache
+    with _cache_lock:
+        _allowlist_cache = {**_allowlist_cache, key: (_monotonic(), payload)}
+
+
+def cached_allowlist_status(
+    client: Any | None, space_id: str, expected_tables: list[str]
+) -> dict[str, Any]:
+    """Pipeline allowlist status; only *verified* results are cached (~60s)."""
+    key = (str(space_id), tuple(sorted(expected_tables)))
+    cached = _cached_verification(key)
+    if cached is not None:
+        return cached
+    status = space_table_allowlist_status(client, space_id, expected_tables)
+    if status.get("authorization_enforced"):
+        _store_verification(key, status)
+    return status
 
 
 def require_table_allowlist(
@@ -383,7 +461,10 @@ def require_table_allowlist(
     expected_tables: list[str] | None = None,
 ) -> dict[str, Any]:
     """Block conversations unless the space's table allowlist is authorized."""
-    allowlist = space_table_allowlist_status(client, space_id, expected_tables)
+    if expected_tables is not None and space_id:
+        allowlist = cached_allowlist_status(client, space_id, expected_tables)
+    else:
+        allowlist = space_table_allowlist_status(client, space_id, expected_tables)
     if allowlist.get("authorization_enforced"):
         return allowlist
     raise GenieDisabledError(
@@ -643,6 +724,20 @@ async def fetch_telemetry_summary(
     if not rows:
         return []
     return [dict(row) for row in rows]
+
+
+async def bounded_telemetry_summary(
+    industry: str, mode: str, sensor_names: list[str], **kwargs: Any
+) -> list[dict[str, Any]]:
+    """:func:`fetch_telemetry_summary` capped at ``TELEMETRY_TIMEOUT_S`` (→ ``[]``)."""
+    try:
+        return await asyncio.wait_for(
+            fetch_telemetry_summary(industry, mode, sensor_names, **kwargs),
+            timeout=TELEMETRY_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.info("Genie telemetry summary timed out after %ss", TELEMETRY_TIMEOUT_S)
+        return []
 
 
 def status_payload(client: Any | None = None) -> dict[str, Any]:

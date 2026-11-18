@@ -11,6 +11,7 @@ the trusted/untrusted prompt wrapper.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.auth import require_identity
 from core.state import AppState, get_app_state
 from routes.genie import _http_for, _sdk_call
-from services import genie_service, genie_space_service, pipeline_setup_repo
+from services import deployment_repo, genie_service, genie_space_service, pipeline_setup_repo
 
 logger = logging.getLogger("iot_digital_twin.routes.genie_pipelines")
 
@@ -57,17 +58,42 @@ def _require_db(state: AppState) -> Any:
     return state.app_backend_db
 
 
-async def _resolve_scope(state: AppState, setup_id: str, mode: str) -> PipelineScope:
-    _require_mode(mode)
-    db = _require_db(state)
-    setup = await pipeline_setup_repo.get_setup(db, setup_id)
+def _canonical_uuid(raw: str) -> str:
+    """Return the canonical UUID string, or 404 (never reaches the database)."""
+    try:
+        return str(uuid.UUID(str(raw)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise HTTPException(status_code=404, detail="unknown pipeline") from exc
+
+
+async def _setup_for(db: Any, pipeline_id: str, mode: str) -> dict:
+    """Resolve ``pipeline_id`` as a ``pipeline_setup.id`` or ``pipeline_deployment.id``.
+
+    A deployment id must belong to ``mode``; it resolves to its setup.
+    """
+    setup = await pipeline_setup_repo.get_setup(db, pipeline_id)
+    if setup is not None:
+        return setup
+    deployment = await deployment_repo.get_deployment(db, pipeline_id)
+    if deployment is None or deployment.get("mode") != mode or not deployment.get("setup_id"):
+        raise HTTPException(status_code=404, detail="unknown pipeline")
+    setup = await pipeline_setup_repo.get_setup(db, deployment["setup_id"])
     if setup is None:
         raise HTTPException(status_code=404, detail="unknown pipeline")
+    return setup
+
+
+async def _resolve_scope(state: AppState, pipeline_id: str, mode: str) -> PipelineScope:
+    _require_mode(mode)
+    canonical = _canonical_uuid(pipeline_id)
+    db = _require_db(state)
+    setup = await _setup_for(db, canonical, mode)
+    setup_id = str(setup.get("id") or canonical)
     industry = str(setup.get("industry") or "").strip().lower()
     space_id = None
     if genie_space_service.supports_industry(industry):
         space_id = await genie_space_service.find_space_id(db, setup_id, mode)
-    return PipelineScope(setup_id=str(setup_id), mode=mode, industry=industry, space_id=space_id)
+    return PipelineScope(setup_id=setup_id, mode=mode, industry=industry, space_id=space_id)
 
 
 async def _require_space(state: AppState, setup_id: str, mode: str) -> PipelineScope:
@@ -131,7 +157,7 @@ async def _pack_for(state: AppState, scope: PipelineScope, user: str) -> dict[st
         industry=scope.industry, mode=scope.mode, allowed_tables=scope.expected_tables,
     )
     sensor_names = [sensor["name"] for sensor in pack["catalog"]["sensors"]]
-    summary = await genie_service.fetch_telemetry_summary(
+    summary = await genie_service.bounded_telemetry_summary(
         scope.industry, scope.mode, sensor_names,
         db=state.app_backend_db, db_available=state.app_backend_available, user_email=user,
     )
@@ -165,7 +191,7 @@ async def pipeline_genie_status(
                           "Redeploy the pipeline to create one."}
     try:
         allowlist = await _sdk_call(
-            state, genie_service.space_table_allowlist_status,
+            state, genie_service.cached_allowlist_status,
             None, scope.space_id, scope.expected_tables,
         )
     except Exception as exc:

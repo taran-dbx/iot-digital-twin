@@ -20,12 +20,17 @@ from routes.genie import router as genie_router
 from services import genie_service
 from services import genie_space_service as gss
 
-BASE = "/api/genie/pipelines/setup-1/realtime"
+BASE = "/api/genie/pipelines/11111111-1111-4111-8111-111111111111/realtime"
 SETUPS = {
-    "setup-1": {"id": "setup-1", "industry": "manufacturing"},
-    "setup-ph": {"id": "setup-ph", "industry": "pharmaceutical"},
+    "11111111-1111-4111-8111-111111111111": {"id": "11111111-1111-4111-8111-111111111111", "industry": "manufacturing"},
+    "22222222-2222-4222-8222-222222222222": {"id": "22222222-2222-4222-8222-222222222222", "industry": "pharmaceutical"},
 }
-SPACES = {("setup-1", "realtime"): "sp-rt", ("setup-1", "zerobus"): "sp-zb"}
+DEPLOYMENTS = {
+    "33333333-3333-4333-8333-333333333333": {"id": "33333333-3333-4333-8333-333333333333",
+                                              "setup_id": "11111111-1111-4111-8111-111111111111", "mode": "realtime"},
+}
+DEP_RT = "33333333-3333-4333-8333-333333333333"
+SPACES = {("11111111-1111-4111-8111-111111111111", "realtime"): "sp-rt", ("11111111-1111-4111-8111-111111111111", "zerobus"): "sp-zb"}
 
 
 def _token(user: str) -> dict[str, str]:
@@ -77,7 +82,11 @@ async def api(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[AsyncClient, No
     async def _find_space_id(_db, setup_id, mode):
         return SPACES.get((setup_id, mode))
 
+    async def _get_deployment(_db, deployment_id):
+        return DEPLOYMENTS.get(deployment_id)
+
     monkeypatch.setattr(genie_pipelines.pipeline_setup_repo, "get_setup", _get_setup)
+    monkeypatch.setattr(genie_pipelines.deployment_repo, "get_deployment", _get_deployment)
     monkeypatch.setattr(gss, "find_space_id", _find_space_id)
     monkeypatch.setattr(genie_service, "fetch_telemetry_summary", AsyncMock(return_value=[]))
     client = _genie_client()
@@ -114,13 +123,13 @@ class TestStatus:
 
     @pytest.mark.asyncio
     async def test_unavailable_when_not_provisioned(self, api: AsyncClient) -> None:
-        body = (await api.get("/api/genie/pipelines/setup-1/microbatch/status")).json()
+        body = (await api.get("/api/genie/pipelines/11111111-1111-4111-8111-111111111111/microbatch/status")).json()
         assert body["available"] is False and body["space_id"] is None
         assert "Redeploy" in body["reason"]
 
     @pytest.mark.asyncio
     async def test_unavailable_for_non_manufacturing(self, api: AsyncClient) -> None:
-        body = (await api.get("/api/genie/pipelines/setup-ph/realtime/status")).json()
+        body = (await api.get("/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime/status")).json()
         assert body["available"] is False
         assert "manufacturing" in body["reason"]
 
@@ -140,7 +149,7 @@ class TestStatus:
 
     @pytest.mark.asyncio
     async def test_unknown_mode_422(self, api: AsyncClient) -> None:
-        assert (await api.get("/api/genie/pipelines/setup-1/batch/status")).status_code == 422
+        assert (await api.get("/api/genie/pipelines/11111111-1111-4111-8111-111111111111/batch/status")).status_code == 422
 
     @pytest.mark.asyncio
     async def test_db_unavailable_503(self, api: AsyncClient) -> None:
@@ -163,13 +172,13 @@ class TestStarters:
     @pytest.mark.asyncio
     async def test_mode_aware_questions(self, api: AsyncClient) -> None:
         rt = (await api.get(f"{BASE}/starters")).json()
-        zb = (await api.get("/api/genie/pipelines/setup-1/zerobus/starters")).json()
+        zb = (await api.get("/api/genie/pipelines/11111111-1111-4111-8111-111111111111/zerobus/starters")).json()
         assert rt == {"questions": list(gss.starter_questions("realtime"))}
         assert zb["questions"] != rt["questions"]
 
     @pytest.mark.asyncio
     async def test_non_manufacturing_404(self, api: AsyncClient) -> None:
-        resp = await api.get("/api/genie/pipelines/setup-ph/realtime/starters")
+        resp = await api.get("/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime/starters")
         assert resp.status_code == 404
 
 
@@ -188,7 +197,7 @@ class TestConversations:
         assert "What is OEE?" in kwargs["content"]
         record = api.app_state.genie_conversations["conv-1"]
         assert record["owner"] == "alice@example.com"
-        assert record["setup_id"] == "setup-1" and record["mode"] == "realtime"
+        assert record["setup_id"] == "11111111-1111-4111-8111-111111111111" and record["mode"] == "realtime"
 
     @pytest.mark.asyncio
     async def test_start_rejects_injection_fields(self, api: AsyncClient) -> None:
@@ -205,12 +214,12 @@ class TestConversations:
 
     @pytest.mark.asyncio
     async def test_start_503_when_not_provisioned(self, api: AsyncClient) -> None:
-        resp = await _start(api, base="/api/genie/pipelines/setup-1/microbatch")
+        resp = await _start(api, base="/api/genie/pipelines/11111111-1111-4111-8111-111111111111/microbatch")
         assert resp.status_code == 503
 
     @pytest.mark.asyncio
     async def test_start_404_for_non_manufacturing(self, api: AsyncClient) -> None:
-        resp = await _start(api, base="/api/genie/pipelines/setup-ph/realtime")
+        resp = await _start(api, base="/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime")
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
@@ -254,7 +263,7 @@ class TestConversations:
         api.ws.genie.get_space.return_value = SimpleNamespace(
             serialized_space=gss.build_serialized_space("manufacturing", "zerobus")
         )
-        other = "/api/genie/pipelines/setup-1/zerobus/conversations/conv-1/messages/msg-1"
+        other = "/api/genie/pipelines/11111111-1111-4111-8111-111111111111/zerobus/conversations/conv-1/messages/msg-1"
         assert (await api.get(other, headers=ALICE)).status_code == 404
 
     @pytest.mark.asyncio
@@ -362,3 +371,109 @@ class TestAttachmentResult:
     async def test_result_unknown_conversation_404(self, api: AsyncClient) -> None:
         url = f"{BASE}/conversations/nope/messages/msg-1/attachments/att-q/result"
         assert (await api.get(url, headers=ALICE)).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: id resolution, timeouts, cross-scope follow-ups
+# ---------------------------------------------------------------------------
+class TestIdResolution:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["setup-1", "not-a-uuid", "1234", "%27%20OR%201%3D1"])
+    async def test_non_uuid_ids_404(self, api: AsyncClient, bad: str) -> None:
+        base = f"/api/genie/pipelines/{bad}/realtime"
+        assert (await api.get(f"{base}/status")).status_code == 404
+        assert (await api.get(f"{base}/starters")).status_code == 404
+        assert (await _start(api, base=base)).status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_deployment_id_resolves_to_setup(self, api: AsyncClient) -> None:
+        base = f"/api/genie/pipelines/{DEP_RT}/realtime"
+        assert (await api.get(f"{base}/status")).json() == {"available": True, "space_id": "sp-rt"}
+        resp = await _start(api, base=base)
+        assert resp.status_code == 200
+        assert api.app_state.genie_conversations["conv-1"]["setup_id"] == "11111111-1111-4111-8111-111111111111"
+        poll = await api.get(f"{BASE}/conversations/conv-1/messages/msg-1", headers=ALICE)
+        assert poll.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_deployment_id_with_other_mode_404(self, api: AsyncClient) -> None:
+        resp = await api.get(f"/api/genie/pipelines/{DEP_RT}/zerobus/status")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_unknown_uuid_404(self, api: AsyncClient) -> None:
+        resp = await api.get("/api/genie/pipelines/44444444-4444-4444-8444-444444444444/realtime/status")
+        assert resp.status_code == 404
+
+
+class TestReviewFixes:
+    @pytest.mark.asyncio
+    async def test_follow_up_to_other_mode_rejected(self, api: AsyncClient) -> None:
+        await _start(api)
+        api.ws.genie.get_space.return_value = SimpleNamespace(
+            serialized_space=gss.build_serialized_space("manufacturing", "zerobus")
+        )
+        resp = await api.post(
+            "/api/genie/pipelines/11111111-1111-4111-8111-111111111111/zerobus/conversations/conv-1/messages",
+            json={"question": "x"}, headers=ALICE,
+        )
+        assert resp.status_code == 404
+        api.ws.genie.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_follow_up_to_other_setup_rejected(self, api: AsyncClient) -> None:
+        await _start(api)
+        resp = await api.post(
+            "/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime/conversations/conv-1/messages",
+            json={"question": "x"}, headers=ALICE,
+        )
+        assert resp.status_code == 404
+        api.ws.genie.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sdk_timeout_504(self, api: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        import threading
+
+        await _start(api)
+        release = threading.Event()
+        monkeypatch.setattr(genie_service, "SDK_TIMEOUT_S", 0.05)
+        api.ws.genie.get_message.side_effect = lambda **_k: release.wait(2)
+        try:
+            resp = await api.get(f"{BASE}/conversations/conv-1/messages/msg-1", headers=ALICE)
+        finally:
+            release.set()
+        assert resp.status_code == 504
+
+    @pytest.mark.asyncio
+    async def test_manual_override_not_honored(
+        self, api: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
+        api.ws.genie.get_space.side_effect = RuntimeError("uninspectable")
+        body = (await api.get(f"{BASE}/status")).json()
+        assert body["available"] is False
+        assert (await _start(api)).status_code == 503
+        api.ws.genie.start_conversation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_slow_telemetry_does_not_block_start(
+        self, api: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio as _asyncio
+
+        async def _slow(*_a, **_k):
+            await _asyncio.sleep(5)
+            return [{"sensor_name": "zz-slow-marker"}]
+
+        monkeypatch.setattr(genie_service, "fetch_telemetry_summary", _slow)
+        monkeypatch.setattr(genie_service, "TELEMETRY_TIMEOUT_S", 0.05)
+        resp = await _start(api)
+        assert resp.status_code == 200
+        assert "zz-slow-marker" not in api.ws.genie.start_conversation.call_args.kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_allowlist_cached_across_polls(self, api: AsyncClient) -> None:
+        await _start(api)
+        for _ in range(3):
+            await api.get(f"{BASE}/conversations/conv-1/messages/msg-1", headers=ALICE)
+        assert api.ws.genie.get_space.call_count == 1

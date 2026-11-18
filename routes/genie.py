@@ -84,7 +84,7 @@ async def _pack_for(
         alert=alert,
     )
     sensor_names = [sensor["name"] for sensor in pack["catalog"]["sensors"]]
-    pack["telemetry_summary"] = await genie_service.fetch_telemetry_summary(
+    pack["telemetry_summary"] = await genie_service.bounded_telemetry_summary(
         parsed.industry,
         parsed.mode,
         sensor_names,

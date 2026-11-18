@@ -49,6 +49,20 @@ def _quoted(fqn: str) -> str:
     return sql_fqn(*fqn.split("."))
 
 
+CDC_INSERT_FILTER = "_pg_change_type = 'insert'"
+_CDC_HIDDEN_COLUMNS: tuple[str, ...] = ("_pg_lsn", "_pg_xid", "_sort_by", "_timestamp")
+
+
+def _cdc_where(cdc: bool) -> str:
+    """Leading WHERE predicate for CDC shadow tables (empty for plain Delta)."""
+    return f"{CDC_INSERT_FILTER} AND " if cdc else ""
+
+
+def _literal(value: str) -> str:
+    """SQL string literal with single quotes escaped."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def starter_questions(mode: str) -> tuple[str, ...]:
     """Return manufacturing starter questions for ``mode`` (common + mode-specific)."""
     if mode not in _MODE_STARTERS:
@@ -56,8 +70,24 @@ def starter_questions(mode: str) -> tuple[str, ...]:
     return _COMMON_STARTERS + _MODE_STARTERS[mode]
 
 
-def column_configs() -> list[dict[str, Any]]:
-    """Column guidance for the telemetry table (unsorted; caller sorts)."""
+def _cdc_column_configs() -> list[dict[str, Any]]:
+    hidden = [{"column_name": name, "exclude": True} for name in _CDC_HIDDEN_COLUMNS]
+    return [
+        *hidden,
+        {"column_name": "_pg_change_type",
+         "description": ["Lakehouse Sync change type; readings are rows with value 'insert'."]},
+    ]
+
+
+def column_configs(cdc: bool = False) -> list[dict[str, Any]]:
+    """Column guidance for the telemetry table (unsorted; caller sorts).
+
+    ``cdc`` adds the Lakehouse Sync shadow-table bookkeeping columns.
+    """
+    return [*_sensor_column_configs(), *(_cdc_column_configs() if cdc else [])]
+
+
+def _sensor_column_configs() -> list[dict[str, Any]]:
     return [
         {"column_name": "sensor_name", "enable_format_assistance": True,
          "enable_entity_matching": True,
@@ -83,9 +113,23 @@ def column_configs() -> list[dict[str, Any]]:
     ]
 
 
-def text_instructions(telemetry: str, metrics: str, mode: str) -> list[str]:
-    """The single Genie text-instruction block, one rule per string."""
+def text_instructions(
+    telemetry: str, metrics: str, mode: str, industry: str = "manufacturing"
+) -> list[str]:
+    """The single Genie text-instruction block, one newline-terminated rule per string."""
+    return [f"{line}\n" for line in _instruction_lines(telemetry, metrics, mode, industry)]
+
+
+def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -> list[str]:
     t = _short(telemetry)
+    lit = _literal(industry)
+    cdc_note = (
+        f"{telemetry} is the Lakehouse Sync mirror of the real-time Lakebase "
+        f"stream: ALWAYS filter {t}.{CDC_INSERT_FILTER} (one row per reading) and "
+        "ignore the _pg_* / _timestamp / _sort_by bookkeeping columns."
+        if mode == "realtime"
+        else None
+    )
     zerobus_note = (
         f"{metrics} has no rows for zerobus; answer ingest-rate questions from "
         f"COUNT(*) over {telemetry} per minute."
@@ -111,28 +155,37 @@ def text_instructions(telemetry: str, metrics: str, mode: str) -> list[str]:
         "an approximation derived from sensor telemetry, not production counts.",
         f"Anomaly = a reading where {t}.value < {t}.min_value OR {t}.value > "
         f"{t}.max_value. Ignore rows where min_value or max_value is NULL.",
-        "Faults: report fault_active readings; join intelligence_alert_rules / "
-        "intelligence_alert_snapshot on sensor for fault codes and severity.",
+        "The intelligence_* tables hold several industries: ALWAYS filter every "
+        f"intelligence_* table with industry = {lit}.",
+        f"Bridge from telemetry to reference data: {t}.sensor_name = "
+        "intelligence_sensor_bindings.sensor_name, then "
+        "intelligence_sensor_bindings.sensor_id = intelligence_alert_rules.sensor_id "
+        "or intelligence_alert_snapshot.sensor_id (fault codes, thresholds, severity, "
+        "alert status). intelligence_sensor_bindings.asset_id links to "
+        "intelligence_assets and intelligence_maintenance_records.",
+        "Faults: report fault_active readings and use the bridge above for fault "
+        "codes and severity.",
         "Maintenance: use intelligence_maintenance_records joined to "
-        "intelligence_sensor_bindings (asset_id, sensor_name) to relate faults "
-        "to assets and their last maintenance.",
+        "intelligence_sensor_bindings on asset_id to relate faults to assets and "
+        "their last maintenance.",
         "Default time window when unspecified: the last 24 hours, using "
         f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS.",
         zerobus_note,
+        *([cdc_note] if cdc_note else []),
         "Never modify data. Answer read-only with SELECT queries.",
     ]
 
 
-def _downtime_sql(tel: str) -> str:
+def _downtime_sql(tel: str, cdc: bool = False) -> str:
     return (
         "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) "
-        f"AS downtime_minutes FROM {tel} WHERE fault_active "
+        f"AS downtime_minutes FROM {tel} WHERE {_cdc_where(cdc)}fault_active "
         "AND event_time >= current_timestamp() - INTERVAL 24 HOURS "
         "GROUP BY sensor_name ORDER BY downtime_minutes DESC"
     )
 
 
-def _oee_sql(tel: str) -> str:
+def _oee_sql(tel: str, cdc: bool = False) -> str:
     return (
         "WITH m AS (SELECT sensor_name, "
         "COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, "
@@ -140,37 +193,44 @@ def _oee_sql(tel: str) -> str:
         "AS fault_min, "
         "AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) "
         "AS performance, "
-        "AVG(CASE WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) "
+        "AVG(CASE WHEN min_value IS NULL OR max_value IS NULL THEN NULL "
+        "WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) "
         f"AS quality FROM {tel} "
-        "WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) "
+        f"WHERE {_cdc_where(cdc)}event_time >= current_timestamp() - INTERVAL 24 HOURS "
+        "GROUP BY sensor_name) "
         "SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, "
         "ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, "
-        "ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * quality, 2) "
+        "ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) "
+        "* COALESCE(quality, 1), 2) "
         "AS oee_pct FROM m ORDER BY oee_pct ASC"
     )
 
 
-def _anomaly_sql(tel: str) -> str:
+def _anomaly_sql(tel: str, cdc: bool = False) -> str:
     return (
         "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, "
         f"MAX(value) AS max_seen FROM {tel} "
-        "WHERE (value < min_value OR value > max_value) "
+        f"WHERE {_cdc_where(cdc)}(value < min_value OR value > max_value) "
         "AND event_time >= current_timestamp() - INTERVAL 1 HOUR "
         "GROUP BY sensor_name ORDER BY anomalies DESC"
     )
 
 
-def _maintenance_sql(tel: str, refs: dict[str, str]) -> str:
+def _maintenance_sql(
+    tel: str, refs: dict[str, str], industry: str, cdc: bool = False
+) -> str:
     bindings = _quoted(refs["sensor_bindings"])
     maint = _quoted(refs["maintenance_records"])
+    lit = _literal(industry)
     return (
         "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings "
-        f"FROM {tel} WHERE fault_active "
+        f"FROM {tel} WHERE {_cdc_where(cdc)}fault_active "
         "AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) "
         "SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, "
         "MAX(r.completed_at) AS last_maintenance "
         f"FROM faults f JOIN {bindings} b ON b.sensor_name = f.sensor_name "
-        f"LEFT JOIN {maint} r ON r.asset_id = b.asset_id "
+        f"AND b.industry = {lit} "
+        f"LEFT JOIN {maint} r ON r.asset_id = b.asset_id AND r.industry = {lit} "
         "GROUP BY b.asset_id ORDER BY fault_readings DESC"
     )
 
@@ -192,17 +252,19 @@ def _mode_sql(tel: str, metrics: str, mode: str) -> tuple[str, str]:
 
 
 def example_sqls(
-    telemetry: str, metrics: str, refs: dict[str, str], mode: str
+    telemetry: str, metrics: str, refs: dict[str, str], mode: str,
+    industry: str = "manufacturing",
 ) -> list[tuple[str, str]]:
     """Return ``(question, sql)`` pairs scoped to this pipeline's tables."""
     tel = _quoted(telemetry)
+    cdc = mode == "realtime"
     return [
         ("How many minutes of downtime did each sensor have in the last 24 hours?",
-         _downtime_sql(tel)),
-        ("What is the approximate OEE per sensor over the last 24 hours?", _oee_sql(tel)),
-        ("Which sensors had the most anomalies in the last hour?", _anomaly_sql(tel)),
+         _downtime_sql(tel, cdc)),
+        ("What is the approximate OEE per sensor over the last 24 hours?", _oee_sql(tel, cdc)),
+        ("Which sensors had the most anomalies in the last hour?", _anomaly_sql(tel, cdc)),
         ("Which assets had the most faults this week and when were they last maintained?",
-         _maintenance_sql(tel, refs)),
+         _maintenance_sql(tel, refs, industry, cdc)),
         _mode_sql(tel, _quoted(metrics), mode),
     ]
 
@@ -219,7 +281,8 @@ def sql_snippets(telemetry: str) -> dict[str, list[dict[str, Any]]]:
              "sql": [f"100 * (1 - AVG(CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END))"],
              "synonyms": ["availability", "uptime"]},
             {"alias": "anomaly_rate_pct", "display_name": "Anomaly rate %",
-             "sql": [f"100 * AVG(CASE WHEN {t}.value < {t}.min_value OR "
+             "sql": [f"100 * AVG(CASE WHEN {t}.min_value IS NULL OR {t}.max_value IS NULL "
+                     f"THEN NULL WHEN {t}.value < {t}.min_value OR "
                      f"{t}.value > {t}.max_value THEN 1.0 ELSE 0.0 END)"],
              "synonyms": ["out of range rate"]},
         ],
