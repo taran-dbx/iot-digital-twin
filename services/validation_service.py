@@ -29,9 +29,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from datetime import UTC, datetime, timezone
+from typing import Any
 
 from services import pipeline_setup_repo
 from services import validation_state_machine as sm
@@ -129,7 +130,7 @@ Executor = Callable[[StepContext], Awaitable[StepResult]]
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def format_executor_error(exc: BaseException) -> str:

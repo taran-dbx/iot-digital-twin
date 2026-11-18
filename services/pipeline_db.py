@@ -115,12 +115,12 @@ async def _resolve_endpoint_host_bounded(endpoint_name: str) -> str | None:
             asyncio.to_thread(_resolve_endpoint_host, endpoint_name),
             timeout=_ENDPOINT_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Endpoint host resolution timed out for %s", endpoint_name)
         return None
 
 
-async def _initialize_handle(handle: "PipelineLakebaseHandle", *, description: str) -> bool:
+async def _initialize_handle(handle: PipelineLakebaseHandle, *, description: str) -> bool:
     try:
         await asyncio.wait_for(
             handle.initialize(),
@@ -138,16 +138,14 @@ async def _initialize_handle(handle: "PipelineLakebaseHandle", *, description: s
         return False
 
 
-async def get_pipeline_lakebase(
-    state: AppState, pipeline_id: str
-) -> "PipelineLakebaseHandle | None":
+async def get_pipeline_lakebase(state: AppState, pipeline_id: str) -> PipelineLakebaseHandle | None:
     """Return a connection manager for the pipeline's Lakebase, or None.
 
     Caches the manager in ``state.pipeline_dbs`` so repeat calls reuse the
     same asyncpg pool.  Pools auto-refresh their OAuth token every 50 min
     (see ``LakebaseConnectionManager._token_refresh_loop``).
     """
-    cache: dict[str, "PipelineLakebaseHandle"] = getattr(state, "pipeline_dbs", None)
+    cache: dict[str, PipelineLakebaseHandle] = getattr(state, "pipeline_dbs", None)
     if cache is None:
         cache = {}
         state.pipeline_dbs = cache
@@ -199,7 +197,7 @@ async def get_pipeline_lakebase(
     return handle
 
 
-async def get_industry_lakebase(state: AppState, industry: str) -> "PipelineLakebaseHandle | None":
+async def get_industry_lakebase(state: AppState, industry: str) -> PipelineLakebaseHandle | None:
     """Return a connection manager for an industry-first pipeline's Lakebase, or None.
 
     Unlike ``get_pipeline_lakebase``, this does not read a ``pipelines`` row —
@@ -219,7 +217,7 @@ async def get_industry_lakebase(state: AppState, industry: str) -> "PipelineLake
         logger.warning("Rejected invalid industry Lakebase branch %r", industry)
         return None
 
-    cache: dict[str, "PipelineLakebaseHandle"] = getattr(state, "pipeline_dbs", None)
+    cache: dict[str, PipelineLakebaseHandle] = getattr(state, "pipeline_dbs", None)
     if cache is None:
         cache = {}
         state.pipeline_dbs = cache

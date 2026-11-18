@@ -47,7 +47,7 @@ async def sse_events(
                 try:
                     data = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"data: {json.dumps(data, default=str)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
             try:

@@ -70,7 +70,7 @@ def _set_state(app: FastAPI, state: AppState) -> None:
     app.state.app_state = state
 
 
-async def _post_provision(app: FastAPI, body: dict) -> "object":
+async def _post_provision(app: FastAPI, body: dict) -> object:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.post("/api/provision/pipeline-catalog", json=body)

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -89,8 +90,8 @@ class TestLaketsGapfill:
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_rows_shape(self) -> None:
-        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
-        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.timezone.utc)
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
+        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.UTC)
         fetch_rows = [
             {
                 "bucket": bucket_a,
@@ -214,8 +215,8 @@ class TestLaketsRate:
         self,
     ) -> None:
         """[C7222][defect][regression] Return `rate`, including null first values."""
-        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
-        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.timezone.utc)
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
+        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.UTC)
         fetch_rows = [
             {
                 "bucket": bucket_a,
@@ -271,7 +272,7 @@ class TestLaketsRate:
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_rows_shape(self) -> None:
-        bucket = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        bucket = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
         fetch_rows = [
             {"bucket": bucket, "sensor_name": "pressure-02", "rate": 0.15},
         ]
@@ -392,7 +393,7 @@ class TestLakebasePerf:
     @pytest.mark.asyncio
     async def test_no_lag_samples_returns_null_p50_p95(self) -> None:
         # lb resolves, rows come back, but the sss source has zero e2e samples.
-        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
         fetch_rows = [{"bucket": bucket_a, "cnt": 60}]
         db = _mock_db(fetch_return=fetch_rows)
         state = _state_with_db(db)
@@ -417,8 +418,8 @@ class TestLakebasePerf:
 
     @pytest.mark.asyncio
     async def test_happy_path_computes_rates_and_keys(self) -> None:
-        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
-        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.timezone.utc)
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
+        bucket_b = _dt.datetime(2026, 4, 21, 10, 1, tzinfo=_dt.UTC)
         # Two 1-minute buckets: 120 rows + 60 rows over a 5-minute window.
         fetch_rows = [
             {"bucket": bucket_a, "cnt": 120},
@@ -486,7 +487,7 @@ class TestLakebasePerf:
         """``industry`` must drive ``get_industry_lakebase``, not the legacy
         per-pipeline ``get_pipeline_lakebase`` lookup (industry-first pipelines
         have no row in the legacy ``pipelines`` table)."""
-        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
         db = _mock_db(fetch_return=[{"bucket": bucket_a, "cnt": 60}])
         state = _state_with_db(db)
         lb = _mock_pipeline_lakebase(db)
@@ -607,7 +608,7 @@ class TestLakebasePerf:
     @pytest.mark.asyncio
     async def test_counts_recent_chunks_instead_of_parent_c7270_defect(self) -> None:
         """[C7270][defect] Throughput must scan ChronoTable children, not the parent."""
-        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.timezone.utc)
+        bucket_a = _dt.datetime(2026, 4, 21, 10, 0, tzinfo=_dt.UTC)
         db = _mock_db()
         db.fetch = AsyncMock(
             side_effect=[

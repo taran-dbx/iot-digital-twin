@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
@@ -117,7 +117,7 @@ async def cell() -> AsyncGenerator[
     tuple[AsyncClient, AppState, FakeWorkspace, asyncio.Queue, Clock], None
 ]:
     # history routes window on the wall clock, so the cell's clock starts now
-    clock = Clock(datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10))
+    clock = Clock(datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=10))
     workspace = FakeWorkspace()
     state = AppState()
     state.alert_engine = AlertEngine(now_fn=clock)
@@ -271,7 +271,7 @@ class TestProductionControl:
 @pytest.mark.asyncio
 async def test_lakebase_path_writes_beside_every_deployment_c7436_regression() -> None:
     """[C7436][regression] Each deployed pipeline folder gets the control file; state lives in Lakebase."""
-    clock = Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=timezone.utc))
+    clock = Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC))
     workspace = FakeWorkspace()
     db = FakeLakebase(
         [
@@ -371,7 +371,7 @@ class FakeHistoryDb:
 @pytest.mark.asyncio
 async def test_lakebase_history_splits_reopened_alert_into_episodes_c7439_regression() -> None:
     """[C7439][regression] A re-opened alert is two episodes; decisions stay with their own episode."""
-    opened = datetime(2026, 10, 20, 13, 48, 52, tzinfo=timezone.utc)
+    opened = datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC)
     episodes = await alert_episodes(
         AlertEngine(), "manufacturing", opened - timedelta(hours=1), db=FakeHistoryDb(opened)
     )

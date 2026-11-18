@@ -9,7 +9,7 @@ operator's decisions and the production stops it caused.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from services.alert_engine import AlertEngine
@@ -47,7 +47,7 @@ ORDER BY created_at
 
 
 def _utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _iso(value: datetime | None) -> str | None:

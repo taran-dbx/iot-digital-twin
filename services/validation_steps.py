@@ -23,7 +23,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -760,14 +760,14 @@ def _read_back_window(ctx: StepContext) -> tuple[datetime, datetime]:
     finds those rows without scanning later live partitions. Fall back to a
     short lookback from now when that stamp is missing.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     key = sm.step_key(ctx.mode, "write_test") if ctx.mode else "write_test"
     raw = ((ctx.state or {}).get("steps") or {}).get(key, {}).get("updated_at")
     if raw:
         try:
             stamped = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
             if stamped.tzinfo is None:
-                stamped = stamped.replace(tzinfo=timezone.utc)
+                stamped = stamped.replace(tzinfo=UTC)
             return (
                 stamped - _WRITE_TEST_WINDOW_BEFORE,
                 stamped + _WRITE_TEST_WINDOW_AFTER,

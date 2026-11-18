@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -68,7 +68,7 @@ async def alert_history(
     _user: str = Depends(require_identity),
 ):
     db = _backend_db(state)
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
     episodes = await alert_episodes(engine_for(state), industry, since, db=db)
     production = []
     if industry in CELL_ASSETS:

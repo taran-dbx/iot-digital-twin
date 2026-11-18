@@ -15,7 +15,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from domain.catalog import list_assets, list_maintenance_history, list_sensors
@@ -57,7 +57,7 @@ class AlertResponse:
 
 
 def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _maintenance_reference(alert: AlertRecord) -> dict[str, Any]:
@@ -131,7 +131,7 @@ class AlertResponseStore:
 
     @staticmethod
     def _episode(alert: AlertRecord) -> datetime:
-        return _as_utc(alert.opened_at or datetime.now(timezone.utc))
+        return _as_utc(alert.opened_at or datetime.now(UTC))
 
     async def list_for(self, alert: AlertRecord, db: Any | None = None) -> list[AlertResponse]:
         episode = self._episode(alert)
@@ -208,7 +208,7 @@ class AlertResponseStore:
                 action=action,
                 recorded_by=recorded_by,
                 reference=reference,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             bucket[action] = response
             return response, True

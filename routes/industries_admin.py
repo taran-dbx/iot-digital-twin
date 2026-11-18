@@ -896,7 +896,7 @@ async def list_industry_runtime(state: AppState = Depends(get_app_state)):
             asyncio.shield(task),
             timeout=_INDUSTRY_RUNTIME_COLD_START_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise HTTPException(
             status_code=503,
             detail="Industry runtime state is still loading",

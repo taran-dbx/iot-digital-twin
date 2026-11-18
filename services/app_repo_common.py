@@ -10,7 +10,8 @@ registered on either).
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Mapping, Protocol
+from collections.abc import Iterable, Mapping
+from typing import Any, Protocol
 
 
 class DBExecutor(Protocol):

@@ -31,7 +31,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 from services import industry_catalog_service as cat
 from services import pipeline_view as pv

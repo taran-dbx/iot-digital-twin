@@ -354,7 +354,7 @@ async def stage_probe_landing():
         # event_time (now), min, max, nominal, fault_active, metadata(jsonb), source
         import datetime as dt
 
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         inserted = 0
         for i in range(5):
             await wconn.execute(

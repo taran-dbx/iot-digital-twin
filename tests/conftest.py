@@ -6,9 +6,9 @@ import asyncio
 import os
 import sys
 import uuid
+from collections.abc import AsyncGenerator
 from dataclasses import replace
 from pathlib import Path
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

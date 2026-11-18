@@ -431,7 +431,7 @@ async def delete_pipeline(
             asyncio.get_event_loop().run_in_executor(None, _sdk_cleanup),
             timeout=15,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         message = "SDK cleanup timed out after 15s; resources may be orphaned"
         cleanup_log.append(message)
         cleanup_errors.append(message)
@@ -529,7 +529,7 @@ async def reset_pipeline(
             asyncio.get_event_loop().run_in_executor(None, _cleanup),
             timeout=15,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         cleanup_log.append("Cleanup timed out after 15s")
 
     # Clear job/cluster/notebook from resources, keep catalog/secrets/tables
@@ -566,7 +566,7 @@ async def reset_pipeline(
     }
 
 
-async def _heal_industry_lakebase(industry: str) -> "dict[str, Any] | JSONResponse":
+async def _heal_industry_lakebase(industry: str) -> dict[str, Any] | JSONResponse:
     """Re-apply role + LakeTS provisioning to an industry-first branch.
 
     Mirrors the legacy ``heal_lakebase`` role/LakeTS steps against the

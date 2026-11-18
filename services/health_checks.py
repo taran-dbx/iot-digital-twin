@@ -50,7 +50,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from models.sensor_schema import ID_COLUMN_NAME, insert_columns
 from services import cdf_reconciliation_service as cdf

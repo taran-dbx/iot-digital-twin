@@ -15,7 +15,7 @@ Focus (the Phase-7 design-gap fix):
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -343,7 +343,7 @@ async def test_read_back_window_uses_write_test_stamp_on_retry_c7237(monkeypatch
     monkeypatch.setattr(vs.pps, "get_write_conn", fake_conn)
     monkeypatch.setattr(vs.pps, "get_read_conn", fake_conn)
 
-    written_at = datetime(2026, 10, 13, 8, 0, tzinfo=timezone.utc)
+    written_at = datetime(2026, 10, 13, 8, 0, tzinfo=UTC)
     ctx = _ctx("realtime")
     ctx = StepContext(
         db=ctx.db,

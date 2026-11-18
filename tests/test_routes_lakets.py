@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -154,7 +154,7 @@ class TestCdfStatus:
     @pytest.mark.asyncio
     async def test_streaming_reports_latest_hot_timestamp_c7265(self) -> None:
         """[C7265][defect][regression] CDF status uses a cheap latest-row probe."""
-        latest = datetime(2026, 9, 22, 10, 30, tzinfo=timezone.utc)
+        latest = datetime(2026, 9, 22, 10, 30, tzinfo=UTC)
         lb = _mock_lb(
             fetch_return=[{"status": "STREAMING"}],
             fetchval_return=latest,

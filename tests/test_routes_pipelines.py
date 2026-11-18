@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -63,7 +63,7 @@ class TestLakebaseHealth:
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_shape(self) -> None:
-        latest_at = _dt.datetime(2026, 4, 21, 10, 15, 30, tzinfo=_dt.timezone.utc)
+        latest_at = _dt.datetime(2026, 4, 21, 10, 15, 30, tzinfo=_dt.UTC)
         db = _mock_db_for_health(row={"rows_5m": 1500, "latest_at": latest_at, "latency_sec": 2.5})
         state = _state_with_db(db)
         app = _build_app_with_state(state)
@@ -196,8 +196,8 @@ def _pipeline_row(
         else source_config,
         "sink_config": "{}",
         "resources": _json.dumps(resources) if isinstance(resources, dict) else resources,
-        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
-        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
+        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
+        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
     }
 
 
@@ -427,8 +427,8 @@ def _delete_pipeline_row(
         "source_config": "{}",
         "sink_config": "{}",
         "resources": _json.dumps(resources),
-        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
-        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
+        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
+        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
     }
 
 

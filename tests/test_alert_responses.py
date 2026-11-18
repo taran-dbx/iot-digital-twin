@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -59,7 +59,7 @@ class FakeResponseDb:
                 "action": action,
                 "recorded_by": recorded_by,
                 "reference": reference,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             }
             self.rows.append(row)
             return row
@@ -85,7 +85,7 @@ class FakeResponseDb:
 
 @pytest_asyncio.fixture()
 async def cell() -> AsyncGenerator[tuple[AsyncClient, AppState, Clock, asyncio.Queue], None]:
-    clock = Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=timezone.utc))
+    clock = Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC))
     state = AppState()
     state.alert_engine = AlertEngine(now_fn=clock)
     state.production_control = ProductionControl(workspace_factory=FakeWorkspace, now_fn=clock)
@@ -213,7 +213,7 @@ class TestAlertResponses:
 @pytest.mark.asyncio
 async def test_lakebase_path_dedupes_on_unique_key_c7425_regression() -> None:
     """[C7425][regression] The Lakebase path relies on the (alert, episode, action) key."""
-    engine = AlertEngine(now_fn=Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=timezone.utc)))
+    engine = AlertEngine(now_fn=Clock(datetime(2026, 10, 20, 13, 48, 52, tzinfo=UTC)))
     alert = (
         await engine.evaluate(
             [{**SPINDLE, "value": 66.3}],

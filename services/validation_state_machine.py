@@ -39,7 +39,7 @@ mutated, per the immutability rule.
 from __future__ import annotations
 
 import copy
-from typing import Iterable
+from collections.abc import Iterable
 
 __all__ = [
     "PENDING",

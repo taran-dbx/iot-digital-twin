@@ -470,7 +470,7 @@ class TestLaketsDashboard:
         self,
     ) -> None:
         """[C7226][regression] Preserve sensor rollup values in the dashboard map."""
-        bucket = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        bucket = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         refreshed_at = bucket + dt.timedelta(minutes=1)
         pool = MagicMock()
         pool.fetchrow = AsyncMock(
@@ -553,7 +553,7 @@ class TestLaketsDashboard:
         self,
     ) -> None:
         """[C7225][regression] Serialize partition phases and numeric metadata."""
-        start = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        start = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         end = start + dt.timedelta(minutes=15)
         pool = MagicMock()
         pool.fetch = AsyncMock(
@@ -701,7 +701,7 @@ class TestLaketsDashboard:
         self,
     ) -> None:
         """[C7225][regression] Expose cache event lag and update age."""
-        event_time = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        event_time = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         pool = MagicMock()
         pool.fetchrow = AsyncMock(
             side_effect=[
@@ -738,7 +738,7 @@ class TestLaketsDashboard:
             def __str__(self) -> str:
                 return "0/16B6C50"
 
-        hot_latest = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        hot_latest = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         pool = MagicMock()
         pool.fetchrow = AsyncMock(
             return_value={

@@ -36,7 +36,7 @@ _CLONE_TIMEOUT_SEC = 60
 _DIST_RELPATH = Path("dist") / "lakets.sql"
 
 
-async def get_installed_version(pool: Any) -> Optional[str]:
+async def get_installed_version(pool: Any) -> str | None:
     """Return the latest installed LakeTS version, or None if not installed."""
     try:
         return await pool.fetchval(LAKETS_VERSION_CHECK_SQL)
@@ -45,7 +45,7 @@ async def get_installed_version(pool: Any) -> Optional[str]:
         return None
 
 
-def resolve_lakets_source(explicit_path: Optional[str] = None) -> Path:
+def resolve_lakets_source(explicit_path: str | None = None) -> Path:
     """Resolve a path to ``lakets.sql`` from arg, env, or git clone.
 
     Raises:

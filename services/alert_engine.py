@@ -7,9 +7,10 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timezone
+from typing import Any
 
 from domain.catalog import (
     AlertRule,
@@ -117,7 +118,7 @@ def engine_for(state: Any) -> AlertEngine:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _to_float(value: Any) -> float | None:
@@ -263,7 +264,7 @@ def _as_datetime(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
     if isinstance(value, str):
         try:
@@ -328,7 +329,7 @@ class AlertEngine:
     def _now_dt(self) -> datetime:
         instant = self._now()
         if instant.tzinfo is None:
-            return instant.replace(tzinfo=timezone.utc)
+            return instant.replace(tzinfo=UTC)
         return instant
 
     async def list_alerts(

@@ -240,7 +240,7 @@ async def get_cdf_status(
             ),
             timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             **none_result,
             "reason": (f"Lakebase probe timeout after {_LAKEBASE_RESOLVE_TIMEOUT_SECONDS:g}s"),
@@ -271,7 +271,7 @@ async def get_cdf_status(
                 timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
             )
             expected_shadow = rows[0].get("shadow_table") if rows else None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             **none_result,
             "reason": (f"Lakebase Sync probe timeout after {_LAKEBASE_PROBE_TIMEOUT_SECONDS:g}s"),
@@ -302,7 +302,7 @@ async def get_cdf_status(
             lb.fetchval("SELECT MAX(event_time) FROM sensor_readings"),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("cdf-status latest hot timestamp timed out for %s", pipeline_id)
     except Exception as exc:
         logger.warning(
@@ -376,7 +376,7 @@ async def get_lakets_dashboard(
             ),
             timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS dashboard Lakebase resolution timed out for %s after %.0fs",
             pipeline_id,
@@ -399,7 +399,7 @@ async def get_lakets_dashboard(
             lakets_service.get_dashboard(lb),
             timeout=_LAKETS_DASHBOARD_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS dashboard timed out for %s after %.0fs",
             pipeline_id,

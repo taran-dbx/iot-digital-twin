@@ -74,7 +74,7 @@ def _readings_relation(tables: list[str], columns: str = "event_time, sensor_nam
 
 
 async def _recent_chunk_tables(
-    lb: "PipelineLakebaseHandle",
+    lb: PipelineLakebaseHandle,
     minutes: int,
 ) -> list[str]:
     """Child partitions overlapping the lookback window.
@@ -118,7 +118,7 @@ def _is_undefined_relation(exc: Exception) -> bool:
 
 async def _resolve_lakebase(
     state: AppState, pipeline_id: str, industry: str | None
-) -> "PipelineLakebaseHandle | None":
+) -> PipelineLakebaseHandle | None:
     """Resolve the Lakebase handle to query: industry-first when ``industry`` is
     passed (deterministic ``iot-pipelines`` branch, no legacy ``pipelines`` row
     required), else the legacy per-pipeline ``sink_config`` lookup."""
@@ -222,7 +222,7 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
     }
     src._lb_counters["last_headers"] = headers_snapshot
     if data:
-        src._lb_counters["last_keys"] = list((data[0].keys() if isinstance(data[0], dict) else []))
+        src._lb_counters["last_keys"] = list(data[0].keys() if isinstance(data[0], dict) else [])
 
     if not pipeline_id:
         src._lb_counters["no_header"] += 1
@@ -251,7 +251,7 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
                 # the Kafka backlog the consumer is currently chewing through.
                 # The original producer timestamp is still on the record via
                 # the broadcasted row field but we don't persist it separately.
-                now_utc = _dt.datetime.now(_dt.timezone.utc)
+                now_utc = _dt.datetime.now(_dt.UTC)
                 src._lb_counters["last_event_time"] = now_utc.isoformat()
                 rows: list[tuple] = []
                 for d in data:
@@ -860,7 +860,7 @@ async def get_lakebase_perf(
             _resolve_lakebase(state, pipeline_id, industry),
             timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "Pipeline %s lakebase-perf resolve timed out after %.0fs",
             pipeline_id,
@@ -893,7 +893,7 @@ async def get_lakebase_perf(
             _load_perf_buckets(),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "Pipeline %s lakebase-perf query timed out after %.0fs",
             pipeline_id,
@@ -1074,7 +1074,7 @@ async def get_lakets_gapfill(
             _load_gapfill(),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS gapfill query timed out after %.0fs for pipeline %s",
             _LAKEBASE_PROBE_TIMEOUT_SECONDS,
@@ -1176,7 +1176,7 @@ async def get_lakets_rate(
             _load_rate(),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS rate query timed out after %.0fs for pipeline %s",
             _LAKEBASE_PROBE_TIMEOUT_SECONDS,
@@ -1272,7 +1272,7 @@ async def get_lakets_histogram(
             _load_histogram(),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS histogram query timed out after %.0fs for pipeline %s",
             _LAKEBASE_PROBE_TIMEOUT_SECONDS,
