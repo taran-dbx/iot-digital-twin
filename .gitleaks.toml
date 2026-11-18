@@ -1,0 +1,19 @@
+# gitleaks configuration: the default ruleset plus narrow, documented
+# allowlists for known false positives. Keep entries specific.
+title = "iot-digital-twin gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated, minified React bundle; its sources under client/src are scanned."
+paths = ['''^static/dist/''']
+
+[[allowlists]]
+description = "generic-api-key false positives: chart dataKey props and a step `key` argument."
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = [
+  '''dataKey\s*[=:]\s*["'][A-Za-z0-9_]+["']''',
+  '''\bkey,\s*preserve_failed\b''',
+]
