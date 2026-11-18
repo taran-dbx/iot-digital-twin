@@ -36,7 +36,6 @@ mockups/
 # not read from disk — there is no databricks/notebooks/ dir.
 /notebooks/
 capture_screenshots.py
-client/
 # NOTE: static/dist/ is NOT gitignored — databricks sync honours gitignore
 # patterns, so excluding it here means the frontend bundle never reaches the
 # deployed app.  Keep untracked in git via individual file ignores if needed,
