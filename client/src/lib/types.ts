@@ -376,12 +376,23 @@ export interface AlertListResponse {
   alerts: AlertRecord[];
 }
 
+/**
+ * Genie message lifecycle. Only COMPLETED / FAILED / CANCELLED /
+ * QUERY_RESULT_EXPIRED are terminal; every other value — including statuses
+ * Genie adds later (mapped to UNKNOWN) — means "keep polling".
+ */
 export type GenieMessageStatus =
-  | "IN_PROGRESS"
+  | "SUBMITTED"
+  | "FETCHING_METADATA"
+  | "FILTERING_CONTEXT"
+  | "ASKING_AI"
+  | "PENDING_WAREHOUSE"
   | "EXECUTING_QUERY"
+  | "IN_PROGRESS"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED"
+  | "QUERY_RESULT_EXPIRED"
   | "UNKNOWN";
 
 export type GenieAllowlistStatus = "matched" | "mismatch" | "manual_required";
@@ -439,15 +450,18 @@ export interface GeniePipelineAskRequest {
 
 export interface GenieAttachmentQuery {
   sql: string;
-  description?: string | null;
+  description: string | null;
 }
 
-/** Normalised per-pipeline Genie attachment (text, query, and/or suggestions). */
+/**
+ * Per-pipeline Genie attachment, exactly as documented in
+ * docs/genie-pipeline-api.md: all four keys are always present.
+ */
 export interface GeniePipelineAttachment {
   attachment_id: string;
-  text?: string | null;
-  query?: GenieAttachmentQuery | null;
-  suggested_questions?: string[] | null;
+  text: string | null;
+  query: GenieAttachmentQuery | null;
+  suggested_questions: string[];
 }
 
 /** Same envelope as {@link GenieMessageResponse}, with typed attachments. */

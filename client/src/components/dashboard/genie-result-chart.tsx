@@ -1,7 +1,7 @@
 /**
  * Presentational renderer for one Genie query result. Picks line / bar /
  * table via the pure `selectChartSpec`, always offers a table toggle, and
- * makes loading, error, empty and truncated states explicit.
+ * makes loading, error, not-ready, empty and truncated states explicit.
  */
 import { useMemo, useState } from "react";
 import {
@@ -16,23 +16,23 @@ import {
   YAxis,
 } from "recharts";
 
+import { SERIES_COLORS, TOOLTIP_STYLE, formatAxisTick } from "@/components/dashboard/historical-dbsql";
 import {
-  SERIES_COLORS,
-  TOOLTIP_STYLE,
-  formatAxisTick,
-  pickCompatibleSeries,
-} from "@/components/dashboard/historical-dbsql";
-import {
-  GENIE_RESULT_ROW_CAP,
+  compatibleSeries,
   formatCell,
+  formatTimeValue,
+  normalizeResult,
   selectChartSpec,
+  seriesKey,
   toChartRows,
   type GenieChartRow,
+  type TimeKind,
 } from "@/lib/genie-chart";
 import type { GenieQueryResult } from "@/lib/types";
 
 const CHART_HEIGHT = 180;
 const AXIS_TICK = { fontSize: 10 } as const;
+const CHART_MARGIN = { top: 6, right: 8, bottom: 0, left: -12 } as const;
 
 interface GenieResultChartProps {
   result: GenieQueryResult | null;
@@ -43,39 +43,43 @@ interface GenieResultChartProps {
 
 type View = "chart" | "table";
 
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function TimeLineChart({ data, x, y }: { data: GenieChartRow[]; x: string; y: string[] }) {
-  const series = pickCompatibleSeries(y, data);
+function TimeLineChart({
+  data,
+  result,
+  x,
+  y,
+  timeKind,
+}: {
+  data: GenieChartRow[];
+  result: GenieQueryResult;
+  x: number;
+  y: number[];
+  timeKind: TimeKind;
+}) {
+  const series = compatibleSeries(y, data);
   return (
     <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-      <LineChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
+      <LineChart data={data} margin={CHART_MARGIN}>
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.25} />
         <XAxis
-          dataKey={x}
+          dataKey={seriesKey(x)}
           type="number"
           scale="time"
           domain={["dataMin", "dataMax"]}
           tick={AXIS_TICK}
-          tickFormatter={(v: number) => formatTime(v)}
+          tickFormatter={(v: number) => formatTimeValue(v, timeKind)}
         />
         <YAxis tick={AXIS_TICK} tickFormatter={formatAxisTick} width={44} />
-        <RechartsTooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(v) => formatTime(Number(v))} />
-        {series.map((key) => (
+        <RechartsTooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(v) => formatTimeValue(Number(v), timeKind)} />
+        {series.map((i) => (
           <Line
-            key={key}
+            key={seriesKey(i)}
             type="monotone"
-            dataKey={key}
+            dataKey={seriesKey(i)}
+            name={result.columns[i].name}
             dot={false}
             strokeWidth={1.6}
-            stroke={SERIES_COLORS[y.indexOf(key) % SERIES_COLORS.length]}
+            stroke={SERIES_COLORS[y.indexOf(i) % SERIES_COLORS.length]}
             isAnimationActive={false}
             connectNulls
           />
@@ -85,15 +89,15 @@ function TimeLineChart({ data, x, y }: { data: GenieChartRow[]; x: string; y: st
   );
 }
 
-function CategoryBarChart({ data, x, y }: { data: GenieChartRow[]; x: string; y: string }) {
+function CategoryBarChart({ data, result, x, y }: { data: GenieChartRow[]; result: GenieQueryResult; x: number; y: number }) {
   return (
     <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-      <BarChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -12 }}>
+      <BarChart data={data} margin={CHART_MARGIN}>
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.25} vertical={false} />
-        <XAxis dataKey={x} tick={AXIS_TICK} interval="preserveStartEnd" />
+        <XAxis dataKey={seriesKey(x)} tick={AXIS_TICK} interval="preserveStartEnd" />
         <YAxis tick={AXIS_TICK} tickFormatter={formatAxisTick} width={44} />
         <RechartsTooltip contentStyle={TOOLTIP_STYLE} />
-        <Bar dataKey={y} fill={SERIES_COLORS[0]} isAnimationActive={false} />
+        <Bar dataKey={seriesKey(y)} name={result.columns[y].name} fill={SERIES_COLORS[0]} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -101,12 +105,18 @@ function CategoryBarChart({ data, x, y }: { data: GenieChartRow[]; x: string; y:
 
 function ResultTable({ result }: { result: GenieQueryResult }) {
   return (
-    <div className="genie-result__table" data-testid="genie-result-table" tabIndex={0}>
+    <div
+      className="genie-result__table"
+      data-testid="genie-result-table"
+      role="region"
+      aria-label="Query result table"
+      tabIndex={0}
+    >
       <table>
         <thead>
           <tr>
-            {result.columns.map((col) => (
-              <th key={col.name} scope="col" title={col.type}>
+            {result.columns.map((col, c) => (
+              <th key={c} scope="col" title={col.type}>
                 {col.name}
               </th>
             ))}
@@ -115,8 +125,8 @@ function ResultTable({ result }: { result: GenieQueryResult }) {
         <tbody>
           {result.rows.map((row, r) => (
             <tr key={r}>
-              {result.columns.map((col, c) => (
-                <td key={col.name}>{formatCell(row[c])}</td>
+              {result.columns.map((_, c) => (
+                <td key={c}>{formatCell(row[c])}</td>
               ))}
             </tr>
           ))}
@@ -126,13 +136,20 @@ function ResultTable({ result }: { result: GenieQueryResult }) {
   );
 }
 
-export function GenieResultChart({ result, loading, error, onRetry }: GenieResultChartProps) {
-  const [view, setView] = useState<View>("chart");
-  const spec = useMemo(() => (result ? selectChartSpec(result) : null), [result]);
-  const chartRows = useMemo(
-    () => (result && spec ? toChartRows(result, spec) : []),
-    [result, spec],
+function RetryButton({ onRetry }: { onRetry?: () => void }) {
+  if (!onRetry) return null;
+  return (
+    <button type="button" className="btn sm" onClick={onRetry}>
+      Retry
+    </button>
   );
+}
+
+export function GenieResultChart({ result: raw, loading, error, onRetry }: GenieResultChartProps) {
+  const [view, setView] = useState<View>("chart");
+  const result = useMemo(() => (raw ? normalizeResult(raw) : null), [raw]);
+  const spec = useMemo(() => (result ? selectChartSpec(result) : null), [result]);
+  const chartRows = useMemo(() => (result && spec ? toChartRows(result, spec) : []), [result, spec]);
 
   if (loading) {
     return (
@@ -145,15 +162,19 @@ export function GenieResultChart({ result, loading, error, onRetry }: GenieResul
     return (
       <div className="genie-drawer__error" role="alert" data-testid="genie-result-error">
         <span>Couldn’t load the query result: {error}</span>
-        {onRetry && (
-          <button type="button" className="btn sm" onClick={onRetry}>
-            Retry
-          </button>
-        )}
+        <RetryButton onRetry={onRetry} />
       </div>
     );
   }
-  if (!result || !spec || spec.kind === "empty") {
+  if (!result || !spec || spec.kind === "unavailable") {
+    return (
+      <div className="genie-drawer__hint genie-result__pending" data-testid="genie-result-unavailable">
+        <span>Result not available yet.</span>
+        <RetryButton onRetry={onRetry} />
+      </div>
+    );
+  }
+  if (spec.kind === "empty") {
     return (
       <p className="genie-drawer__hint" data-testid="genie-result-empty">
         The query returned no rows.
@@ -163,6 +184,7 @@ export function GenieResultChart({ result, loading, error, onRetry }: GenieResul
 
   const chartable = (spec.kind === "line" || spec.kind === "bar") && chartRows.length > 0;
   const showChart = chartable && view === "chart";
+  const rowCount = result.rows.length;
 
   return (
     <div className="genie-result" data-testid="genie-result" data-chart-kind={chartable ? spec.kind : "table"}>
@@ -184,19 +206,19 @@ export function GenieResultChart({ result, loading, error, onRetry }: GenieResul
       )}
       {showChart && spec.kind === "line" && (
         <div data-testid="genie-result-line">
-          <TimeLineChart data={chartRows} x={spec.x} y={spec.y} />
+          <TimeLineChart data={chartRows} result={result} x={spec.x} y={spec.y} timeKind={spec.timeKind} />
         </div>
       )}
       {showChart && spec.kind === "bar" && (
         <div data-testid="genie-result-bar">
-          <CategoryBarChart data={chartRows} x={spec.x} y={spec.y} />
+          <CategoryBarChart data={chartRows} result={result} x={spec.x} y={spec.y} />
         </div>
       )}
       {!showChart && <ResultTable result={result} />}
       <p className="genie-result__meta">
-        {result.rows.length} row{result.rows.length === 1 ? "" : "s"}
+        {rowCount} row{rowCount === 1 ? "" : "s"}
         {result.truncated && (
-          <span data-testid="genie-result-truncated"> · truncated to {GENIE_RESULT_ROW_CAP} rows</span>
+          <span data-testid="genie-result-truncated"> · truncated to {rowCount} rows</span>
         )}
       </p>
     </div>

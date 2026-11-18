@@ -17,6 +17,11 @@ interface GenieDrawerProps {
   /** Transcript content. */
   children: ReactNode;
   composer: ReactNode;
+  /**
+   * Plain text announced to screen readers (latest answer). The transcript
+   * itself is not a live region, so charts and tables are never read out.
+   */
+  announcement?: string;
 }
 
 export function GenieDrawer({
@@ -27,6 +32,7 @@ export function GenieDrawer({
   notices,
   children,
   composer,
+  announcement = "",
 }: GenieDrawerProps) {
   return (
     <aside
@@ -62,13 +68,12 @@ export function GenieDrawer({
 
         {notices}
 
-        <div
-          className="genie-drawer__transcript"
-          data-testid="genie-copilot-transcript"
-          aria-live="polite"
-        >
+        <div className="genie-drawer__transcript" data-testid="genie-copilot-transcript">
           {children}
         </div>
+        <p className="sr-only" aria-live="polite" data-testid="genie-announcement">
+          {announcement}
+        </p>
 
         {composer}
       </div>

@@ -1,20 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { GenieComposer, GenieDrawer } from "@/components/dashboard/genie-drawer";
-
 import { GeniePipelineCopilot } from "@/components/dashboard/genie-pipeline-copilot";
-import { api } from "@/lib/api";
+import { api, isApiStatus } from "@/lib/api";
+import { plainAnswer, statusLabel } from "@/lib/genie-messages";
 import {
-  GENIE_POLL_INTERVAL_MS,
-  classifyStatus,
-  isPending,
-  statusLabel,
-} from "@/lib/genie-messages";
+  GENIE_EXPIRED_MESSAGE,
+  GENIE_TIMEOUT_MESSAGE,
+  startGeniePoll,
+} from "@/lib/genie-poll";
 import type {
   AlertRecord,
   GenieAllowlistStatus,
   GenieAskRequest,
-  GenieMessageResponse,
   GenieMessageStatus,
   GenieStatusResponse,
 } from "@/lib/types";
@@ -224,9 +222,14 @@ function StaticGenieCopilot({
           : await api.startGenieConversation(askBody(trimmed));
         setConversationId(ids.conversation_id);
         setPendingMessageId(ids.message_id);
-        setPollStatus("IN_PROGRESS");
+        setPollStatus("SUBMITTED");
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Genie request failed");
+        if (conversationId && isApiStatus(err, 404)) {
+          setConversationId(null);
+          setError(GENIE_EXPIRED_MESSAGE);
+        } else {
+          setError(err instanceof Error ? err.message : "Genie request failed");
+        }
       } finally {
         setBusy(false);
         setQuestion("");
@@ -237,44 +240,40 @@ function StaticGenieCopilot({
 
   useEffect(() => {
     if (!conversationId || !pendingMessageId) return undefined;
-    let cancelled = false;
-    const tick = () => {
-      api
-        .getGenieMessage(conversationId, pendingMessageId)
-        .then((message: GenieMessageResponse) => {
-          if (cancelled) return;
-          const status = classifyStatus(String(message.status));
-          setPollStatus(status);
-          if (!isPending(status)) {
-            setPendingMessageId(null);
-            const text =
-              message.content ||
-              message.error ||
-              (status === "FAILED" ? "Genie could not complete this investigation." : "No response");
+    return startGeniePoll(
+      () => api.getGenieMessage(conversationId, pendingMessageId),
+      setPollStatus,
+      (outcome) => {
+        setPendingMessageId(null);
+        switch (outcome.kind) {
+          case "done":
             setTranscript((prev) => [
               ...prev,
               {
-                id: message.message_id,
+                id: outcome.message.message_id || pendingMessageId,
                 role: "assistant",
-                text,
-                status,
+                text: plainAnswer(outcome.status, outcome.message.error, outcome.message.attachments),
+                status: outcome.status,
               },
             ]);
+            return;
+          case "expired":
+            setConversationId(null);
+            setError(GENIE_EXPIRED_MESSAGE);
+            return;
+          case "timeout":
+            setError(GENIE_TIMEOUT_MESSAGE);
+            return;
+          case "error":
+            setError(outcome.message);
+            return;
+          default: {
+            const exhaustive: never = outcome;
+            return exhaustive;
           }
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : "Genie poll failed");
-            setPendingMessageId(null);
-          }
-        });
-    };
-    tick();
-    const handle = window.setInterval(tick, GENIE_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(handle);
-    };
+        }
+      },
+    );
   }, [conversationId, pendingMessageId]);
 
   useEffect(() => {
@@ -338,6 +337,7 @@ function StaticGenieCopilot({
       subtitle={`${industry} · ${mode}${assetId ? ` · ${assetId}` : ""}`}
       statusText={statusText}
       notices={notices}
+      announcement={[...transcript].reverse().find((e) => e.role === "assistant")?.text ?? ""}
       composer={
         <GenieComposer
           value={question}

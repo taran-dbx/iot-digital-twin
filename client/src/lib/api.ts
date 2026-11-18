@@ -55,6 +55,30 @@ import type { PipelineMode } from "@/lib/industries-api";
 
 const BASE_URL = "/api";
 
+/** Error thrown by {@link request} for non-2xx responses; carries the HTTP status. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function isApiStatus(err: unknown, status: number): boolean {
+  return err instanceof ApiError && err.status === status;
+}
+
+function errorDetail(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const { error, detail } = body as { error?: unknown; detail?: unknown };
+    if (typeof error === "string" && error) return error;
+    if (typeof detail === "string" && detail) return detail;
+  }
+  return `Request failed: ${status}`;
+}
+
 async function request<T>(
   endpoint: string,
   options?: RequestInit
@@ -69,8 +93,8 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || body.detail || `Request failed: ${res.status}`);
+    const body: unknown = await res.json().catch(() => ({}));
+    throw new ApiError(errorDetail(body, res.status), res.status);
   }
 
   return res.json();

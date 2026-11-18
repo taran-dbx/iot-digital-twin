@@ -8,10 +8,18 @@ import { useEffect, useMemo, useState } from "react";
 
 import { GenieComposer, GenieDrawer } from "@/components/dashboard/genie-drawer";
 import { GenieQueryAttachment } from "@/components/dashboard/genie-query-attachment";
-import { usePipelineGenie, type PipelineTranscriptEntry } from "@/hooks/use-pipeline-genie";
+import { usePipelineGenie, type PipelineTranscriptEntry, type SpaceState } from "@/hooks/use-pipeline-genie";
 import { statusLabel, suggestedQuestions } from "@/lib/genie-messages";
 import type { IndustryAssets, PipelineMode } from "@/lib/industries-api";
 import type { AlertRecord } from "@/lib/types";
+
+const SPACE_STATUS_TEXT: Record<SpaceState, string> = {
+  loading: "Checking…",
+  ready: "Ready",
+  not_provisioned: "Not provisioned",
+  unavailable: "Unavailable",
+  error: "Unavailable",
+};
 
 interface GeniePipelineCopilotProps {
   industry: string;
@@ -69,7 +77,7 @@ function AssistantEntry({
       <span>Genie</span>
       {entry.text && <p>{entry.text}</p>}
       {entry.attachments.map((att) => (
-        <div key={att.attachment_id} className="genie-msg__attachment">
+        <div key={att.key} className="genie-msg__attachment">
           {att.text && <p>{att.text}</p>}
           {att.query && entry.conversationId && entry.messageId && (
             <GenieQueryAttachment
@@ -77,7 +85,7 @@ function AssistantEntry({
               mode={mode}
               conversationId={entry.conversationId}
               messageId={entry.messageId}
-              attachmentId={att.attachment_id}
+              attachmentId={att.attachmentId}
               query={att.query}
             />
           )}
@@ -111,8 +119,7 @@ export function GeniePipelineCopilot({
     return last ? suggestedQuestions(last.attachments) : [];
   }, [genie.transcript]);
 
-  const loading = genie.status == null && genie.statusError == null;
-  const unavailable = genie.status != null && !genie.available;
+  const { spaceState } = genie;
   const locked = !genie.available || genie.busy || genie.pending;
 
   const ask = (text: string) => {
@@ -121,36 +128,35 @@ export function GeniePipelineCopilot({
     });
   };
 
-  const statusText = loading
-    ? "Checking…"
-    : genie.statusError
-      ? "Unavailable"
-      : unavailable
-        ? "Not provisioned"
-        : genie.pending
-          ? statusLabel(genie.pollStatus)
-          : "Ready";
+  const statusText = genie.pending ? statusLabel(genie.pollStatus) : SPACE_STATUS_TEXT[spaceState];
+  const announcement = useMemo(() => {
+    const last = [...genie.transcript].reverse().find((e) => e.role === "assistant");
+    if (!last) return "";
+    return [last.text, ...last.attachments.map((a) => a.text)].filter(Boolean).join(" ");
+  }, [genie.transcript]);
 
   const notices = (
     <>
-      {loading && (
+      {spaceState === "loading" && (
         <p className="genie-drawer__hint" aria-busy="true">
           Loading Genie space…
         </p>
       )}
-      {unavailable && (
+      {(spaceState === "not_provisioned" || spaceState === "unavailable") && (
         <div className="genie-drawer__disabled" data-testid="genie-disabled" role="status">
-          <strong>Genie space not provisioned yet</strong>
+          <strong>
+            {spaceState === "unavailable" ? "Genie space unavailable" : "Genie space not provisioned yet"}
+          </strong>
           {genie.status?.reason && <p>{genie.status.reason}</p>}
         </div>
       )}
-      {genie.statusError && (
+      {spaceState === "error" && (
         <p className="genie-drawer__error" data-testid="genie-disabled" role="alert">
           Genie space status unavailable: {genie.statusError}
         </p>
       )}
       {genie.error && (
-        <p className="genie-drawer__error" role="alert">
+        <p className="genie-drawer__error" data-testid="genie-error" role="alert">
           {genie.error}
         </p>
       )}
@@ -164,6 +170,7 @@ export function GeniePipelineCopilot({
       subtitle={`${industry} · ${mode}${assetId ? ` · ${assetId}` : ""} · pipeline space`}
       statusText={statusText}
       notices={notices}
+      announcement={announcement}
       composer={
         <GenieComposer value={question} onChange={setQuestion} onSubmit={ask} disabled={locked} />
       }
