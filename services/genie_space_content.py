@@ -1,0 +1,241 @@
+"""Manufacturing Genie space content: instructions, example SQL, snippets, starters.
+
+Pure functions with no I/O — :mod:`services.genie_space_service` assigns the
+ids and assembles the ``serialized_space`` payload.  Column references in SQL
+snippets are qualified with the telemetry table's short name, as Genie requires.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from services.uc_ident import sql_fqn
+
+MODE_LABELS: dict[str, str] = {
+    "realtime": "real-time (sub-second RTM)",
+    "microbatch": "micro-batch",
+    "zerobus": "Zerobus direct-ingest",
+}
+
+_COMMON_STARTERS: tuple[str, ...] = (
+    "What is the approximate OEE per sensor over the last 24 hours?",
+    "How many minutes of downtime did each sensor have today?",
+    "Which sensors had the most anomalies (values outside min/max) in the last hour?",
+    "Which fault codes or sensors had active faults most often this week?",
+    "Which assets with recent faults are due for maintenance?",
+)
+
+_MODE_STARTERS: dict[str, tuple[str, ...]] = {
+    "realtime": (
+        "Which sensors are faulting right now (last 5 minutes)?",
+        "What is the end-to-end p99 latency of the real-time stream over the last hour?",
+    ),
+    "microbatch": (
+        "How has the anomaly rate trended per hour over the last day?",
+        "What is the average micro-batch trigger duration and throughput over the last hour?",
+    ),
+    "zerobus": (
+        "How many readings per minute were ingested over the last hour?",
+        "Which sensors stopped sending data in the last 15 minutes?",
+    ),
+}
+
+
+def _short(fqn: str) -> str:
+    return fqn.rsplit(".", 1)[-1]
+
+
+def _quoted(fqn: str) -> str:
+    return sql_fqn(*fqn.split("."))
+
+
+def starter_questions(mode: str) -> tuple[str, ...]:
+    """Return manufacturing starter questions for ``mode`` (common + mode-specific)."""
+    if mode not in _MODE_STARTERS:
+        raise ValueError(f"unknown mode {mode!r}")
+    return _COMMON_STARTERS + _MODE_STARTERS[mode]
+
+
+def column_configs() -> list[dict[str, Any]]:
+    """Column guidance for the telemetry table (unsorted; caller sorts)."""
+    return [
+        {"column_name": "sensor_name", "enable_format_assistance": True,
+         "enable_entity_matching": True,
+         "description": ["Sensor identifier; one row per reading."],
+         "synonyms": ["sensor", "tag", "signal"]},
+        {"column_name": "sensor_type", "enable_format_assistance": True,
+         "enable_entity_matching": True,
+         "description": ["Measurement kind, e.g. temperature, vibration, pressure."]},
+        {"column_name": "event_time",
+         "description": ["Reading timestamp (UTC). Use for all time windows."]},
+        {"column_name": "value", "description": ["Measured value in `unit`."],
+         "synonyms": ["reading", "measurement"]},
+        {"column_name": "nominal_value",
+         "description": ["Design/target value. Used for the OEE performance factor."],
+         "synonyms": ["target", "setpoint"]},
+        {"column_name": "min_value",
+         "description": ["Lower bound of the normal operating range."]},
+        {"column_name": "max_value",
+         "description": ["Upper bound of the normal operating range."]},
+        {"column_name": "fault_active",
+         "description": ["TRUE while the machine/sensor reports an active fault (downtime)."],
+         "synonyms": ["fault", "down", "stopped", "alarm"]},
+    ]
+
+
+def text_instructions(telemetry: str, metrics: str, mode: str) -> list[str]:
+    """The single Genie text-instruction block, one rule per string."""
+    t = _short(telemetry)
+    zerobus_note = (
+        f"{metrics} has no rows for zerobus; answer ingest-rate questions from "
+        f"COUNT(*) over {telemetry} per minute."
+        if mode == "zerobus"
+        else f"Filter {metrics} with mode = '{mode}' for this pipeline's streaming metrics."
+    )
+    return [
+        f"This space covers ONE manufacturing {MODE_LABELS[mode]} pipeline. "
+        f"Sensor telemetry is in {telemetry} (one row per reading). "
+        f"Streaming throughput/latency metrics are in {metrics}. "
+        "Asset, sensor-binding, maintenance, alert-rule and alert-snapshot "
+        "reference data is in the intelligence_* tables.",
+        f"Downtime = time intervals where {t}.fault_active is TRUE. Approximate "
+        "downtime minutes as the count of distinct minutes "
+        f"(date_trunc('minute', {t}.event_time)) with at least one fault_active reading.",
+        "Availability = 1 - (fault minutes / observed minutes), where observed minutes "
+        "are distinct minutes with any reading. Report as a percentage.",
+        f"Performance = AVG(LEAST({t}.value / {t}.nominal_value, 1)) for readings with "
+        "nominal_value > 0 (how close output runs to its nominal rate).",
+        f"Quality = share of readings with {t}.value BETWEEN {t}.min_value AND "
+        f"{t}.max_value.",
+        "OEE (approximation) = Availability x Performance x Quality. Always say it is "
+        "an approximation derived from sensor telemetry, not production counts.",
+        f"Anomaly = a reading where {t}.value < {t}.min_value OR {t}.value > "
+        f"{t}.max_value. Ignore rows where min_value or max_value is NULL.",
+        "Faults: report fault_active readings; join intelligence_alert_rules / "
+        "intelligence_alert_snapshot on sensor for fault codes and severity.",
+        "Maintenance: use intelligence_maintenance_records joined to "
+        "intelligence_sensor_bindings (asset_id, sensor_name) to relate faults "
+        "to assets and their last maintenance.",
+        "Default time window when unspecified: the last 24 hours, using "
+        f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS.",
+        zerobus_note,
+        "Never modify data. Answer read-only with SELECT queries.",
+    ]
+
+
+def _downtime_sql(tel: str) -> str:
+    return (
+        "SELECT sensor_name, COUNT(DISTINCT date_trunc('minute', event_time)) "
+        f"AS downtime_minutes FROM {tel} WHERE fault_active "
+        "AND event_time >= current_timestamp() - INTERVAL 24 HOURS "
+        "GROUP BY sensor_name ORDER BY downtime_minutes DESC"
+    )
+
+
+def _oee_sql(tel: str) -> str:
+    return (
+        "WITH m AS (SELECT sensor_name, "
+        "COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, "
+        "COUNT(DISTINCT CASE WHEN fault_active THEN date_trunc('minute', event_time) END) "
+        "AS fault_min, "
+        "AVG(CASE WHEN nominal_value > 0 THEN LEAST(value / nominal_value, 1) END) "
+        "AS performance, "
+        "AVG(CASE WHEN value BETWEEN min_value AND max_value THEN 1.0 ELSE 0.0 END) "
+        f"AS quality FROM {tel} "
+        "WHERE event_time >= current_timestamp() - INTERVAL 24 HOURS GROUP BY sensor_name) "
+        "SELECT sensor_name, ROUND(100 * (1 - fault_min / observed_min), 2) AS availability_pct, "
+        "ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, "
+        "ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) * quality, 2) "
+        "AS oee_pct FROM m ORDER BY oee_pct ASC"
+    )
+
+
+def _anomaly_sql(tel: str) -> str:
+    return (
+        "SELECT sensor_name, COUNT(*) AS anomalies, MIN(value) AS min_seen, "
+        f"MAX(value) AS max_seen FROM {tel} "
+        "WHERE (value < min_value OR value > max_value) "
+        "AND event_time >= current_timestamp() - INTERVAL 1 HOUR "
+        "GROUP BY sensor_name ORDER BY anomalies DESC"
+    )
+
+
+def _maintenance_sql(tel: str, refs: dict[str, str]) -> str:
+    bindings = _quoted(refs["sensor_bindings"])
+    maint = _quoted(refs["maintenance_records"])
+    return (
+        "WITH faults AS (SELECT sensor_name, COUNT(*) AS fault_readings "
+        f"FROM {tel} WHERE fault_active "
+        "AND event_time >= current_timestamp() - INTERVAL 7 DAYS GROUP BY sensor_name) "
+        "SELECT b.asset_id, SUM(f.fault_readings) AS fault_readings, "
+        "MAX(r.completed_at) AS last_maintenance "
+        f"FROM faults f JOIN {bindings} b ON b.sensor_name = f.sensor_name "
+        f"LEFT JOIN {maint} r ON r.asset_id = b.asset_id "
+        "GROUP BY b.asset_id ORDER BY fault_readings DESC"
+    )
+
+
+def _mode_sql(tel: str, metrics: str, mode: str) -> tuple[str, str]:
+    if mode == "zerobus":
+        return (
+            "How many readings per minute were ingested over the last hour?",
+            "SELECT date_trunc('minute', event_time) AS minute, COUNT(*) AS readings "
+            f"FROM {tel} WHERE event_time >= current_timestamp() - INTERVAL 1 HOUR "
+            "GROUP BY 1 ORDER BY 1",
+        )
+    return (
+        "What is the streaming throughput and p99 latency over the last hour?",
+        "SELECT date_trunc('minute', timestamp) AS minute, AVG(processed_rps) AS processed_rps, "
+        f"MAX(e2e_p99) AS e2e_p99_ms FROM {metrics} WHERE mode = '{mode}' "
+        "AND timestamp >= current_timestamp() - INTERVAL 1 HOUR GROUP BY 1 ORDER BY 1",
+    )
+
+
+def example_sqls(
+    telemetry: str, metrics: str, refs: dict[str, str], mode: str
+) -> list[tuple[str, str]]:
+    """Return ``(question, sql)`` pairs scoped to this pipeline's tables."""
+    tel = _quoted(telemetry)
+    return [
+        ("How many minutes of downtime did each sensor have in the last 24 hours?",
+         _downtime_sql(tel)),
+        ("What is the approximate OEE per sensor over the last 24 hours?", _oee_sql(tel)),
+        ("Which sensors had the most anomalies in the last hour?", _anomaly_sql(tel)),
+        ("Which assets had the most faults this week and when were they last maintained?",
+         _maintenance_sql(tel, refs)),
+        _mode_sql(tel, _quoted(metrics), mode),
+    ]
+
+
+def sql_snippets(telemetry: str) -> dict[str, list[dict[str, Any]]]:
+    """Reusable measures / filters / expressions qualified with the table name."""
+    t = _short(telemetry)
+    return {
+        "measures": [
+            {"alias": "fault_rate_pct", "display_name": "Fault rate %",
+             "sql": [f"100 * AVG(CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END)"],
+             "synonyms": ["downtime rate", "fault ratio"]},
+            {"alias": "availability_pct", "display_name": "Availability % (reading-based)",
+             "sql": [f"100 * (1 - AVG(CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END))"],
+             "synonyms": ["availability", "uptime"]},
+            {"alias": "anomaly_rate_pct", "display_name": "Anomaly rate %",
+             "sql": [f"100 * AVG(CASE WHEN {t}.value < {t}.min_value OR "
+                     f"{t}.value > {t}.max_value THEN 1.0 ELSE 0.0 END)"],
+             "synonyms": ["out of range rate"]},
+        ],
+        "filters": [
+            {"display_name": "Fault active (downtime)", "sql": [f"{t}.fault_active = TRUE"],
+             "synonyms": ["down", "faulted", "stopped"]},
+            {"display_name": "Anomalous reading",
+             "sql": [f"({t}.value < {t}.min_value OR {t}.value > {t}.max_value)"],
+             "synonyms": ["out of range", "anomaly"]},
+            {"display_name": "Last 24 hours",
+             "sql": [f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS"]},
+        ],
+        "expressions": [
+            {"alias": "deviation_from_nominal", "display_name": "Deviation from nominal",
+             "sql": [f"{t}.value - {t}.nominal_value"]},
+            {"alias": "reading_minute", "display_name": "Reading minute",
+             "sql": [f"date_trunc('minute', {t}.event_time)"]},
+        ],
+    }

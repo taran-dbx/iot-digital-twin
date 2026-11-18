@@ -782,7 +782,7 @@ async def deploy_pipeline(
     single_user_name = single_user_name or _current_user(w)
 
     if mode == "zerobus":
-        return await _deploy_zerobus_pipeline(
+        result = await _deploy_zerobus_pipeline(
             db,
             setup_id=setup_id,
             deployment_id=deployment_id,
@@ -791,6 +791,10 @@ async def deploy_pipeline(
             single_user_name=single_user_name,
             w=w,
             base_parameters=base_parameters,
+        )
+        return await _attach_genie_space(
+            db, setup=setup, setup_id=setup_id, deployment_id=deployment_id,
+            mode=mode, result=result, w=w
         )
 
     if mode == "realtime":
@@ -810,7 +814,7 @@ async def deploy_pipeline(
         or (setup.get("cluster_spec") or {}).get("node_type")
         or DEFAULT_NODE_TYPE
     )
-    return await _deploy_spark_pipeline(
+    result = await _deploy_spark_pipeline(
         db,
         setup_id=setup_id,
         deployment_id=deployment_id,
@@ -824,6 +828,62 @@ async def deploy_pipeline(
         w=w,
         cloud=cloud,
     )
+    return await _attach_genie_space(
+        db, setup=setup, setup_id=setup_id, deployment_id=deployment_id,
+        mode=mode, result=result, w=w
+    )
+
+
+# --- Per-pipeline Genie space (best-effort, manufacturing only) --------------
+async def _genie_warehouse(db: DBExecutor, setup: dict) -> str:
+    """Setup-pinned warehouse first, else the app-global DBSQL resolution."""
+    from services.dbsql_service import resolve_warehouse_id
+
+    pinned = str(setup.get("warehouse_id") or "").strip()
+    return pinned or await resolve_warehouse_id(db, True, "")
+
+
+def _with_warning(result: dict, message: str) -> dict:
+    return {**result, "warnings": [*(result.get("warnings") or []), message]}
+
+
+async def _attach_genie_space(
+    db: DBExecutor,
+    *,
+    setup: dict,
+    setup_id: Any,
+    deployment_id: Any,
+    mode: str,
+    result: dict,
+    w: Any,
+) -> dict:
+    """Create/refresh the pipeline's Genie space after a successful deploy.
+
+    Never fails the deploy: any error is returned as a ``warnings`` entry.
+    """
+    from services import genie_space_service
+
+    industry = setup.get("industry")
+    if not genie_space_service.supports_industry(industry):
+        return result
+    try:
+        warehouse_id = await _genie_warehouse(db, setup)
+        space = await genie_space_service.ensure_pipeline_space(
+            db,
+            setup_id=setup_id,
+            deployment_id=deployment_id,
+            industry=str(industry),
+            mode=mode,
+            warehouse_id=warehouse_id,
+            w=w,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Genie space provisioning failed for setup %s mode %s: %s",
+            setup_id, mode, exc,
+        )
+        return _with_warning(result, f"Genie space was not provisioned: {str(exc)[:300]}")
+    return {**result, "genie_space": space}
 
 
 # --- Lifecycle: start / stop / status ----------------------------------------
