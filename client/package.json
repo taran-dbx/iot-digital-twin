@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 4",
     "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test:e2e": "playwright test",
     "report:qa": "qa-shadow-report playwright --csv"
   },
@@ -36,6 +37,7 @@
     "three": "^0.171.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.0",
@@ -43,11 +45,17 @@
     "@types/three": "^0.171.0",
     "@vitejs/plugin-react-swc": "^3.10.2",
     "autoprefixer": "^10.4.16",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
     "postcss": "^8.4.32",
-    "puppeteer": "^25.1.0",
     "qa-shadow-report": "^2.1.7",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.2",
     "vite": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

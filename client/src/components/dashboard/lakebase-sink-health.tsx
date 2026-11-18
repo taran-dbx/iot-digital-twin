@@ -149,7 +149,6 @@ export function LakebaseSinkHealth({
       const result = await api.healLakebase(pipelineId, industry);
       toast.success(`Repair complete: ${result.steps.length} steps`);
       // Surface per-step results in DevTools for operators triaging a run.
-      // eslint-disable-next-line no-console
       console.log("heal-lakebase result:", result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "unknown";
