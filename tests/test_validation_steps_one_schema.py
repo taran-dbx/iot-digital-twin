@@ -125,8 +125,9 @@ class TestZerobusDbsqlReadOneSchema:
         # Zerobus dbsql_read polls to absorb the ingest→commit lag; stub sleep so
         # the bounded wait doesn't actually block the test.
         exec_mock = AsyncMock(return_value={"data": [{"n": 0}]})
-        with patch.object(vsteps, "execute_dbsql", new=exec_mock), patch.object(
-            vsteps.asyncio, "sleep", new=AsyncMock()
+        with (
+            patch.object(vsteps, "execute_dbsql", new=exec_mock),
+            patch.object(vsteps.asyncio, "sleep", new=AsyncMock()),
         ):
             result = await vsteps.dbsql_read(_make_ctx(mode="zerobus"))
 
@@ -148,8 +149,9 @@ class TestZerobusDbsqlReadOneSchema:
             ]
         )
         sleep_mock = AsyncMock()
-        with patch.object(vsteps, "execute_dbsql", new=exec_mock), patch.object(
-            vsteps.asyncio, "sleep", new=sleep_mock
+        with (
+            patch.object(vsteps, "execute_dbsql", new=exec_mock),
+            patch.object(vsteps.asyncio, "sleep", new=sleep_mock),
         ):
             result = await vsteps.dbsql_read(_make_ctx(mode="zerobus"))
 

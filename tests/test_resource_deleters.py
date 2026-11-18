@@ -84,11 +84,9 @@ async def test_pipeline_teardown_never_drops_shared_uc_schema_c7113() -> None:
 async def test_uc_volume_drop_remains_pipeline_scoped() -> None:
     run_sql = AsyncMock()
     reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
-    await reg["uc_volume"]({"identifier": "iot_p.checkpoints.stream_checkpoints",
-                            "metadata": {}})
+    await reg["uc_volume"]({"identifier": "iot_p.checkpoints.stream_checkpoints", "metadata": {}})
     assert (
-        run_sql.await_args.args[0]
-        == "DROP VOLUME IF EXISTS iot_p.checkpoints.stream_checkpoints"
+        run_sql.await_args.args[0] == "DROP VOLUME IF EXISTS iot_p.checkpoints.stream_checkpoints"
     )
 
 
@@ -97,8 +95,7 @@ async def test_uc_table_chronotable_is_skipped_with_note() -> None:
     reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
     with pytest.raises(SkipResource):
         await reg["uc_table"](
-            {"identifier": "pharma.public.sensor_readings",
-             "metadata": {"chronotable": True}}
+            {"identifier": "pharma.public.sensor_readings", "metadata": {"chronotable": True}}
         )
     run_sql.assert_not_awaited()
 
@@ -143,19 +140,21 @@ async def test_metrics_table_drops_table_and_deletes_s3_prefix() -> None:
     run_sql = AsyncMock()
     delete_s3 = AsyncMock()
     reg = make_all_deleters(
-        ws=ws, warehouse_id="wh",
-        run_sql=run_sql, delete_s3_prefix=delete_s3,
+        ws=ws,
+        warehouse_id="wh",
+        run_sql=run_sql,
+        delete_s3_prefix=delete_s3,
     )
     loc = "s3://taran-shared-interop/iot-digital-twin/iot_p/metrics/streaming_metrics/"
     await reg["metrics_table"](
-        {"identifier": "iot_p.metrics.streaming_metrics",
-         "deployment_id": "deployment-1",
-         "_ownership_verified": True,
-         "metadata": {"external": True, "location": loc}}
+        {
+            "identifier": "iot_p.metrics.streaming_metrics",
+            "deployment_id": "deployment-1",
+            "_ownership_verified": True,
+            "metadata": {"external": True, "location": loc},
+        }
     )
-    ws.tables.delete.assert_called_once_with(
-        full_name="iot_p.metrics.streaming_metrics"
-    )
+    ws.tables.delete.assert_called_once_with(full_name="iot_p.metrics.streaming_metrics")
     run_sql.assert_not_awaited()
     delete_s3.assert_awaited_once_with(loc)
 
@@ -165,8 +164,10 @@ async def test_metrics_table_without_location_skips_s3() -> None:
     run_sql = AsyncMock()
     delete_s3 = AsyncMock()
     reg = make_all_deleters(
-        ws=ws, warehouse_id="wh",
-        run_sql=run_sql, delete_s3_prefix=delete_s3,
+        ws=ws,
+        warehouse_id="wh",
+        run_sql=run_sql,
+        delete_s3_prefix=delete_s3,
     )
     await reg["metrics_table"](
         {
@@ -193,9 +194,7 @@ async def test_parse_s3_url_splits_bucket_and_prefix() -> None:
 async def test_kafka_topic_skipped_with_note() -> None:
     reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh")
     with pytest.raises(SkipResource) as exc:
-        await reg["kafka_topic"](
-            {"identifier": "iot.pharma.realtime", "metadata": {}}
-        )
+        await reg["kafka_topic"]({"identifier": "iot.pharma.realtime", "metadata": {}})
     note = str(exc.value).lower()
     assert "deletetopic" in note or "1.8" in note
 
@@ -240,9 +239,7 @@ async def test_shared_secret_scope_skipped() -> None:
     ws = MagicMock()
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
     with pytest.raises(SkipResource):
-        await reg["secret_scope"](
-            {"identifier": "iot-secrets", "metadata": {"shared": True}}
-        )
+        await reg["secret_scope"]({"identifier": "iot-secrets", "metadata": {"shared": True}})
     ws.secrets.delete_scope.assert_not_called()
 
 
@@ -263,8 +260,10 @@ async def test_primary_endpoint_skipped_removed_with_branch() -> None:
     reg = make_all_deleters(ws=ws, warehouse_id="wh")
     with pytest.raises(SkipResource):
         await reg["lakebase_endpoint"](
-            {"identifier": "projects/iot-pipelines/branches/pharma/endpoints/primary",
-             "metadata": {"endpoint_type": "READ_WRITE"}}
+            {
+                "identifier": "projects/iot-pipelines/branches/pharma/endpoints/primary",
+                "metadata": {"endpoint_type": "READ_WRITE"},
+            }
         )
     ws.postgres.delete_endpoint.assert_not_called()
 
@@ -294,8 +293,10 @@ async def test_grant_revokes_best_effort() -> None:
     run_sql = AsyncMock()
     reg = make_all_deleters(ws=MagicMock(), warehouse_id="wh", run_sql=run_sql)
     await reg["grant"](
-        {"identifier": "iot_p:USE CATALOG:app-id",
-         "metadata": {"sql": "GRANT USE CATALOG ON CATALOG iot_p TO `app-id`"}}
+        {
+            "identifier": "iot_p:USE CATALOG:app-id",
+            "metadata": {"sql": "GRANT USE CATALOG ON CATALOG iot_p TO `app-id`"},
+        }
     )
     stmt = run_sql.await_args.args[0]
     assert stmt.startswith("REVOKE")
@@ -308,8 +309,10 @@ async def test_grant_swallows_revoke_error() -> None:
     # Best-effort: a failed revoke must NOT raise (would otherwise mark the whole
     # teardown failed even though the object is already gone).
     await reg["grant"](
-        {"identifier": "iot_p:USE CATALOG:app-id",
-         "metadata": {"sql": "GRANT USE CATALOG ON CATALOG iot_p TO `app-id`"}}
+        {
+            "identifier": "iot_p:USE CATALOG:app-id",
+            "metadata": {"sql": "GRANT USE CATALOG ON CATALOG iot_p TO `app-id`"},
+        }
     )
 
 

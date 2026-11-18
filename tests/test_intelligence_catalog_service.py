@@ -25,7 +25,9 @@ class TestNames:
         tables = ics.reference_tables()
         assert tables["assets"] == f"{CATALOG}.{SCHEMA}.intelligence_assets"
         assert tables["sensor_bindings"] == f"{CATALOG}.{SCHEMA}.intelligence_sensor_bindings"
-        assert tables["maintenance_records"] == f"{CATALOG}.{SCHEMA}.intelligence_maintenance_records"
+        assert (
+            tables["maintenance_records"] == f"{CATALOG}.{SCHEMA}.intelligence_maintenance_records"
+        )
         assert tables["alert_rules"] == f"{CATALOG}.{SCHEMA}.intelligence_alert_rules"
         assert tables["alert_snapshot"] == f"{CATALOG}.{SCHEMA}.intelligence_alert_snapshot"
 
@@ -105,7 +107,9 @@ class TestProvision:
         assert "mutate" in contract["notes"].lower() or "read" in contract["notes"].lower()
 
     @pytest.mark.asyncio
-    async def test_hyphenated_catalog_is_quoted_c7503_defect(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_hyphenated_catalog_is_quoted_c7503_defect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """[C7503][defect] Hyphenated UC catalogs are quoted, not split-fragile."""
         monkeypatch.setenv("UC_CATALOG", "taran-interop")
         executed: list[str] = []

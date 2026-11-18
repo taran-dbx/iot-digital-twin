@@ -51,8 +51,7 @@ def repo(monkeypatch):
         "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9098",
     }
     fake = FakeRepo(setup)
-    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry",
-                        fake.get_setup_by_industry)
+    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry", fake.get_setup_by_industry)
     monkeypatch.setattr(vs.pipeline_setup_repo, "update_setup", fake.update_setup)
     return fake
 
@@ -63,12 +62,14 @@ def repo(monkeypatch):
 def _pass(**data):
     async def _fn(ctx):
         return vs.StepResult(sm.PASSED, data=data)
+
     return _fn
 
 
 def _fail(msg):
     async def _fn(ctx):
         return vs.StepResult(sm.FAILED, error=msg)
+
     return _fn
 
 
@@ -79,10 +80,21 @@ async def _wait_admin(ctx):
 def _all_pass_executors():
     # Bare-name keyed, mirroring DEFAULT_EXECUTORS.
     names = [
-        "provision_cluster", "source_connectivity", "topics_created",
-        "schema_conformance", "partitions_precreate", "write_test",
-        "cdf_manual", "cdf_verify", "read_back", "dbsql_read",
-        "metrics_check", "cleanup", "create_table", "auth_probe", "produce_test",
+        "provision_cluster",
+        "source_connectivity",
+        "topics_created",
+        "schema_conformance",
+        "partitions_precreate",
+        "write_test",
+        "cdf_manual",
+        "cdf_verify",
+        "read_back",
+        "dbsql_read",
+        "metrics_check",
+        "cleanup",
+        "create_table",
+        "auth_probe",
+        "produce_test",
     ]
     return {n: _pass() for n in names}
 
@@ -141,9 +153,7 @@ async def test_retry_from_failure_resumes(repo):
 
     # Fix the backend cause → executor now passes; retry that step.
     execs["source_connectivity"] = _pass()
-    state = await vs.retry_step(
-        None, "pharmaceutical", "source_connectivity", executors=execs
-    )
+    state = await vs.retry_step(None, "pharmaceutical", "source_connectivity", executors=execs)
     assert sm.is_gate_open(state) is True
 
 
@@ -167,8 +177,7 @@ def rt_repo(monkeypatch):
         "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9098",
     }
     fake = FakeRepo(setup)
-    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry",
-                        fake.get_setup_by_industry)
+    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry", fake.get_setup_by_industry)
     monkeypatch.setattr(vs.pipeline_setup_repo, "update_setup", fake.update_setup)
     return fake
 
@@ -223,9 +232,7 @@ async def test_cluster_id_merged_to_top_level(repo):
 
     execs["write_test"] = _rec_run
     ws = _FakeWs(_FakeClusters(state_value="RUNNING"))
-    state = await vs.start_validation(
-        None, "pharmaceutical", executors=execs, ws=ws
-    )
+    state = await vs.start_validation(None, "pharmaceutical", executors=execs, ws=ws)
 
     assert state["cluster_id"] == "0705-abc"
     assert state["run_ids"]["microbatch:write_test"] == "run-xyz"
@@ -292,8 +299,12 @@ class _FakeWs:
 def _started_setup(**extra):
     """A setup whose validation_state has a real (mid-run) sequence."""
     state = sm.initial_state(["microbatch"])
-    state = sm.set_step(state, "provision_cluster", sm.PASSED, updated_at="2026-07-06T00:00:00+00:00")
-    state = sm.set_step(state, "source_connectivity", sm.RUNNING, updated_at="2026-07-06T00:01:00+00:00")
+    state = sm.set_step(
+        state, "provision_cluster", sm.PASSED, updated_at="2026-07-06T00:00:00+00:00"
+    )
+    state = sm.set_step(
+        state, "source_connectivity", sm.RUNNING, updated_at="2026-07-06T00:01:00+00:00"
+    )
     state["cluster_id"] = "0705-abc"
     return {
         "id": "setup-1",
@@ -306,8 +317,7 @@ def _started_setup(**extra):
 
 def _repo_with(monkeypatch, setup):
     fake = FakeRepo(setup)
-    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry",
-                        fake.get_setup_by_industry)
+    monkeypatch.setattr(vs.pipeline_setup_repo, "get_setup_by_industry", fake.get_setup_by_industry)
     monkeypatch.setattr(vs.pipeline_setup_repo, "update_setup", fake.update_setup)
     return fake
 
@@ -323,8 +333,9 @@ async def test_get_state_surfaces_cluster_state(monkeypatch):
 
 async def test_get_state_current_step_and_phase(monkeypatch):
     _repo_with(monkeypatch, _started_setup())
-    out = await vs.get_state(None, "pharmaceutical",
-                             ws=_FakeWs(_FakeClusters(state_value="RUNNING")))
+    out = await vs.get_state(
+        None, "pharmaceutical", ws=_FakeWs(_FakeClusters(state_value="RUNNING"))
+    )
     # source_connectivity is the running (first non-passed) step.
     assert out["current_step"] == "source_connectivity"
     # Cluster RUNNING + past provision_cluster → validating.
@@ -339,16 +350,18 @@ async def test_get_state_phase_provisioning_when_cluster_pending(monkeypatch):
     state["cluster_id"] = "0705-abc"
     setup["validation_state"] = state
     _repo_with(monkeypatch, setup)
-    out = await vs.get_state(None, "pharmaceutical",
-                             ws=_FakeWs(_FakeClusters(state_value="PENDING")))
+    out = await vs.get_state(
+        None, "pharmaceutical", ws=_FakeWs(_FakeClusters(state_value="PENDING"))
+    )
     assert out["phase"] == "provisioning_cluster"
     assert out["cluster_state"] == "PENDING"
 
 
 async def test_get_state_preserves_per_step_updated_at(monkeypatch):
     _repo_with(monkeypatch, _started_setup())
-    out = await vs.get_state(None, "pharmaceutical",
-                             ws=_FakeWs(_FakeClusters(state_value="RUNNING")))
+    out = await vs.get_state(
+        None, "pharmaceutical", ws=_FakeWs(_FakeClusters(state_value="RUNNING"))
+    )
     steps = out["steps"]
     assert steps["provision_cluster"]["updated_at"] == "2026-07-06T00:00:00+00:00"
     assert steps["source_connectivity"]["updated_at"] == "2026-07-06T00:01:00+00:00"
@@ -370,8 +383,7 @@ async def test_get_state_null_cluster_state_when_no_cluster(monkeypatch):
 
 async def test_get_state_unknown_when_lookup_fails(monkeypatch):
     _repo_with(monkeypatch, _started_setup())
-    out = await vs.get_state(None, "pharmaceutical",
-                             ws=_FakeWs(_FakeClusters(raises=True)))
+    out = await vs.get_state(None, "pharmaceutical", ws=_FakeWs(_FakeClusters(raises=True)))
     assert out["cluster_state"] == "UNKNOWN"
 
 
@@ -379,15 +391,21 @@ async def test_get_state_default_workspace_client_lookup_is_graceful(monkeypatch
     # No ws injected → default client path; a failing client yields UNKNOWN,
     # never errors the endpoint.
     _repo_with(monkeypatch, _started_setup())
-    monkeypatch.setattr(vs, "_workspace_client",
-                        lambda: _FakeWs(_FakeClusters(raises=True)))
+    monkeypatch.setattr(vs, "_workspace_client", lambda: _FakeWs(_FakeClusters(raises=True)))
     out = await vs.get_state(None, "pharmaceutical")
     assert out["cluster_state"] == "UNKNOWN"
 
 
 async def test_get_state_none_when_no_state(monkeypatch):
-    _repo_with(monkeypatch, {"id": "s", "industry": "pharmaceutical",
-                             "enabled_modes": ["microbatch"], "validation_state": {}})
+    _repo_with(
+        monkeypatch,
+        {
+            "id": "s",
+            "industry": "pharmaceutical",
+            "enabled_modes": ["microbatch"],
+            "validation_state": {},
+        },
+    )
     assert await vs.get_state(None, "pharmaceutical") is None
 
 
@@ -490,6 +508,7 @@ async def test_run_machine_does_not_advance_on_terminated_cluster_c7239(repo):
         async def _fn(_ctx):
             ran.append(name)
             return vs.StepResult(sm.PASSED)
+
         return _fn
 
     execs = _all_pass_executors()
@@ -512,9 +531,7 @@ async def test_run_machine_still_provisions_when_prior_cluster_is_dead_c7239(rep
         "cluster_id": "stale-dead",
     }
     ws = _FakeWs(_FakeClusters(state_value="TERMINATED"))
-    state = await vs.start_validation(
-        None, "pharmaceutical", executors=execs, ws=ws
-    )
+    state = await vs.start_validation(None, "pharmaceutical", executors=execs, ws=ws)
     # After provision_cluster the fake ws still reports TERMINATED, so the
     # driver must halt rather than pretend later steps can use the dead cluster.
     assert state["steps"]["provision_cluster"]["status"] == sm.PASSED
@@ -549,9 +566,7 @@ async def test_prepare_start_valid_returns_initial_state(monkeypatch):
     out = await vs.prepare_start(None, "automotive")
     state = out["validation_state"]
     # A fresh, fully-pending state was built and persisted synchronously.
-    assert state["sequence"] == sm.build_sequence(
-        ["realtime", "microbatch", "zerobus"]
-    )
+    assert state["sequence"] == sm.build_sequence(["realtime", "microbatch", "zerobus"])
     assert state["steps"]["provision_cluster"]["status"] == sm.PENDING
     assert fake.setup["validation_state"]["sequence"]  # persisted
 
@@ -588,8 +603,7 @@ async def test_prepare_start_same_modes_is_explicit_full_rerun(monkeypatch):
     out = await vs.prepare_start(None, "automotive")
 
     assert all(
-        record["status"] == sm.PENDING
-        for record in out["validation_state"]["steps"].values()
+        record["status"] == sm.PENDING for record in out["validation_state"]["steps"].values()
     )
 
 
@@ -615,8 +629,12 @@ async def test_prepare_start_resumes_reconciled_state_with_new_pending_lane(monk
 def _manufacturing_stuck_state(cluster_id="1013-114619-s4mcy68g"):
     state = sm.initial_state(["realtime"])
     for key in sm.validation_step_keys(state):
-        if key in ("realtime:read_back", "realtime:dbsql_read",
-                   "realtime:metrics_check", "realtime:cleanup"):
+        if key in (
+            "realtime:read_back",
+            "realtime:dbsql_read",
+            "realtime:metrics_check",
+            "realtime:cleanup",
+        ):
             continue
         state = sm.set_step(state, key, sm.PASSED, updated_at="2026-10-13T11:55:00+00:00")
     state = sm.set_step(state, "realtime:read_back", sm.FAILED, error="no validation row")
@@ -628,8 +646,7 @@ async def test_prepare_start_reprovisions_when_cluster_terminated_c7240(monkeypa
     """Re-run after autoterminate must not resume at read_back on a dead cluster [C7240][defect]."""
     fake = _repo_with(
         monkeypatch,
-        _ready_setup(enabled_modes=["realtime"],
-                     validation_state=_manufacturing_stuck_state()),
+        _ready_setup(enabled_modes=["realtime"], validation_state=_manufacturing_stuck_state()),
     )
     out = await vs.prepare_start(
         None, "automotive", ws=_FakeWs(_FakeClusters(state_value="TERMINATED"))
@@ -646,8 +663,7 @@ async def test_prepare_start_resumes_failed_step_when_cluster_running_c7240(monk
     """A live cluster keeps the resume-from-failure behaviour [C7240][regression]."""
     _repo_with(
         monkeypatch,
-        _ready_setup(enabled_modes=["realtime"],
-                     validation_state=_manufacturing_stuck_state()),
+        _ready_setup(enabled_modes=["realtime"], validation_state=_manufacturing_stuck_state()),
     )
     out = await vs.prepare_start(
         None, "automotive", ws=_FakeWs(_FakeClusters(state_value="RUNNING"))
@@ -667,8 +683,7 @@ async def test_prepare_start_keeps_green_lane_when_reprovisioning_c7240(monkeypa
     previous["cluster_id"] = "dead"
     _repo_with(
         monkeypatch,
-        _ready_setup(enabled_modes=["realtime", "microbatch"],
-                     validation_state=previous),
+        _ready_setup(enabled_modes=["realtime", "microbatch"], validation_state=previous),
     )
     out = await vs.prepare_start(
         None, "automotive", ws=_FakeWs(_FakeClusters(state_value="TERMINATED"))
@@ -692,7 +707,9 @@ async def test_run_machine_halts_retried_failed_step_on_dead_cluster_c7240(repo)
     execs = _all_pass_executors()
     execs["read_back"] = read_back
     out = await vs.run_machine(
-        None, repo.setup, executors=execs,
+        None,
+        repo.setup,
+        executors=execs,
         ws=_FakeWs(_FakeClusters(state_value="TERMINATED")),
     )
     assert ran == []
@@ -723,8 +740,7 @@ async def test_prepare_start_incomplete_no_enabled_modes_raises(monkeypatch):
 
 async def test_prepare_start_zerobus_only_needs_no_bootstrap(monkeypatch):
     # Zerobus is serverless (no Kafka), so a missing broker list is fine.
-    _repo_with(monkeypatch, _ready_setup(enabled_modes=["zerobus"],
-                                         bootstrap_servers=None))
+    _repo_with(monkeypatch, _ready_setup(enabled_modes=["zerobus"], bootstrap_servers=None))
     out = await vs.prepare_start(None, "automotive")
     assert out["validation_state"]["sequence"] == sm.build_sequence(["zerobus"])
 

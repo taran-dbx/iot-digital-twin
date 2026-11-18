@@ -33,8 +33,11 @@ class TestPutSecret:
     async def test_creates_secret_via_native_sdk(self) -> None:
         ws = _make_ws()
         res = await uc_secrets.put_secret(
-            "classic_stable_realtime_demos_catalog", "rtm_lakets_zb",
-            "app_sp_oauth", "top-secret", ws=ws,
+            "classic_stable_realtime_demos_catalog",
+            "rtm_lakets_zb",
+            "app_sp_oauth",
+            "top-secret",
+            ws=ws,
         )
         ws.secrets_uc.create_secret.assert_called_once()
         secret_arg = ws.secrets_uc.create_secret.call_args.args[0]
@@ -50,7 +53,11 @@ class TestPutSecret:
         # create raises "already exists", the update then succeeds
         ws.secrets_uc.create_secret.side_effect = Exception("secret already exists")
         res = await uc_secrets.put_secret(
-            "cat", "sch", "app_sp_oauth", "v2", ws=ws,
+            "cat",
+            "sch",
+            "app_sp_oauth",
+            "v2",
+            ws=ws,
         )
         ws.secrets_uc.create_secret.assert_called_once()
         ws.secrets_uc.update_secret.assert_called_once()
@@ -79,9 +86,7 @@ class TestGetSecret:
     async def test_returns_effective_value_via_native_sdk(self) -> None:
         ws = _make_ws(get_value="the-secret")
         val = await uc_secrets.get_secret("cat", "sch", "app_sp_oauth", ws=ws)
-        ws.secrets_uc.get_secret.assert_called_once_with(
-            "cat.sch.app_sp_oauth", include_value=True
-        )
+        ws.secrets_uc.get_secret.assert_called_once_with("cat.sch.app_sp_oauth", include_value=True)
         assert val == "the-secret"
 
     @pytest.mark.asyncio

@@ -69,15 +69,21 @@ def _render(ts_file: Path, expression: str) -> str:
         text=True,
         cwd=CLIENT,
     ).stdout
-    script = f"{bundle}\nconst m = module.exports;process.stdout.write(JSON.stringify({expression}));"
-    return json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
+    script = (
+        f"{bundle}\nconst m = module.exports;process.stdout.write(JSON.stringify({expression}));"
+    )
+    return json.loads(
+        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
+    )
 
 
 def _consumer_notebook(monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-id")
     monkeypatch.setenv("UC_CATALOG", "cat")
     monkeypatch.setenv("UC_SCHEMA", "sch")
-    source = _render(NOTEBOOK_TS, f"m.generateRealtimeConsumerNotebook({json.dumps(CONSUMER_CONFIG)})")
+    source = _render(
+        NOTEBOOK_TS, f"m.generateRealtimeConsumerNotebook({json.dumps(CONSUMER_CONFIG)})"
+    )
     return ds._normalize_consumer_credentials(source)
 
 
@@ -133,17 +139,25 @@ class TestConsumerRecovery:
         assert "_sse_cs_bc = _lb_cs_bc" in loop
         assert "_zb_metrics_stream = _open_metrics_stream(_lb_cs)" in loop
 
-    def test_only_token_rejections_trigger_recovery_C7446_regression(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_only_token_rejections_trigger_recovery_C7446_regression(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """[C7446][regression] Other stream failures still fail the task."""
         ns = _recovery_namespace(_consumer_notebook(monkeypatch), [], accepted=set())
 
         assert ns["_is_sp_auth_failure"](RuntimeError(AUTH_FAILURE))
         assert not ns["_is_sp_auth_failure"](
-            RuntimeError('psycopg2.errors.CheckViolation: no partition of relation "sensor_readings"')
+            RuntimeError(
+                'psycopg2.errors.CheckViolation: no partition of relation "sensor_readings"'
+            )
         )
-        assert not ns["_is_sp_auth_failure"](RuntimeError("401 Client Error for url: https://app/api/sss/ingest"))
+        assert not ns["_is_sp_auth_failure"](
+            RuntimeError("401 Client Error for url: https://app/api/sss/ingest")
+        )
 
-    def test_recovery_gives_up_so_the_job_can_restart_C7447_regression(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_recovery_gives_up_so_the_job_can_restart_C7447_regression(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """[C7447][regression] A secret that never refreshes fails the task instead of waiting forever."""
         ns = _recovery_namespace(_consumer_notebook(monkeypatch), ["stale"] * 10, accepted=set())
         ns["AUTH_RECOVERY_MAX_WAIT_S"] = 0
@@ -158,7 +172,11 @@ class TestConsumerRecovery:
         notebook = _consumer_notebook(monkeypatch)
         reader = _between(notebook, "def _read_app_sp_secret():", "_lb_cs = _read_app_sp_secret()")
 
-        assert 'catalog="cat"' in reader and 'schema="sch"' in reader and 'key="app_sp_oauth"' in reader
+        assert (
+            'catalog="cat"' in reader
+            and 'schema="sch"' in reader
+            and 'key="app_sp_oauth"' in reader
+        )
         for i, cell in enumerate(_python_cells(notebook)):
             compile(cell, f"<consumer cell {i}>", "exec")
 
@@ -206,14 +224,18 @@ class TestProducerPeerWatch:
             SimpleNamespace(task_key="data_producer", run_id=2, state=_FakeTaskState("RUNNING")),
             SimpleNamespace(task_key="rtm_consumer", run_id=3, state=_FakeTaskState("TERMINATED")),
         ]
-        client = SimpleNamespace(jobs=SimpleNamespace(get_run=lambda _rid: SimpleNamespace(tasks=tasks)))
+        client = SimpleNamespace(
+            jobs=SimpleNamespace(get_run=lambda _rid: SimpleNamespace(tasks=tasks))
+        )
 
         assert ns["_ended_peer_tasks"](client, "1", "2") == ["rtm_consumer"]
         tasks[1].state = _FakeTaskState("PENDING")
         assert ns["_ended_peer_tasks"](client, "1", "2") == []
         assert _peer_namespace({})["_started_watches"] == [], "no run ids, no watch"
 
-    def test_producer_task_receives_its_run_ids_and_both_variants_watch_C7450_regression(self) -> None:
+    def test_producer_task_receives_its_run_ids_and_both_variants_watch_C7450_regression(
+        self,
+    ) -> None:
         """[C7450][regression] The deploy passes run ids to the producer; both Kafka variants watch."""
         tasks = ds.build_spark_tasks(
             mode="realtime",
@@ -276,7 +298,9 @@ class TestAppPublishesSecret:
         async def fake_job_id(_state, _pipeline_id):
             return "798"
 
-        workspace = SimpleNamespace(jobs=SimpleNamespace(update=lambda **_k: calls.append("unpause")))
+        workspace = SimpleNamespace(
+            jobs=SimpleNamespace(update=lambda **_k: calls.append("unpause"))
+        )
         monkeypatch.setattr(isvc, "_get_job_id", fake_job_id)
         monkeypatch.setattr(isvc.deployment_service, "sync_runtime_oauth_secret", fake_sync)
         state = SimpleNamespace(workspace_client=workspace)

@@ -160,7 +160,9 @@ class TestDirtyLifecycle:
 
         syncer.mark_dirty()
         with (
-            patch.object(snapshot_sync, "provision_reference_tables", new=AsyncMock(return_value={})),
+            patch.object(
+                snapshot_sync, "provision_reference_tables", new=AsyncMock(return_value={})
+            ),
             patch.object(ics, "sync_reference_data", side_effect=slow_sync),
         ):
             task = asyncio.create_task(syncer.run_full_sync(alerts=[{"id": "a1"}]))
@@ -218,9 +220,7 @@ class TestContract:
         assert "last_error" in contract
         assert int(contract["interval_s"]) == 60
 
-    def test_interval_is_configurable_c7505_smoke(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_interval_is_configurable_c7505_smoke(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """[C7505][smoke] Sync interval can be configured via env."""
         monkeypatch.setenv("ALERT_SNAPSHOT_SYNC_INTERVAL_S", "15")
         syncer = snapshot_sync.AlertSnapshotSynchronizer(AppState())

@@ -69,9 +69,7 @@ def _readings_relation(tables: list[str], columns: str = "event_time, sensor_nam
     """SQL relation that reads recent chunks, or the parent table as a fallback."""
     if not tables:
         return "sensor_readings"
-    unions = " UNION ALL ".join(
-        f"SELECT {columns} FROM public.{table}" for table in tables
-    )
+    unions = " UNION ALL ".join(f"SELECT {columns} FROM public.{table}" for table in tables)
     return f"({unions})"
 
 
@@ -127,9 +125,7 @@ async def _resolve_lakebase(
     if industry:
         industry = industry.strip().lower()
         if industry not in CURATED_INDUSTRIES:
-            raise HTTPException(
-                status_code=404, detail="Realtime industry deployment not found"
-            )
+            raise HTTPException(status_code=404, detail="Realtime industry deployment not found")
         kind = await _authorize_mode_pipeline(
             state, pipeline_id, industry, "realtime", user_email=""
         )
@@ -137,9 +133,7 @@ async def _resolve_lakebase(
             return await get_industry_lakebase(state, industry)
         if kind == "legacy":
             return await get_pipeline_lakebase(state, pipeline_id)
-        raise HTTPException(
-            status_code=404, detail="Realtime industry deployment not found"
-        )
+        raise HTTPException(status_code=404, detail="Realtime industry deployment not found")
     return await get_pipeline_lakebase(state, pipeline_id)
 
 
@@ -166,9 +160,14 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
     t0 = time.time()
 
     e2e_ms = None
-    ts_fields = [d.get("window_end") or d.get("timestamp") for d in data if d.get("window_end") or d.get("timestamp")]
+    ts_fields = [
+        d.get("window_end") or d.get("timestamp")
+        for d in data
+        if d.get("window_end") or d.get("timestamp")
+    ]
     if ts_fields:
         import datetime as _dt
+
         now = time.time()
         epoch_vals = []
         for ts in ts_fields:
@@ -176,7 +175,9 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
                 epoch_vals.append(float(ts))
             elif isinstance(ts, str):
                 try:
-                    epoch_vals.append(_dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+                    epoch_vals.append(
+                        _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                    )
                 except Exception:
                     pass
         if epoch_vals:
@@ -202,11 +203,23 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
     # see at a glance (via /api/sources) what headers the consumer sent and
     # whether the INSERT path executed.
     import time as _t
+
     src = state.sources["sss"]
     # Attach counters on first use
     if not hasattr(src, "_lb_counters"):
-        src._lb_counters = {"with_header": 0, "no_header": 0, "inserted": 0, "errors": 0, "last_keys": None, "last_headers": None}
-    headers_snapshot = {k: v for k, v in request.headers.items() if k.lower() in ("x-pipeline-id", "content-type", "user-agent", "host")}
+        src._lb_counters = {
+            "with_header": 0,
+            "no_header": 0,
+            "inserted": 0,
+            "errors": 0,
+            "last_keys": None,
+            "last_headers": None,
+        }
+    headers_snapshot = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() in ("x-pipeline-id", "content-type", "user-agent", "host")
+    }
     src._lb_counters["last_headers"] = headers_snapshot
     if data:
         src._lb_counters["last_keys"] = list((data[0].keys() if isinstance(data[0], dict) else []))
@@ -232,6 +245,7 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
                 state.sources["sss"].error = lakebase_error
             if lb is not None:
                 import datetime as _dt
+
                 # Use ingestion time as event_time so the dashboard's "last 5 min"
                 # window shows live data, not timestamps from whatever point in
                 # the Kafka backlog the consumer is currently chewing through.
@@ -242,16 +256,20 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
                 rows: list[tuple] = []
                 for d in data:
                     event_time = now_utc
-                    rows.append((
-                        event_time,
-                        d.get("sensor_name"),
-                        d.get("industry"),
-                        float(d.get("value")) if d.get("value") is not None else None,
-                        d.get("unit"),
-                        d.get("sensor_type"),
-                        bool(d.get("fault_active")) if d.get("fault_active") is not None else False,
-                        "sss",
-                    ))
+                    rows.append(
+                        (
+                            event_time,
+                            d.get("sensor_name"),
+                            d.get("industry"),
+                            float(d.get("value")) if d.get("value") is not None else None,
+                            d.get("unit"),
+                            d.get("sensor_type"),
+                            bool(d.get("fault_active"))
+                            if d.get("fault_active") is not None
+                            else False,
+                            "sss",
+                        )
+                    )
                 # asyncpg: use executemany-style INSERT for batch performance
                 in_txn_count = await lb.executemany(
                     """
@@ -282,17 +300,23 @@ async def sss_ingest(request: Request, state: AppState = Depends(get_app_state))
             lakebase_error = f"{type(exc).__name__}: {str(exc)[:200]}"
             logger.error(
                 "sss_ingest Lakebase insert failed for pipeline %s (lb_resolved=%s): %s",
-                pipeline_id, lb_resolved, exc, exc_info=True,
+                pipeline_id,
+                lb_resolved,
+                exc,
+                exc_info=True,
             )
             state.sources["sss"].error = lakebase_error
 
-    await broadcast(state, {
-        "type": "sensor_update",
-        "source": "sss",
-        "sensors": data,
-        "write_latency_ms": 0,
-        "e2e_latency_ms": round(e2e_ms, 1) if e2e_ms is not None else 0,
-    })
+    await broadcast(
+        state,
+        {
+            "type": "sensor_update",
+            "source": "sss",
+            "sensors": data,
+            "write_latency_ms": 0,
+            "e2e_latency_ms": round(e2e_ms, 1) if e2e_ms is not None else 0,
+        },
+    )
 
     try:
         reading_industry = industry_id
@@ -608,13 +632,21 @@ async def get_pipeline_stats_scoped(
             minutes,
         )
         if not row:
-            return {"total_records": 0, "records_per_min": 0, "latest_event": None, "oldest_event": None, "freshness_sec": None}
+            return {
+                "total_records": 0,
+                "records_per_min": 0,
+                "latest_event": None,
+                "oldest_event": None,
+                "freshness_sec": None,
+            }
         return {
             "total_records": row["total_records"],
             "records_per_min": round(float(row["records_per_min"] or 0), 1),
             "latest_event": str(row["latest_event"]) if row["latest_event"] else None,
             "oldest_event": str(row["oldest_event"]) if row["oldest_event"] else None,
-            "freshness_sec": round(float(row["freshness_sec"] or 0), 1) if row["freshness_sec"] else None,
+            "freshness_sec": round(float(row["freshness_sec"] or 0), 1)
+            if row["freshness_sec"]
+            else None,
         }
     except Exception as exc:
         logger.warning("Pipeline %s stats query failed: %s", pipeline_id, exc)
@@ -742,13 +774,21 @@ async def get_pipeline_stats(
 
         row = await state.db.fetchrow(query, *params)
         if not row:
-            return {"total_records": 0, "records_per_min": 0, "latest_event": None, "oldest_event": None, "freshness_sec": None}
+            return {
+                "total_records": 0,
+                "records_per_min": 0,
+                "latest_event": None,
+                "oldest_event": None,
+                "freshness_sec": None,
+            }
         return {
             "total_records": row["total_records"],
             "records_per_min": round(float(row["records_per_min"] or 0), 1),
             "latest_event": str(row["latest_event"]) if row["latest_event"] else None,
             "oldest_event": str(row["oldest_event"]) if row["oldest_event"] else None,
-            "freshness_sec": round(float(row["freshness_sec"] or 0), 1) if row["freshness_sec"] else None,
+            "freshness_sec": round(float(row["freshness_sec"] or 0), 1)
+            if row["freshness_sec"]
+            else None,
         }
     except Exception as exc:
         logger.warning("Pipeline stats query failed: %s", exc)
@@ -801,9 +841,7 @@ async def get_lakebase_perf(
     graceful zero throughput and null lag.
     """
     lag_basis = "producer_event_to_lakebase_insert"
-    lag_definition = (
-        "Ingest lag = now() - producer event-time, measured at Lakebase insert"
-    )
+    lag_definition = "Ingest lag = now() - producer event-time, measured at Lakebase insert"
 
     empty_perf_payload = {
         "rows_per_sec": 0,
@@ -833,6 +871,7 @@ async def get_lakebase_perf(
         return empty_perf_payload
 
     try:
+
         async def _load_perf_buckets():
             tables = await _recent_chunk_tables(lb, minutes)
             relation = _readings_relation(tables, columns="event_time")
@@ -960,6 +999,7 @@ async def get_lakets_gapfill(
         return {"rows": [], "reason": reason or "LakeTS not installed"}
 
     try:
+
         async def _load_gapfill():
             tables = await _recent_chunk_tables(lb, minutes)
             relation = _readings_relation(tables)
@@ -1088,6 +1128,7 @@ async def get_lakets_rate(
         return {"rows": [], "reason": reason or "LakeTS not installed"}
 
     try:
+
         async def _load_rate():
             tables = await _recent_chunk_tables(lb, minutes)
             relation = _readings_relation(tables)
@@ -1185,6 +1226,7 @@ async def get_lakets_histogram(
         return {"rows": [], "reason": reason or "LakeTS not installed"}
 
     try:
+
         async def _load_histogram():
             tables = await _recent_chunk_tables(lb, minutes)
             relation = _readings_relation(tables)
@@ -1251,12 +1293,14 @@ async def get_lakets_histogram(
         bucket_idx = int(r["bucket_idx"])
         lower = min_v + width * bucket_idx
         upper = min_v + width * (bucket_idx + 1)
-        data.append({
-            "bucket_idx": bucket_idx,
-            "lower": round(lower, 4),
-            "upper": round(upper, 4),
-            "count": int(r["cnt"] or 0),
-        })
+        data.append(
+            {
+                "bucket_idx": bucket_idx,
+                "lower": round(lower, 4),
+                "upper": round(upper, 4),
+                "count": int(r["cnt"] or 0),
+            }
+        )
 
     return {"rows": data, "resolution": "1 min", "minutes": minutes}
 
@@ -1293,12 +1337,7 @@ async def get_streaming_metrics(
     if normalized_mode and normalized_mode not in _DBSQL_MODES:
         return JSONResponse(
             status_code=400,
-            content={
-                "error": (
-                    f"invalid mode {mode!r}; must be one of "
-                    f"{sorted(_DBSQL_MODES)}"
-                )
-            },
+            content={"error": (f"invalid mode {mode!r}; must be one of {sorted(_DBSQL_MODES)}")},
         )
 
     use_one_schema = False
@@ -1320,15 +1359,16 @@ async def get_streaming_metrics(
                 )
             if kind == "deployment":
                 use_one_schema = True
-                metrics_table = industry_catalog_service.industry_table(
-                    industry, "metrics"
-                )
+                metrics_table = industry_catalog_service.industry_table(industry, "metrics")
                 catalog_part = metrics_table.split(".")[0]
                 if not validate_catalog(catalog_part):
                     return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
             else:
                 catalog = await get_pipeline_catalog(
-                    state.db, state.db_available, pipeline_id, user_email,
+                    state.db,
+                    state.db_available,
+                    pipeline_id,
+                    user_email,
                     is_admin=is_admin,
                 )
                 if not catalog:
@@ -1344,11 +1384,16 @@ async def get_streaming_metrics(
     else:
         # Legacy path: resolve catalog from the pipeline row.
         catalog = await get_pipeline_catalog(
-            state.db, state.db_available, pipeline_id, user_email,
+            state.db,
+            state.db_available,
+            pipeline_id,
+            user_email,
             is_admin=is_admin,
         )
         if not catalog:
-            return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
+            return JSONResponse(
+                status_code=404, content={"error": "Pipeline not found or no UC catalog"}
+            )
         if not validate_catalog(catalog):
             return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
         # Legacy path uses the old per-catalog metrics table (JSON progress column).
@@ -1455,12 +1500,18 @@ async def get_streaming_metrics(
                 "last_batch": int(summary.get("last_batch", 0) or 0),
                 "avg_input_rps": round(float(summary.get("avg_input_rps", 0) or 0), 2),
                 "avg_processed_rps": round(float(summary.get("avg_processed_rps", 0) or 0), 2),
-                "avg_batch_duration_ms": round(float(summary.get("avg_batch_duration_ms", 0) or 0), 1),
+                "avg_batch_duration_ms": round(
+                    float(summary.get("avg_batch_duration_ms", 0) or 0), 1
+                ),
                 "total_input_rows": int(summary.get("total_input_rows", 0) or 0),
                 "avg_e2e_p50_ms": round(float(summary.get("avg_e2e_p50_ms", 0) or 0), 1),
                 "avg_e2e_p99_ms": round(float(summary.get("avg_e2e_p99_ms", 0) or 0), 1),
-                "avg_processing_p50_ms": round(float(summary.get("avg_processing_p50_ms", 0) or 0), 1),
-                "avg_processing_p99_ms": round(float(summary.get("avg_processing_p99_ms", 0) or 0), 1),
+                "avg_processing_p50_ms": round(
+                    float(summary.get("avg_processing_p50_ms", 0) or 0), 1
+                ),
+                "avg_processing_p99_ms": round(
+                    float(summary.get("avg_processing_p99_ms", 0) or 0), 1
+                ),
                 "avg_queuing_p50_ms": round(float(summary.get("avg_queuing_p50_ms", 0) or 0), 1),
                 "avg_queuing_p99_ms": round(float(summary.get("avg_queuing_p99_ms", 0) or 0), 1),
             },
@@ -1473,7 +1524,10 @@ async def get_streaming_metrics(
 
 
 async def _resolve_zerobus_target(
-    state: AppState, pipeline_id: str, user_email: str, catalog: str,
+    state: AppState,
+    pipeline_id: str,
+    user_email: str,
+    catalog: str,
 ) -> str:
     """Resolve the fully-qualified target Delta table for a Zerobus pipeline.
 
@@ -1487,7 +1541,8 @@ async def _resolve_zerobus_target(
     try:
         row = await state.db.fetchrow(
             "SELECT source_config FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-            pipeline_id, user_email,
+            pipeline_id,
+            user_email,
         )
         if not row or row["source_config"] is None:
             return default_target
@@ -1502,9 +1557,7 @@ async def _resolve_zerobus_target(
             if isinstance(table_name, str) and table_name.strip():
                 return table_name.strip()
     except Exception as exc:
-        logger.warning(
-            "Failed to resolve zerobus target for pipeline %s: %s", pipeline_id, exc
-        )
+        logger.warning("Failed to resolve zerobus target for pipeline %s: %s", pipeline_id, exc)
     return default_target
 
 
@@ -1563,9 +1616,9 @@ async def _is_industry_deployment(
               AND pd.job_id IS NOT NULL
               AND pd.status NOT IN ('pending', 'deploying', 'failed')
             """,
-            deployment_id,
-            industry,
-            mode,
+                deployment_id,
+                industry,
+                mode,
             )
     except Exception as exc:
         logger.warning("Failed to validate industry deployment %s: %s", deployment_id, exc)
@@ -1659,9 +1712,7 @@ async def get_zerobus_metrics(
     returned.
     """
     if industry:
-        kind = await _authorize_mode_pipeline(
-            state, pipeline_id, industry, "zerobus", user_email
-        )
+        kind = await _authorize_mode_pipeline(state, pipeline_id, industry, "zerobus", user_email)
         if kind is None:
             return JSONResponse(
                 status_code=404,
@@ -1676,9 +1727,7 @@ async def get_zerobus_metrics(
                     status_code=404,
                     content={"error": "Pipeline not found or no UC catalog"},
                 )
-            target_table = await _resolve_zerobus_target(
-                state, pipeline_id, user_email, catalog
-            )
+            target_table = await _resolve_zerobus_target(state, pipeline_id, user_email, catalog)
         else:
             try:
                 target_table = industry_catalog_service.industry_table(industry, "zerobus")
@@ -1686,17 +1735,13 @@ async def get_zerobus_metrics(
                 return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
             catalog = target_table.split(".", 1)[0]
     else:
-        catalog = await get_pipeline_catalog(
-            state.db, state.db_available, pipeline_id, user_email
-        )
+        catalog = await get_pipeline_catalog(state.db, state.db_available, pipeline_id, user_email)
         if not catalog:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Pipeline not found or no UC catalog"},
             )
-        target_table = await _resolve_zerobus_target(
-            state, pipeline_id, user_email, catalog
-        )
+        target_table = await _resolve_zerobus_target(state, pipeline_id, user_email, catalog)
     if not validate_catalog(catalog):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
 
@@ -1870,7 +1915,9 @@ def _is_missing_table_error(exc: Exception) -> bool:
 
 
 async def _resolve_dbsql_mode(
-    state: AppState, pipeline_id: str, mode: str | None,
+    state: AppState,
+    pipeline_id: str,
+    mode: str | None,
 ) -> str:
     """Resolve the streaming mode (realtime/microbatch/zerobus) for a dashboard query.
 
@@ -1895,7 +1942,8 @@ async def _resolve_dbsql_mode(
         except Exception as exc:
             logger.warning(
                 "dbsql-timeseries: mode inference lookup failed for pipeline %s: %s",
-                pipeline_id, exc,
+                pipeline_id,
+                exc,
             )
             row = None
         if row:
@@ -1970,10 +2018,16 @@ async def get_dbsql_timeseries(
             )
         if kind == "legacy":
             catalog = await get_pipeline_catalog(
-                state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
+                state.db,
+                state.db_available,
+                pipeline_id,
+                user_email,
+                is_admin=is_admin,
             )
             if not catalog:
-                return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
+                return JSONResponse(
+                    status_code=404, content={"error": "Pipeline not found or no UC catalog"}
+                )
             if not validate_catalog(catalog):
                 return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
             table = f"{catalog}.{_LEGACY_MODE_TABLES[resolved_mode]}"
@@ -1986,9 +2040,7 @@ async def get_dbsql_timeseries(
                         schema=industry_catalog_service.uc_schema_name(),
                     )
                 else:
-                    table = industry_catalog_service.industry_table(
-                        industry, resolved_mode
-                    )
+                    table = industry_catalog_service.industry_table(industry, resolved_mode)
             except (ValueError, RuntimeError) as exc:
                 return JSONResponse(status_code=400, content={"error": f"Invalid industry: {exc}"})
             catalog_part = table.split(".")[0]
@@ -1996,10 +2048,16 @@ async def get_dbsql_timeseries(
                 return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
     else:
         catalog = await get_pipeline_catalog(
-            state.db, state.db_available, pipeline_id, user_email, is_admin=is_admin,
+            state.db,
+            state.db_available,
+            pipeline_id,
+            user_email,
+            is_admin=is_admin,
         )
         if not catalog:
-            return JSONResponse(status_code=404, content={"error": "Pipeline not found or no UC catalog"})
+            return JSONResponse(
+                status_code=404, content={"error": "Pipeline not found or no UC catalog"}
+            )
         if not validate_catalog(catalog):
             return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
         table = f"{catalog}.{_LEGACY_MODE_TABLES[resolved_mode]}"
@@ -2025,9 +2083,7 @@ async def get_dbsql_timeseries(
     sql_table = sql_fqn(*table.split("."))
 
     try:
-        chart_filters = [
-            f"event_time >= TIMESTAMPADD(MINUTE, -{minutes}, CURRENT_TIMESTAMP())"
-        ]
+        chart_filters = [f"event_time >= TIMESTAMPADD(MINUTE, -{minutes}, CURRENT_TIMESTAMP())"]
         if industry and resolved_mode == "realtime":
             safe_industry = industry.replace("'", "''")
             chart_filters.extend(
@@ -2097,7 +2153,8 @@ async def get_dbsql_timeseries(
         if _is_missing_table_error(exc):
             logger.info(
                 "DBSQL timeseries: %s not provisioned/populated yet for pipeline %s — returning empty",
-                table, pipeline_id,
+                table,
+                pipeline_id,
             )
             return empty_payload
         logger.warning("DBSQL timeseries query failed for pipeline %s: %s", pipeline_id, exc)

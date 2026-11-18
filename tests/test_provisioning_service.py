@@ -30,20 +30,14 @@ def _mock_ws_client() -> MagicMock:
     """Return a WorkspaceClient mock with postgres + current_user wired."""
     w = MagicMock()
     w.current_user = MagicMock()
-    w.current_user.me = MagicMock(
-        return_value=MagicMock(user_name="app@sp.example.com")
-    )
+    w.current_user.me = MagicMock(return_value=MagicMock(user_name="app@sp.example.com"))
     w.postgres = MagicMock()
     endpoint = MagicMock()
     endpoint.status.hosts.host = "pg.example.com"
     w.postgres.get_endpoint = MagicMock(return_value=endpoint)
-    w.postgres.generate_database_credential = MagicMock(
-        return_value=MagicMock(token="oauth-token")
-    )
+    w.postgres.generate_database_credential = MagicMock(return_value=MagicMock(token="oauth-token"))
     w.postgres.create_role = MagicMock(return_value=None)
-    w.postgres.list_endpoints = MagicMock(
-        return_value=[MagicMock(name=ENDPOINT_NAME)]
-    )
+    w.postgres.list_endpoints = MagicMock(return_value=[MagicMock(name=ENDPOINT_NAME)])
     return w
 
 
@@ -69,10 +63,15 @@ class TestProvisionLakebaseRoleOAuth:
         w = _mock_ws_client()
         conn = _stub_conn()
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             results = await provisioning_service.provision_lakebase_role(
                 sp_client_id=SP_CLIENT_ID,
@@ -92,6 +91,7 @@ class TestProvisionLakebaseRoleOAuth:
             RoleAuthMethod,
             RoleIdentityType,
         )
+
         assert role_spec.auth_method == RoleAuthMethod.LAKEBASE_OAUTH_V1
         assert role_spec.identity_type == RoleIdentityType.SERVICE_PRINCIPAL
         assert role_spec.postgres_role == SP_CLIENT_ID
@@ -106,10 +106,15 @@ class TestProvisionLakebaseRoleOAuth:
         w = _mock_ws_client()
         conn = _stub_conn()
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             results = await provisioning_service.provision_lakebase_role(
                 sp_client_id=SP_CLIENT_ID,
@@ -121,7 +126,8 @@ class TestProvisionLakebaseRoleOAuth:
             )
 
         executed = [
-            call.args[0] for call in conn.execute.await_args_list
+            call.args[0]
+            for call in conn.execute.await_args_list
             if call.args and isinstance(call.args[0], str)
         ]
         dml_grants = [s for s in executed if "INSERT, SELECT, UPDATE, DELETE" in s]
@@ -129,9 +135,7 @@ class TestProvisionLakebaseRoleOAuth:
         assert any("metrics" in s for s in dml_grants)
         # Both grants reported as created.
         created_dml = [
-            r for r in results
-            if r["resource"].startswith("GRANT DML")
-            and r["status"] == "created"
+            r for r in results if r["resource"].startswith("GRANT DML") and r["status"] == "created"
         ]
         assert len(created_dml) == 2
 
@@ -142,10 +146,15 @@ class TestProvisionLakebaseRoleOAuth:
         conn = _stub_conn()
 
         # First run — everything succeeds.
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             first = await provisioning_service.provision_lakebase_role(
                 sp_client_id=SP_CLIENT_ID,
@@ -159,15 +168,18 @@ class TestProvisionLakebaseRoleOAuth:
 
         # Second run — create_role raises "already exists"; grants no-op.
         w2 = _mock_ws_client()
-        w2.postgres.create_role = MagicMock(
-            side_effect=Exception("role already exists")
-        )
+        w2.postgres.create_role = MagicMock(side_effect=Exception("role already exists"))
         conn2 = _stub_conn()
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w2,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn2),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w2,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn2),
+            ),
         ):
             second = await provisioning_service.provision_lakebase_role(
                 sp_client_id=SP_CLIENT_ID,
@@ -196,10 +208,15 @@ class TestProvisionLakebaseRoleOAuth:
 
         conn.execute = AsyncMock(side_effect=_execute)
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             results = await provisioning_service.provision_lakebase_role(
                 sp_client_id=SP_CLIENT_ID,
@@ -210,15 +227,13 @@ class TestProvisionLakebaseRoleOAuth:
                 sink_tables=("sensor_readings",),
             )
 
-        lakets_entry = next(
-            r for r in results if "SCHEMA lakets" in r["resource"]
-        )
+        lakets_entry = next(r for r in results if "SCHEMA lakets" in r["resource"])
         assert lakets_entry["status"] == "skipped"
         # The DML grant on the sink table still ran.
         dml_entry = next(
-            r for r in results
-            if r["resource"].startswith("GRANT DML")
-            and "sensor_readings" in r["resource"]
+            r
+            for r in results
+            if r["resource"].startswith("GRANT DML") and "sensor_readings" in r["resource"]
         )
         assert dml_entry["status"] == "created"
 
@@ -281,10 +296,9 @@ class TestEnsureStreamingSP:
     @pytest.mark.asyncio
     async def test_fresh_create_returns_client_id_and_grants(self) -> None:
         w = _make_sp_ws(existing_keys=[])
-        with patch(
-            "services.provisioning_service.grant_app_can_use"
-        ) as grant_mock, patch(
-            "services.provisioning_service._app_name", return_value="iot-digital-twin"
+        with (
+            patch("services.provisioning_service.grant_app_can_use") as grant_mock,
+            patch("services.provisioning_service._app_name", return_value="iot-digital-twin"),
         ):
             out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
 
@@ -297,8 +311,7 @@ class TestEnsureStreamingSP:
         grant_mock.assert_called_once()
         assert grant_mock.call_args.args[2] == "fresh-app-id"
         assert any(
-            r.get("resource") == "App access (CAN_USE) for SP"
-            and r.get("status") == "granted"
+            r.get("resource") == "App access (CAN_USE) for SP" and r.get("status") == "granted"
             for r in out["results"]
         )
 
@@ -308,10 +321,9 @@ class TestEnsureStreamingSP:
             existing_keys=["zerobus-client-id", "zerobus-client-secret"],
             sp_app_id="existing-app-id",
         )
-        with patch(
-            "services.provisioning_service.grant_app_can_use"
-        ) as grant_mock, patch(
-            "services.provisioning_service._app_name", return_value="iot-digital-twin"
+        with (
+            patch("services.provisioning_service.grant_app_can_use") as grant_mock,
+            patch("services.provisioning_service._app_name", return_value="iot-digital-twin"),
         ):
             out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
 
@@ -325,10 +337,9 @@ class TestEnsureStreamingSP:
     async def test_permission_error_is_skipped_not_fatal(self) -> None:
         w = _make_sp_ws(existing_keys=[])
         w.service_principals.create.side_effect = Exception("not authorized")
-        with patch(
-            "services.provisioning_service.grant_app_can_use"
-        ), patch(
-            "services.provisioning_service._app_name", return_value="iot-digital-twin"
+        with (
+            patch("services.provisioning_service.grant_app_can_use"),
+            patch("services.provisioning_service._app_name", return_value="iot-digital-twin"),
         ):
             out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
 
@@ -350,10 +361,15 @@ class TestProvisionLakebaseRoleBackCompat:
         w = _mock_ws_client()
         conn = _stub_conn()
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             results = await provisioning_service.provision_lakebase_role(
                 sp_client_id=SP_CLIENT_ID,
@@ -382,10 +398,15 @@ class TestInstallLaketsIfMissing:
         conn = _stub_conn()
         conn.fetchval = AsyncMock(return_value="0.1.0")
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             result = await lakets_service.install_lakets_if_missing(
                 endpoint_name=ENDPOINT_NAME,
@@ -399,7 +420,9 @@ class TestInstallLaketsIfMissing:
 
     @pytest.mark.asyncio
     async def test_install_lakets_runs_sql_when_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sql_file = tmp_path / "lakets.sql"
         sql_file.write_text("-- LakeTS body\n")
@@ -415,10 +438,15 @@ class TestInstallLaketsIfMissing:
             ]
         )
 
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w,
-        ), patch(
-            "asyncpg.connect", new=AsyncMock(return_value=conn),
+        with (
+            patch(
+                "databricks.sdk.WorkspaceClient",
+                return_value=w,
+            ),
+            patch(
+                "asyncpg.connect",
+                new=AsyncMock(return_value=conn),
+            ),
         ):
             result = await lakets_service.install_lakets_if_missing(
                 endpoint_name=ENDPOINT_NAME,
@@ -428,10 +456,7 @@ class TestInstallLaketsIfMissing:
         assert result["status"] == "created"
         assert result["version"] == "0.1.3"
         # The SQL body was executed.
-        executed = [
-            call.args[0] for call in conn.execute.await_args_list
-            if call.args
-        ]
+        executed = [call.args[0] for call in conn.execute.await_args_list if call.args]
         assert any("LakeTS body" in s for s in executed)
 
 

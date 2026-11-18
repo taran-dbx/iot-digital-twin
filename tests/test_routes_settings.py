@@ -62,13 +62,16 @@ async def _post_provision_secrets(w: MagicMock, scope: str = "iot_scope") -> dic
     app = _build_app()
     transport = ASGITransport(app=app)
     body = {"secrets": {"scope": scope}}
-    with patch("routes.settings.provision_secrets_scope",
-               AsyncMock(return_value={"resource": "Secret scope", "status": "created"})), \
-         patch("routes.settings.validate_secrets",
-               AsyncMock(return_value={"status": "pass"})), \
-         patch("databricks.sdk.WorkspaceClient", return_value=w), \
-         patch("routes.settings.grant_app_can_use") as grant_mock, \
-         patch("routes.settings._app_name", return_value="iot-digital-twin"):
+    with (
+        patch(
+            "routes.settings.provision_secrets_scope",
+            AsyncMock(return_value={"resource": "Secret scope", "status": "created"}),
+        ),
+        patch("routes.settings.validate_secrets", AsyncMock(return_value={"status": "pass"})),
+        patch("databricks.sdk.WorkspaceClient", return_value=w),
+        patch("routes.settings.grant_app_can_use") as grant_mock,
+        patch("routes.settings._app_name", return_value="iot-digital-twin"),
+    ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/settings/provision/secrets", json=body)
         return {"resp": resp, "grant": grant_mock}
@@ -92,8 +95,7 @@ class TestProvisionSecretsAppGrant:
 
         provisioned = out["resp"].json()["provisioned"]
         assert any(
-            p.get("resource") == "App access (CAN_USE) for SP"
-            and p.get("status") == "granted"
+            p.get("resource") == "App access (CAN_USE) for SP" and p.get("status") == "granted"
             for p in provisioned
         )
 
@@ -114,7 +116,7 @@ class TestProvisionSecretsAppGrant:
         w.service_principals.list.assert_called_once()
         _, kwargs = w.service_principals.list.call_args
         filt = kwargs.get("filter", "")
-        assert 'iot-sss-iot_scope' in filt
+        assert "iot-sss-iot_scope" in filt
 
         out["grant"].assert_called_once()
         args = out["grant"].call_args.args

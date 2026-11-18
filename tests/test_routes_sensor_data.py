@@ -72,16 +72,14 @@ class TestLaketsGapfill:
     async def test_lakets_not_installed_returns_reason(self) -> None:
         # fetchval raises — treated as "not installed".
         db = _mock_db()
-        db.fetchval = AsyncMock(
-            side_effect=Exception('relation "lakets._version" does not exist')
-        )
+        db.fetchval = AsyncMock(side_effect=Exception('relation "lakets._version" does not exist'))
         state = _state_with_db(db)
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakets/gapfill?minutes=30")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/gapfill?minutes=30")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -113,10 +111,8 @@ class TestLaketsGapfill:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/api/pipelines/pipe-1/lakets/gapfill?minutes=15"
-            )
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/gapfill?minutes=15")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -145,9 +141,7 @@ class TestLaketsGapfill:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
-                response = await client.get(
-                    "/api/pipelines/pipe-1/lakets/gapfill?minutes=30"
-                )
+                response = await client.get("/api/pipelines/pipe-1/lakets/gapfill?minutes=30")
 
         assert response.status_code == 200
         query = " ".join(db.fetch.await_args.args[0].lower().split())
@@ -175,9 +169,10 @@ class TestLaketsGapfill:
         db.fetch = AsyncMock(side_effect=_slow)
         state = _state_with_db(db)
         app = _build_app_with_state(state)
-        with patch(
-            "routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01
-        ), _patch_pipeline_lakebase(db):
+        with (
+            patch("routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
+            _patch_pipeline_lakebase(db),
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -205,8 +200,8 @@ class TestLaketsRate:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
 
         assert resp.status_code == 200
         rate_sql = db.fetch.await_args.args[0]
@@ -241,8 +236,8 @@ class TestLaketsRate:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
 
         assert resp.status_code == 200
         assert resp.json()["rows"] == [
@@ -266,8 +261,8 @@ class TestLaketsRate:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -286,8 +281,8 @@ class TestLaketsRate:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/rate?minutes=30")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -311,10 +306,10 @@ class TestLaketsHistogram:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/api/pipelines/pipe-1/lakets/histogram?sensor=temp-01&minutes=30"
-            )
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/pipe-1/lakets/histogram?sensor=temp-01&minutes=30"
+                )
 
         assert resp.status_code == 200
         body = resp.json()
@@ -334,11 +329,10 @@ class TestLaketsHistogram:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/api/pipelines/pipe-1/lakets/histogram"
-                "?sensor=temp-01&minutes=30&buckets=20"
-            )
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get(
+                    "/api/pipelines/pipe-1/lakets/histogram?sensor=temp-01&minutes=30&buckets=20"
+                )
 
         assert resp.status_code == 200
         body = resp.json()
@@ -361,10 +355,8 @@ class TestLaketsHistogram:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/api/pipelines/pipe-1/lakets/histogram?minutes=30"
-            )
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakets/histogram?minutes=30")
 
         assert resp.status_code == 422
 
@@ -381,8 +373,8 @@ class TestLakebasePerf:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(None):  # lb resolves to None
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -409,8 +401,8 @@ class TestLakebasePerf:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -442,8 +434,8 @@ class TestLakebasePerf:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -483,8 +475,8 @@ class TestLakebasePerf:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with _patch_pipeline_lakebase(db):
-          async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.get("/api/pipelines/pipe-1/lakebase-perf?minutes=5")
 
         assert resp.status_code == 500
         assert "error" in resp.json()
@@ -501,11 +493,14 @@ class TestLakebasePerf:
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)
-        ) as mock_industry, patch(
-            "routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=None)
-        ) as mock_pipeline:
+        with (
+            patch(
+                "routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)
+            ) as mock_industry,
+            patch(
+                "routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=None)
+            ) as mock_pipeline,
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/pipelines/pipe-1/lakebase-perf?minutes=5&industry=pharmaceutical"
@@ -595,9 +590,10 @@ class TestLakebasePerf:
         db.fetch = AsyncMock(side_effect=_slow)
         state = _state_with_db(db)
         app = _build_app_with_state(state)
-        with patch(
-            "routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01
-        ), _patch_pipeline_lakebase(db):
+        with (
+            patch("routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
+            _patch_pipeline_lakebase(db),
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -662,9 +658,7 @@ def _patch_zerobus_deps(
         patch(
             "routes.sensor_data._resolve_zerobus_target",
             AsyncMock(
-                return_value=(source_config or {})
-                .get("zerobus", {})
-                .get("table_name")
+                return_value=(source_config or {}).get("zerobus", {}).get("table_name")
                 or f"{catalog}.raw.iot_sensor_data"
             ),
         ),
@@ -683,8 +677,7 @@ class TestZerobusMetrics:
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/api/pipelines/not-a-deployment/zerobus-metrics"
-                "?minutes=60&industry=pharmaceutical"
+                "/api/pipelines/not-a-deployment/zerobus-metrics?minutes=60&industry=pharmaceutical"
             )
 
         assert resp.status_code == 404
@@ -699,16 +692,17 @@ class TestZerobusMetrics:
         transport = ASGITransport(app=app)
         target = "catalog.schema.pharmaceutical_zerobus"
 
-        with patch(
-            "routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
-        ), patch(
-            "routes.sensor_data.industry_catalog_service.industry_table",
-            MagicMock(return_value=target),
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data.execute_dbsql",
-            AsyncMock(return_value={"columns": [], "data": [], "row_count": 0}),
+        with (
+            patch("routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)),
+            patch(
+                "routes.sensor_data.industry_catalog_service.industry_table",
+                MagicMock(return_value=target),
+            ),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data.execute_dbsql",
+                AsyncMock(return_value={"columns": [], "data": [], "row_count": 0}),
+            ),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
@@ -726,13 +720,9 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value=None)
-        ):
+        with patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value=None)):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 404
 
@@ -783,20 +773,17 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+            ),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -816,8 +803,9 @@ class TestZerobusMetrics:
         assert {"t", "records_per_min"}.issubset(body["series"][0].keys())
         assert body["series"][0]["records_per_min"] == 120.0
         assert body["series"][1]["records_per_min"] == 240.0
-        assert "date_trunc('minute', now()) - INTERVAL 1 MINUTE" in (
-            exec_mock.await_args_list[0].args[0]
+        assert (
+            "date_trunc('minute', now()) - INTERVAL 1 MINUTE"
+            in (exec_mock.await_args_list[0].args[0])
         )
         # Errors flattened from the stream errors array (capped at ~5).
         assert "transient ack timeout" in body["recent_errors"]
@@ -830,23 +818,25 @@ class TestZerobusMetrics:
         state.app_backend_db = _mock_db()
         target = "catalog.schema.pharmaceutical_zerobus"
         summary = {
-            "data": [{
-                "total_records": 600,
-                "total_bytes": 120000,
-                "last_commit_time": "2026-04-21T10:05:00.000+00:00",
-                "error_count": 0,
-                "current_records_per_min": 240,
-            }]
+            "data": [
+                {
+                    "total_records": 600,
+                    "total_bytes": 120000,
+                    "last_commit_time": "2026-04-21T10:05:00.000+00:00",
+                    "error_count": 0,
+                    "current_records_per_min": 240,
+                }
+            ]
         }
-        series = {
-            "data": [{"bucket": "2026-04-21T10:04:00.000+00:00", "records": 240}]
-        }
+        series = {"data": [{"bucket": "2026-04-21T10:04:00.000+00:00", "records": 240}]}
         stream = {
-            "data": [{
-                "opened_time": "2026-04-21T09:55:00.000+00:00",
-                "closed_time": None,
-                "errors": [],
-            }]
+            "data": [
+                {
+                    "opened_time": "2026-04-21T09:55:00.000+00:00",
+                    "closed_time": None,
+                    "errors": [],
+                }
+            ]
         }
         latest = {
             "data": [
@@ -872,15 +862,14 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
-        ), patch(
-            "routes.sensor_data.industry_catalog_service.industry_table",
-            MagicMock(return_value=target),
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)),
+            patch(
+                "routes.sensor_data.industry_catalog_service.industry_table",
+                MagicMock(return_value=target),
+            ),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
@@ -898,36 +887,33 @@ class TestZerobusMetrics:
         db = _mock_db()
         state = _state_with_db(db)
         summary = {
-            "data": [{
-                "total_records": 600,
-                "total_bytes": 120000,
-                "last_commit_time": "2026-04-21T09:55:00.000+00:00",
-                "error_count": 0,
-                "current_records_per_min": 0,
-            }]
+            "data": [
+                {
+                    "total_records": 600,
+                    "total_bytes": 120000,
+                    "last_commit_time": "2026-04-21T09:55:00.000+00:00",
+                    "error_count": 0,
+                    "current_records_per_min": 0,
+                }
+            ]
         }
-        old_series = {
-            "data": [{"bucket": "2026-04-21T09:55:00.000+00:00", "records": 240}]
-        }
+        old_series = {"data": [{"bucket": "2026-04-21T09:55:00.000+00:00", "records": 240}]}
         stream = {"data": [{"opened_time": "t0", "closed_time": None, "errors": []}]}
         exec_mock = AsyncMock(side_effect=[summary, old_series, stream])
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+            ),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 200
         assert resp.json()["records_per_min"] == 0
@@ -939,17 +925,17 @@ class TestZerobusMetrics:
         state = _state_with_db(db)
         state.app_backend_db = _mock_db()
         summary = {
-            "data": [{
-                "total_records": 600,
-                "total_bytes": 120000,
-                "last_commit_time": "2026-04-21T10:05:00.000+00:00",
-                "error_count": 0,
-                "current_records_per_min": 240,
-            }]
+            "data": [
+                {
+                    "total_records": 600,
+                    "total_bytes": 120000,
+                    "last_commit_time": "2026-04-21T10:05:00.000+00:00",
+                    "error_count": 0,
+                    "current_records_per_min": 240,
+                }
+            ]
         }
-        series = {
-            "data": [{"bucket": "2026-04-21T10:04:00.000+00:00", "records": 240}]
-        }
+        series = {"data": [{"bucket": "2026-04-21T10:04:00.000+00:00", "records": 240}]}
         stream = {"data": [{"opened_time": "t0", "closed_time": None, "errors": []}]}
         exec_mock = AsyncMock(
             side_effect=[summary, series, stream, Exception("Delta table unavailable")]
@@ -957,15 +943,14 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
-        ), patch(
-            "routes.sensor_data.industry_catalog_service.industry_table",
-            MagicMock(return_value="catalog.schema.pharmaceutical_zerobus"),
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)),
+            patch(
+                "routes.sensor_data.industry_catalog_service.industry_table",
+                MagicMock(return_value="catalog.schema.pharmaceutical_zerobus"),
+            ),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
@@ -985,7 +970,12 @@ class TestZerobusMetrics:
         ingest_summary = {
             "columns": ["total_records", "total_bytes", "last_commit_time", "error_count"],
             "data": [
-                {"total_records": 10, "total_bytes": 100, "last_commit_time": None, "error_count": 0}
+                {
+                    "total_records": 10,
+                    "total_bytes": 100,
+                    "last_commit_time": None,
+                    "error_count": 0,
+                }
             ],
             "row_count": 1,
         }
@@ -1005,20 +995,17 @@ class TestZerobusMetrics:
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+            ),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -1042,20 +1029,17 @@ class TestZerobusMetrics:
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.custom_schema.my_zerobus_table"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.custom_schema.my_zerobus_table"),
+            ),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=30"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=30")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -1076,20 +1060,17 @@ class TestZerobusMetrics:
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+            ),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -1117,20 +1098,17 @@ class TestZerobusMetrics:
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql", exec_mock
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+            ),
+            patch("routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -1146,18 +1124,16 @@ class TestZerobusMetrics:
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="")
-        ), patch(
-            "routes.sensor_data._resolve_zerobus_target",
-            AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+        with (
+            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
+            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="")),
+            patch(
+                "routes.sensor_data._resolve_zerobus_target",
+                AsyncMock(return_value="cat1.raw.iot_sensor_data"),
+            ),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipelines/pipe-1/zerobus-metrics?minutes=60"
-                )
+                resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
         assert resp.status_code == 400
 
@@ -1234,30 +1210,29 @@ class TestStreamingMetrics:
         empty_result = {"columns": [], "data": [], "row_count": 0}
         exec_mock = AsyncMock(side_effect=[empty_result, empty_result])
 
-        with patch(
-            "services.industry_catalog_service.industry_table",
-            MagicMock(return_value=logical_table),
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id",
-            AsyncMock(return_value="wh-1"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql",
-            exec_mock,
+        with (
+            patch(
+                "services.industry_catalog_service.industry_table",
+                MagicMock(return_value=logical_table),
+            ),
+            patch(
+                "routes.sensor_data.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch(
+                "routes.sensor_data.execute_dbsql",
+                exec_mock,
+            ),
         ):
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
-                    "/api/pipeline/pipe-1/streaming-metrics"
-                    "?industry=pharmaceutical&mode=realtime"
+                    "/api/pipeline/pipe-1/streaming-metrics?industry=pharmaceutical&mode=realtime"
                 )
 
         assert resp.status_code == 200
         assert resp.json()["table"] == logical_table
         assert exec_mock.await_count == 2
-        expected_from = (
-            "FROM `taran-interop`.rtm_lakets_zb.pharmaceutical_metrics"
-        )
+        expected_from = "FROM `taran-interop`.rtm_lakets_zb.pharmaceutical_metrics"
         assert expected_from in exec_mock.await_args_list[0].args[0]
         assert expected_from in exec_mock.await_args_list[1].args[0]
         assert f"FROM {logical_table}" not in exec_mock.await_args_list[0].args[0]
@@ -1281,6 +1256,7 @@ def _patch_dbsql_timeseries_deps(
 ):
     """Build the standard patch set for /api/pipeline/{id}/dbsql-timeseries tests."""
     import os
+
     exec_mock = (
         AsyncMock(side_effect=exec_side_effect)
         if exec_side_effect is not None
@@ -1318,8 +1294,7 @@ class TestDbsqlTimeseries:
         body = resp.json()
         assert body["mode"] == "realtime"
         expected_table = (
-            f"{_UC_CATALOG}.{_UC_SCHEMA}."
-            "lb__shadow_pharmaceutical_sensor_readings_history"
+            f"{_UC_CATALOG}.{_UC_SCHEMA}.lb__shadow_pharmaceutical_sensor_readings_history"
         )
         assert body["table"] == expected_table
         assert "pharmaceutical_realtime" not in body["table"]
@@ -1460,7 +1435,8 @@ class TestDbsqlTimeseries:
         assert "TIMESTAMPADD" not in latest_sql
 
     async def test_latest_timestamp_failure_does_not_fail_chart_c7265(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """[C7265][defect][regression] Log freshness failure and preserve chart."""
         db = _mock_db()
@@ -1477,9 +1453,7 @@ class TestDbsqlTimeseries:
         exec_mock.side_effect = [chart_result, Exception("latest warehouse timeout")]
         with caplog.at_level("WARNING", logger="iot_digital_twin.routes.sensor_data"):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                async with AsyncClient(
-                    transport=transport, base_url="http://test"
-                ) as client:
+                async with AsyncClient(transport=transport, base_url="http://test") as client:
                     resp = await client.get(
                         "/api/pipeline/pipe-1/dbsql-timeseries"
                         "?minutes=60&mode=realtime&industry=pharmaceutical"

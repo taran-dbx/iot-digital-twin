@@ -78,10 +78,13 @@ class TestGenieRoutes:
         """[C7502][regression] Start conversation returns ids immediately."""
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
-        with patch("routes.genie.genie_service.start_conversation", return_value={
-            "conversation_id": "c1",
-            "message_id": "m1",
-        }) as start:
+        with patch(
+            "routes.genie.genie_service.start_conversation",
+            return_value={
+                "conversation_id": "c1",
+                "message_id": "m1",
+            },
+        ) as start:
             resp = await genie_client.post(
                 "/api/genie/conversations",
                 json={
@@ -149,10 +152,13 @@ class TestGenieRoutes:
             "owner": "anonymous",
             "industry": "manufacturing",
         }
-        with patch("routes.genie.genie_service.create_message", return_value={
-            "conversation_id": "c1",
-            "message_id": "m2",
-        }):
+        with patch(
+            "routes.genie.genie_service.create_message",
+            return_value={
+                "conversation_id": "c1",
+                "message_id": "m2",
+            },
+        ):
             follow = await genie_client.post(
                 "/api/genie/conversations/c1/messages",
                 json={"industry": "manufacturing", "mode": "zerobus", "question": "next?"},
@@ -160,14 +166,17 @@ class TestGenieRoutes:
         assert follow.status_code == 200
         assert follow.json()["message_id"] == "m2"
 
-        with patch("routes.genie.genie_service.get_message", return_value={
-            "conversation_id": "c1",
-            "message_id": "m2",
-            "status": "COMPLETED",
-            "content": "Inspect coolant flow",
-            "attachments": [],
-            "error": None,
-        }):
+        with patch(
+            "routes.genie.genie_service.get_message",
+            return_value={
+                "conversation_id": "c1",
+                "message_id": "m2",
+                "status": "COMPLETED",
+                "content": "Inspect coolant flow",
+                "attachments": [],
+                "error": None,
+            },
+        ):
             status = await genie_client.get("/api/genie/conversations/c1/messages/m2")
         assert status.status_code == 200
         assert status.json()["status"] == "COMPLETED"

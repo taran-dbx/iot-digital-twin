@@ -109,7 +109,9 @@ async def run_simulator(state: AppState) -> None:
                     w = WorkspaceClient()
                     resp = w.secrets.get_secret(scope=zb_scope, key=zb_key)
                     zerobus_client_secret = base64.b64decode(resp.value).decode()
-                    logger.info("Zerobus client secret loaded from scope=%s key=%s", zb_scope, zb_key)
+                    logger.info(
+                        "Zerobus client secret loaded from scope=%s key=%s", zb_scope, zb_key
+                    )
 
             zerobus_sink = ZerobusSink(
                 server_endpoint=zerobus_endpoint,
@@ -125,7 +127,9 @@ async def run_simulator(state: AppState) -> None:
             sources["zerobus"].sink_config = zerobus_sink.sink_config
             sources["zerobus"]._sink_runner = sim._runners[-1]
             sources["zerobus"].status = "active"
-            logger.info("ZerobusSink enabled — endpoint=%s table=%s", zerobus_endpoint, zerobus_table)
+            logger.info(
+                "ZerobusSink enabled — endpoint=%s table=%s", zerobus_endpoint, zerobus_table
+            )
         except Exception as exc:
             sources["zerobus"].status = "error"
             sources["zerobus"].error = str(exc)[:500]
@@ -158,7 +162,10 @@ async def run_simulator(state: AppState) -> None:
             try:
                 await original_zerobus_write(records)
             except Exception as first_exc:
-                if "stream is closed" in str(first_exc).lower() or "before it's opened" in str(first_exc).lower():
+                if (
+                    "stream is closed" in str(first_exc).lower()
+                    or "before it's opened" in str(first_exc).lower()
+                ):
                     logger.warning("Zerobus stream dead — attempting reconnect: %s", first_exc)
                     async with _zb_reconnect_lock:
                         try:
@@ -183,13 +190,16 @@ async def run_simulator(state: AppState) -> None:
             sources["zerobus"].record_write(len(records), write_ms, e2e_ms)
             sensor_dicts = _records_to_dicts(records, "zerobus")
             if sensor_dicts:
-                await broadcast(state, {
-                    "type": "sensor_update",
-                    "source": "zerobus",
-                    "sensors": sensor_dicts,
-                    "write_latency_ms": round(write_ms, 1),
-                    "e2e_latency_ms": round(e2e_ms, 1),
-                })
+                await broadcast(
+                    state,
+                    {
+                        "type": "sensor_update",
+                        "source": "zerobus",
+                        "sensors": sensor_dicts,
+                        "write_latency_ms": round(write_ms, 1),
+                        "e2e_latency_ms": round(e2e_ms, 1),
+                    },
+                )
 
         zerobus_sink.write = tracked_zerobus_write  # type: ignore[assignment]
 
@@ -204,10 +214,13 @@ async def run_simulator(state: AppState) -> None:
         while True:
             await asyncio.sleep(3)
             try:
-                await broadcast(state, {
-                    "type": "source_status",
-                    "sources": {name: s.to_dict() for name, s in sources.items()},
-                })
+                await broadcast(
+                    state,
+                    {
+                        "type": "source_status",
+                        "sources": {name: s.to_dict() for name, s in sources.items()},
+                    },
+                )
             except Exception:
                 pass
 

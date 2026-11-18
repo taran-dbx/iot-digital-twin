@@ -24,6 +24,7 @@ pytestmark = pytest.mark.asyncio
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_manager() -> MagicMock:
     """Return a fully mocked AppBackendConnectionManager."""
     mgr = MagicMock()
@@ -76,6 +77,7 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 async def test_db_and_app_backend_db_are_same_manager(monkeypatch: pytest.MonkeyPatch) -> None:
     """state.db and state.app_backend_db must be the identical object."""

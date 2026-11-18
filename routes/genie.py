@@ -122,9 +122,7 @@ async def start_conversation(
         body: dict[str, Any] = await request.json()
         parsed = genie_service.validate_request(body)
         pack = await _pack_for(state, parsed)
-        result = await _sdk_call(
-            state, genie_service.start_conversation, parsed.question, pack
-        )
+        result = await _sdk_call(state, genie_service.start_conversation, parsed.question, pack)
         _remember(state, result["conversation_id"], user, parsed.industry)
         return result
     except (genie_service.GenieDisabledError, genie_service.GenieValidationError) as exc:
@@ -173,9 +171,7 @@ async def poll_message(
     try:
         await _require_conversations_authorized(state)
         _require_conversation(state, conversation_id, user)
-        return await _sdk_call(
-            state, genie_service.get_message, conversation_id, message_id
-        )
+        return await _sdk_call(state, genie_service.get_message, conversation_id, message_id)
     except (genie_service.GenieDisabledError, genie_service.GenieValidationError) as exc:
         raise _http_for(exc) from exc
     except HTTPException:

@@ -71,6 +71,7 @@ def _normalize_curated_industry(industry: str) -> str:
         raise HTTPException(status_code=400, detail="unknown industry")
     return normalized
 
+
 # Resource statuses that count as live/healthy in the ledger.
 _HEALTHY_STATUSES = {"active"}
 _IGNORED_STATUSES = {"deleted"}
@@ -111,9 +112,7 @@ def _validate_mode_configs(value: Any) -> dict[str, dict[str, int]]:
         if mode not in deployment_service.VALID_MODES:
             raise HTTPException(status_code=422, detail=f"unknown mode '{mode}'")
         if not isinstance(config, dict):
-            raise HTTPException(
-                status_code=422, detail=f"mode_configs.{mode} must be an object"
-            )
+            raise HTTPException(status_code=422, detail=f"mode_configs.{mode} must be an object")
         rate_hz = config.get("rate_hz")
         if (
             isinstance(rate_hz, bool)
@@ -124,8 +123,7 @@ def _validate_mode_configs(value: Any) -> dict[str, dict[str, int]]:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"mode_configs.{mode}.rate_hz must be between "
-                    f"{_MIN_RATE_HZ} and {_MAX_RATE_HZ}"
+                    f"mode_configs.{mode}.rate_hz must be between {_MIN_RATE_HZ} and {_MAX_RATE_HZ}"
                 ),
             )
         normalized[mode] = {"rate_hz": int(rate_hz)}
@@ -178,9 +176,7 @@ def _job_running_lookup(
                     "failure_stopped": True,
                 }
             else:
-                logger.error(
-                    "Fail-stop could not fully stop job %s: %s", job_id, stopped
-                )
+                logger.error("Fail-stop could not fully stop job %s: %s", job_id, stopped)
         return str(job_id), status
 
     # Each job status requires two network calls (latest run + task details).
@@ -202,9 +198,7 @@ def _job_running_lookup(
                     "tasks": status.get("tasks") or [],
                 }
             except Exception as exc:  # pragma: no cover - best-effort
-                logger.warning(
-                    "pipeline_status(%s) failed; state is unknown: %s", job_id, exc
-                )
+                logger.warning("pipeline_status(%s) failed; state is unknown: %s", job_id, exc)
     return lookup
 
 
@@ -218,9 +212,7 @@ async def _flowing_lookup(
 ) -> dict[str, bool]:
     """Return ``{mode: flowing}`` for the pipeline's deployed, RUNNING modes."""
     try:
-        return await pipeline_freshness.flowing_lookup(
-            state, setup, deployments, running
-        )
+        return await pipeline_freshness.flowing_lookup(state, setup, deployments, running)
     except Exception as exc:  # pragma: no cover - flowing_lookup is self-guarding
         logger.warning("freshness lookup failed; modes report not-flowing: %s", exc)
         return {}
@@ -229,9 +221,7 @@ async def _flowing_lookup(
 # ---------------------------------------------------------------------------
 # Health rollup (ledger-derived; live checks are Phase 4)
 # ---------------------------------------------------------------------------
-def _rollup_health(
-    setup: dict, deployments: list[dict], resources: list[dict]
-) -> dict:
+def _rollup_health(setup: dict, deployments: list[dict], resources: list[dict]) -> dict:
     """Compute an overall health verdict + counts from ledger + deployment rows.
 
     Draft setups report ``status='draft'`` (not startable / "coming soon").
@@ -284,6 +274,7 @@ async def _gather_api_health(setup: dict, deployments: list[dict]) -> dict | Non
     warehouse_id = setup.get("warehouse_id")
     run_sql = None
     if warehouse_id:
+
         async def run_sql(sql: str) -> dict:  # noqa: A001 - local binding
             return await dbsql_service.execute_dbsql(sql, warehouse_id)
 
@@ -305,9 +296,7 @@ async def _gather_api_health(setup: dict, deployments: list[dict]) -> dict | Non
 
 def _e2e_test_descriptor(industry: str, enabled_modes: list[str]) -> dict:
     """Describe the selected modes' opt-in Tier-2 end-to-end test."""
-    has_cluster_modes = bool(
-        set(enabled_modes or []) & {"realtime", "microbatch"}
-    )
+    has_cluster_modes = bool(set(enabled_modes or []) & {"realtime", "microbatch"})
     if has_cluster_modes:
         description = (
             "Opt-in end-to-end test: spins the interactive validation cluster "
@@ -391,16 +380,13 @@ async def create_or_update_setup(
                 detail="enabled_modes must contain at least one mode",
             )
         invalid_modes = [
-            mode
-            for mode in requested_modes
-            if mode not in deployment_service.VALID_MODES
+            mode for mode in requested_modes if mode not in deployment_service.VALID_MODES
         ]
         if invalid_modes:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"unknown modes {invalid_modes}; "
-                    f"expected {deployment_service.VALID_MODES}"
+                    f"unknown modes {invalid_modes}; expected {deployment_service.VALID_MODES}"
                 ),
             )
 
@@ -419,8 +405,7 @@ async def create_or_update_setup(
             )
 
     create_only = bool(body.get("create_only")) or (
-        body.get("intent") == "create"
-        or request.query_params.get("intent") == "create"
+        body.get("intent") == "create" or request.query_params.get("intent") == "create"
     )
 
     fields = {
@@ -451,21 +436,16 @@ async def create_or_update_setup(
             )
         requested_modes = fields.get("enabled_modes")
         if isinstance(requested_modes, list):
-            removed_modes = set(existing.get("enabled_modes") or []) - set(
-                requested_modes
-            )
+            removed_modes = set(existing.get("enabled_modes") or []) - set(requested_modes)
             if removed_modes:
                 raise HTTPException(
                     status_code=409,
                     detail=(
-                        "removing modes requires "
-                        f"PATCH /api/admin/pipelines/{existing['id']}/modes"
+                        f"removing modes requires PATCH /api/admin/pipelines/{existing['id']}/modes"
                     ),
                 )
         update_fields = {k: v for k, v in fields.items() if v is not None}
-        setup = await pipeline_setup_repo.update_setup(
-            db, existing["id"], **update_fields
-        )
+        setup = await pipeline_setup_repo.update_setup(db, existing["id"], **update_fields)
         state.invalidate_industry_runtime_cache()
         return {"created": False, "setup": setup}
 
@@ -531,9 +511,7 @@ async def update_mode_config(
                 detail="stop the pipeline before changing its frequency",
             )
 
-    updated = await pipeline_setup_repo.update_mode_config(
-        db, setup_id, mode, requested[mode]
-    )
+    updated = await pipeline_setup_repo.update_mode_config(db, setup_id, mode, requested[mode])
     state.invalidate_industry_runtime_cache()
     return {
         "mode": mode,
@@ -560,9 +538,7 @@ async def get_setup_for_industry(
 
     setup = await pipeline_setup_repo.get_setup_by_industry(db, industry)
     if setup is None:
-        raise HTTPException(
-            status_code=404, detail=f"no pipeline setup for industry '{industry}'"
-        )
+        raise HTTPException(status_code=404, detail=f"no pipeline setup for industry '{industry}'")
     if setup.get("industry") != industry:
         raise HTTPException(
             status_code=409,
@@ -570,16 +546,12 @@ async def get_setup_for_industry(
         )
 
     deployments = await deployment_repo.list_deployments(db, setup["id"])
-    running = await asyncio.to_thread(
-        _job_running_lookup, deployments, reconcile_failures=False
-    )
+    running = await asyncio.to_thread(_job_running_lookup, deployments, reconcile_failures=False)
     flowing = await _flowing_lookup(state, setup, deployments, running)
     return {
         "setup": setup,
         "deployments": deployments,
-        "pipeline": pipeline_view.build_pipeline_view(
-            setup, deployments, running, flowing
-        ),
+        "pipeline": pipeline_view.build_pipeline_view(setup, deployments, running, flowing),
     }
 
 
@@ -608,25 +580,17 @@ async def update_pipeline_modes(
         body = {}
     requested = body.get("enabled_modes")
     if not isinstance(requested, list) or not requested:
-        raise HTTPException(
-            status_code=422, detail="enabled_modes must contain at least one mode"
-        )
-    invalid = [
-        mode for mode in requested if mode not in deployment_service.VALID_MODES
-    ]
+        raise HTTPException(status_code=422, detail="enabled_modes must contain at least one mode")
+    invalid = [mode for mode in requested if mode not in deployment_service.VALID_MODES]
     if invalid:
         raise HTTPException(
             status_code=422,
             detail=f"unknown modes {invalid}; expected {deployment_service.VALID_MODES}",
         )
 
-    desired = [
-        mode for mode in validation_state_machine.MODE_ORDER if mode in requested
-    ]
+    desired = [mode for mode in validation_state_machine.MODE_ORDER if mode in requested]
     configured = setup.get("enabled_modes") or []
-    current = [
-        mode for mode in validation_state_machine.MODE_ORDER if mode in configured
-    ]
+    current = [mode for mode in validation_state_machine.MODE_ORDER if mode in configured]
     added = [mode for mode in desired if mode not in current]
     removed = [mode for mode in current if mode not in desired]
     if not added and not removed:
@@ -646,12 +610,8 @@ async def update_pipeline_modes(
         )
 
     deployments = await deployment_repo.list_deployments(db, setup_id)
-    dep_by_mode = {
-        deployment.get("mode"): deployment for deployment in deployments
-    }
-    resources = (
-        await resource_ledger.list_resources(db, setup_id) if removed else []
-    )
+    dep_by_mode = {deployment.get("mode"): deployment for deployment in deployments}
+    resources = await resource_ledger.list_resources(db, setup_id) if removed else []
 
     working_modes = list(current)
     working_state = setup.get("validation_state") or {}
@@ -666,11 +626,7 @@ async def update_pipeline_modes(
                 if str(resource.get("deployment_id")) == str(deployment_id)
             ]
             job_resource = next(
-                (
-                    resource
-                    for resource in attached
-                    if resource.get("resource_type") == "job"
-                ),
+                (resource for resource in attached if resource.get("resource_type") == "job"),
                 None,
             )
             job_id = deployment.get("job_id") or (
@@ -696,24 +652,18 @@ async def update_pipeline_modes(
                     ) from exc
             await deployment_repo.delete_deployment(db, deployment_id)
             for resource in attached:
-                await resource_ledger.mark_resource_status(
-                    db, resource["id"], "deleted"
-                )
+                await resource_ledger.mark_resource_status(db, resource["id"], "deleted")
 
         working_modes.remove(mode)
         update_fields: dict[str, Any] = {"enabled_modes": list(working_modes)}
         if working_state.get("sequence"):
-            working_state = validation_state_machine.reconcile_modes(
-                working_state, working_modes
-            )
+            working_state = validation_state_machine.reconcile_modes(working_state, working_modes)
             update_fields["validation_state"] = working_state
         await pipeline_setup_repo.update_setup(db, setup_id, **update_fields)
 
     update_fields: dict[str, Any] = {"enabled_modes": desired}
     if working_state.get("sequence"):
-        working_state = validation_state_machine.reconcile_modes(
-            working_state, desired
-        )
+        working_state = validation_state_machine.reconcile_modes(working_state, desired)
         update_fields["validation_state"] = working_state
     updated = await pipeline_setup_repo.update_setup(db, setup_id, **update_fields)
     state.invalidate_industry_runtime_cache()
@@ -799,8 +749,7 @@ async def _list_pipeline_items(
 
     deployment_rows = await asyncio.gather(*(list_deployments(setup) for setup in setups))
     all_deployments = {
-        setup["id"]: deployments
-        for setup, deployments in zip(setups, deployment_rows, strict=True)
+        setup["id"]: deployments for setup, deployments in zip(setups, deployment_rows, strict=True)
     }
     combined: list[dict] = []
     for deployments in deployment_rows:
@@ -884,9 +833,7 @@ def _public_runtime_payload(items: list[dict]) -> dict:
     }
 
 
-async def _refresh_industry_runtime_cache(
-    state: AppState, generation: int
-) -> dict:
+async def _refresh_industry_runtime_cache(state: AppState, generation: int) -> dict:
     items = await _list_pipeline_items(state, include_resources=False)
     payload = _public_runtime_payload(items)
     if generation == state.industry_runtime_cache_generation:
@@ -974,9 +921,7 @@ async def list_industry_runtime(state: AppState = Depends(get_app_state)):
 async def list_pipelines(request: Request, state: AppState = Depends(get_app_state)):
     """Return every setup with its live contract and ledger health rollup."""
     _require_admin(request)
-    items = await _list_pipeline_items(
-        state, include_resources=True, reconcile_failures=False
-    )
+    items = await _list_pipeline_items(state, include_resources=True, reconcile_failures=False)
     return {"pipelines": items}
 
 
@@ -1012,9 +957,7 @@ async def pipeline_health(
 
     deployments = await deployment_repo.list_deployments(db, setup_id)
     resources = await resource_ledger.list_resources(db, setup_id)
-    running = await asyncio.to_thread(
-        _job_running_lookup, deployments, reconcile_failures=False
-    )
+    running = await asyncio.to_thread(_job_running_lookup, deployments, reconcile_failures=False)
     flowing = await _flowing_lookup(state, setup, deployments, running)
 
     view = pipeline_view.build_pipeline_view(setup, deployments, running, flowing)
@@ -1032,8 +975,7 @@ async def pipeline_health(
         ),
         "validation_passed": bool(setup.get("enabled_modes"))
         and all(
-            pipeline_view.gate_open(setup, mode)
-            for mode in (setup.get("enabled_modes") or [])
+            pipeline_view.gate_open(setup, mode) for mode in (setup.get("enabled_modes") or [])
         ),
     }
 

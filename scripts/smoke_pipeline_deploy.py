@@ -40,8 +40,7 @@ DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
 TABLE = os.getenv("PG_TABLE", "sensor_readings")
 LAKETS_SQL_PATH = os.getenv(
     "LAKETS_SQL_PATH",
-    "/Users/taranpreetsingh.grover/Documents/Claude Projects/"
-    "Lakebase/timeseries/dist/lakets.sql",
+    "/Users/taranpreetsingh.grover/Documents/Claude Projects/Lakebase/timeseries/dist/lakets.sql",
 )
 
 
@@ -99,8 +98,7 @@ async def _inspect_registries() -> None:
             "FROM lakets._chronotable_registry ORDER BY id"
         )
         policies = await conn.fetch(
-            "SELECT policy_type, config, last_run_at "
-            "FROM lakets._policy_registry ORDER BY id"
+            "SELECT policy_type, config, last_run_at FROM lakets._policy_registry ORDER BY id"
         )
     finally:
         await conn.close()

@@ -75,7 +75,9 @@ class AppBackendConnectionManager(LakebaseConnectionManager):
         )
         logger.info(
             "app-backend Lakebase pool created — host=%s db=%s user=%s",
-            self._pg_host, self._pg_database, self._pg_user,
+            self._pg_host,
+            self._pg_database,
+            self._pg_user,
         )
         import asyncio
 

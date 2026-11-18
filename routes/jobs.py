@@ -21,6 +21,7 @@ async def get_job_status(job_id: int):
     """
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
 
         def _extract_task_states(run) -> dict[str, dict] | None:
@@ -43,7 +44,9 @@ async def get_job_status(job_id: int):
             latest = runs[0]
             state = latest.state
             resp = {
-                "state": state.life_cycle_state.value if state and state.life_cycle_state else "UNKNOWN",
+                "state": state.life_cycle_state.value
+                if state and state.life_cycle_state
+                else "UNKNOWN",
                 "run_id": latest.run_id,
                 "state_message": state.state_message if state else "",
             }

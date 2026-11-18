@@ -214,14 +214,18 @@ class TestToDict:
 
     def test_includes_config_when_sink_config_present(self) -> None:
         m = SourceMetrics("ws", "WS")
-        m.sink_config = type("C", (), {
-            "rate_hz": 10,
-            "batch_size": 50,
-            "max_buffer_size": 1000,
-            "backpressure": True,
-            "retry_count": 3,
-            "retry_delay_s": 1.0,
-        })()
+        m.sink_config = type(
+            "C",
+            (),
+            {
+                "rate_hz": 10,
+                "batch_size": 50,
+                "max_buffer_size": 1000,
+                "backpressure": True,
+                "retry_count": 3,
+                "retry_delay_s": 1.0,
+            },
+        )()
         d = m.to_dict()
         assert "config" in d
         assert d["config"]["rate_hz"] == 10

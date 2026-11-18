@@ -33,12 +33,10 @@ import pytest
 from models import sensor_schema as ss
 
 NOTEBOOK_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client" / "src" / "lib" / "notebook-template.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "notebook-template.ts"
 )
 DEPLOY_CONFIG_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client" / "src" / "lib" / "industry-deploy-config.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "industry-deploy-config.ts"
 )
 
 pytestmark = pytest.mark.skipif(
@@ -96,7 +94,7 @@ def _lakebase_writer_block() -> str:
 class TestKafkaRead:
     def test_uses_service_credential(self) -> None:
         block = _kafka_read_template()
-        assert 'databricks.serviceCredential' in block
+        assert "databricks.serviceCredential" in block
 
     def test_no_sasl_or_security_protocol(self) -> None:
         # MSK-IAM is handled by the UC service credential; sasl/security.protocol
@@ -140,14 +138,8 @@ class TestRealtimeWriter:
     def test_checkpoint_uses_configured_shared_uc_volume_c7216(self) -> None:
         """Production checkpoints must use the shared UC schema [C7216][defect]."""
         text = DEPLOY_CONFIG_TS.read_text()
-        assert (
-            "checkpointLocation(ucCatalog, ucSchema, industry, mode)"
-            in text
-        )
-        assert (
-            "/Volumes/${catalog}/${schema}/${CHECKPOINT_VOLUME}/${industry}/${suffix}"
-            in text
-        )
+        assert "checkpointLocation(ucCatalog, ucSchema, industry, mode)" in text
+        assert "/Volumes/${catalog}/${schema}/${CHECKPOINT_VOLUME}/${industry}/${suffix}" in text
         assert "/Volumes/${catalog}/${CHECKPOINT_SCHEMA}" not in text
 
     def test_all_delta_targets_use_one_catalog_schema_c7217(self) -> None:
@@ -155,10 +147,7 @@ class TestRealtimeWriter:
         text = DEPLOY_CONFIG_TS.read_text()
         assert "industryCatalog(" not in text
         assert "MICROBATCH_SCHEMA" not in text
-        assert (
-            "`${ucCatalog}.${ucSchema}.${catalogSlug(industry)}_microbatch`"
-            in text
-        )
+        assert "`${ucCatalog}.${ucSchema}.${catalogSlug(industry)}_microbatch`" in text
 
     def test_writer_chain_is_verified_rtm_shape(self) -> None:
         text = _ts()
@@ -220,7 +209,7 @@ class TestRealtimeWriter:
         """Reconnect must mint a new Postgres OAuth token, not reuse a broadcast [C7272][defect]."""
         block = _lakebase_writer_block()
         assert "_lb_token_bc" not in block
-        assert 'TOKEN_TTL_S = 20 * 60' in block
+        assert "TOKEN_TTL_S = 20 * 60" in block
         mint = re.search(
             r"    def _fresh_pg_token\(self\):(.*?)\n    def _connect",
             block,
@@ -246,9 +235,17 @@ class TestRealtimeWriter:
         text = _ts()
         # The INSERT column list must carry all SSOT columns + source.
         for col in (
-            "sensor_name", "industry", "value", "unit", "sensor_type",
-            "event_time", "min_value", "max_value", "nominal_value",
-            "fault_active", "metadata",
+            "sensor_name",
+            "industry",
+            "value",
+            "unit",
+            "sensor_type",
+            "event_time",
+            "min_value",
+            "max_value",
+            "nominal_value",
+            "fault_active",
+            "metadata",
         ):
             assert col in text, f"INSERT missing column {col}"
 
@@ -261,8 +258,7 @@ class TestRealtimeWriter:
         assert "self.cur.execute(self.sql, params)" not in block
         assert '"source) VALUES %s"' in block
         assert (
-            '_INSERT_TEMPLATE = "(%s, %s, %s, %s, %s, %s, %s, %s, '
-            '%s, %s, %s, \'sss\')"'
+            "_INSERT_TEMPLATE = \"(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'sss')\""
         ) in block
 
     def test_flushes_by_size_age_and_clean_close_c7218(self) -> None:
@@ -279,9 +275,9 @@ class TestRealtimeWriter:
             re.DOTALL,
         )
         assert open_block is not None
-        assert open_block.group(1).index("self._connect_with_backoff()") < open_block.group(1).index(
-            "self._last_flush = _lb_time.monotonic()"
-        )
+        assert open_block.group(1).index("self._connect_with_backoff()") < open_block.group(
+            1
+        ).index("self._last_flush = _lb_time.monotonic()")
         close_block = re.search(r"    def close\(self, error\):(.*)$", block, re.DOTALL)
         assert close_block is not None
         assert "if error is None:\n                self._flush()" in close_block.group(1)
@@ -291,10 +287,7 @@ class TestRealtimeWriter:
         """Failed commits must not be acknowledged as delivered [C7218][defect]."""
         block = _lakebase_writer_block()
         assert "self.conn.rollback()" in block
-        assert (
-            "except (psycopg2.OperationalError, psycopg2.InterfaceError):"
-            in block
-        )
+        assert "except (psycopg2.OperationalError, psycopg2.InterfaceError):" in block
         assert "self._reconnect()" in block
         assert "raise" in block
         flush_block = re.search(
@@ -305,9 +298,7 @@ class TestRealtimeWriter:
         assert flush_block is not None
         flush_body = flush_block.group(1)
         assert flush_body.count("self.buffer = []") == 1
-        assert flush_body.rindex("self.buffer = []") > flush_body.rindex(
-            "except Exception:"
-        )
+        assert flush_body.rindex("self.buffer = []") > flush_body.rindex("except Exception:")
         assert "ambiguous batch" in flush_body
 
 
@@ -317,9 +308,7 @@ class TestRealtimeAppSseBridge:
 
     def _sse_block(self) -> str:
         text = _ts()
-        m = re.search(
-            r"const REALTIME_APP_SSE_WRITER = `(.*?)`;", text, re.DOTALL
-        )
+        m = re.search(r"const REALTIME_APP_SSE_WRITER = `(.*?)`;", text, re.DOTALL)
         assert m is not None, "could not locate REALTIME_APP_SSE_WRITER"
         return m.group(1)
 
@@ -341,9 +330,9 @@ class TestRealtimeAppSseBridge:
     def test_process_only_enqueues_dashboard_rows_c7219(self) -> None:
         """RTM process must perform no HTTP or OAuth I/O [C7219][performance]."""
         block = self._sse_block()
-        app_writer = block.split("class AppSseWriter:", 1)[1].split(
-            "class RealtimeDualWriter:", 1
-        )[0]
+        app_writer = block.split("class AppSseWriter:", 1)[1].split("class RealtimeDualWriter:", 1)[
+            0
+        ]
         process = re.search(
             r"    def process\(self, row\):(.*?)\n    def _enqueue",
             app_writer,
@@ -411,7 +400,7 @@ class TestMicrobatchWriter:
     def test_processing_time_fifteen_seconds(self) -> None:
         text = _ts()
         assert 'DEFAULT_MICROBATCH_INTERVAL = "15 seconds"' in text
-        assert '.trigger(processingTime=' in text
+        assert ".trigger(processingTime=" in text
 
     def test_writes_to_delta_table_via_foreachbatch(self) -> None:
         # Micro-batch now writes via foreachBatch (so it can also record the real
@@ -419,7 +408,7 @@ class TestMicrobatchWriter:
         text = _ts()
         assert '.format("delta")' in text
         assert ".foreachBatch(write_micro_batch)" in text
-        assert 'saveAsTable(DELTA_TABLE)' in text
+        assert "saveAsTable(DELTA_TABLE)" in text
 
 
 class TestBufferedDeltaMetricsListener:

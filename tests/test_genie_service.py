@@ -303,9 +303,7 @@ def test_allowlist_mismatch_always_blocks_c7501_defect(
     monkeypatch.setenv("UC_SCHEMA", "sch")
     monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
     client = MagicMock()
-    client.genie.get_space.return_value = SimpleNamespace(
-        tables=["cat.sch.industry_telemetry"]
-    )
+    client.genie.get_space.return_value = SimpleNamespace(tables=["cat.sch.industry_telemetry"])
     status = gs.status_payload(client=client)
     assert status["enabled"] is False
     assert status["authorization_enforced"] is False

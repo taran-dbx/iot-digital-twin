@@ -68,9 +68,7 @@ def _maintenance_reference(alert: AlertRecord) -> dict[str, Any]:
         history = list_maintenance_history(industry)
     except KeyError:
         return {}
-    sensor = next(
-        (s for s in sensors if alert.sensor_id in (s.sensor_id, s.name)), None
-    )
+    sensor = next((s for s in sensors if alert.sensor_id in (s.sensor_id, s.name)), None)
     if sensor is None:
         return {}
     asset = next((a for a in assets if a.asset_id == sensor.asset_id), None)

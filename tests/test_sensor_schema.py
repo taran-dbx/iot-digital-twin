@@ -157,15 +157,11 @@ class TestKafkaParseSchema:
     def test_timestamp_parsed_as_double_epoch(self) -> None:
         # Raw Kafka JSON carries epoch seconds; the transform to TIMESTAMPTZ
         # happens at insert time, so the parse schema keeps ``timestamp`` DOUBLE.
-        line = next(
-            ln for ln in ss.kafka_parse_schema().splitlines() if '"timestamp"' in ln
-        )
+        line = next(ln for ln in ss.kafka_parse_schema().splitlines() if '"timestamp"' in ln)
         assert "DoubleType" in line
 
     def test_metadata_parsed_as_map(self) -> None:
-        line = next(
-            ln for ln in ss.kafka_parse_schema().splitlines() if '"metadata"' in ln
-        )
+        line = next(ln for ln in ss.kafka_parse_schema().splitlines() if '"metadata"' in ln)
         assert "MapType" in line
 
     def test_add_lines_match_record_field_order(self) -> None:
@@ -263,11 +259,7 @@ class TestSqlDdlDerivedFromSsot:
 # from the field-map, this test fails.
 # ---------------------------------------------------------------------------
 NOTEBOOK_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client"
-    / "src"
-    / "lib"
-    / "notebook-template.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "notebook-template.ts"
 )
 
 

@@ -113,7 +113,9 @@ class FakeLakebase:
 
 
 @pytest_asyncio.fixture()
-async def cell() -> AsyncGenerator[tuple[AsyncClient, AppState, FakeWorkspace, asyncio.Queue, Clock], None]:
+async def cell() -> AsyncGenerator[
+    tuple[AsyncClient, AppState, FakeWorkspace, asyncio.Queue, Clock], None
+]:
     # history routes window on the wall clock, so the cell's clock starts now
     clock = Clock(datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10))
     workspace = FakeWorkspace()
@@ -127,8 +129,9 @@ async def cell() -> AsyncGenerator[tuple[AsyncClient, AppState, FakeWorkspace, a
     app.include_router(alerts_router)
     app.include_router(production_router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        with patch("routes.production.app_permissions.is_admin", return_value=True), patch(
-            "routes.alerts.app_permissions.is_admin", return_value=True
+        with (
+            patch("routes.production.app_permissions.is_admin", return_value=True),
+            patch("routes.alerts.app_permissions.is_admin", return_value=True),
         ):
             yield client, state, workspace, queue, clock
 
@@ -141,7 +144,9 @@ def _drain(queue: asyncio.Queue) -> list[dict]:
 
 
 def _instant_spindle_rule() -> AlertRule:
-    rule = next(r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp")
+    rule = next(
+        r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp"
+    )
     return replace(rule, duration_s=0.0)
 
 
@@ -159,10 +164,13 @@ class TestProductionControl:
     async def test_stop_tells_the_producer_and_broadcasts_c7430_smoke(self, cell) -> None:
         """[C7430][smoke] Stopping writes the control file, records the stop and notifies viewers."""
         client, _state, workspace, queue, clock = cell
-        assert (await client.get("/api/industries/manufacturing/production")).json()["state"] == "running"
+        assert (await client.get("/api/industries/manufacturing/production")).json()[
+            "state"
+        ] == "running"
 
         resp = await client.post(
-            "/api/industries/manufacturing/production", json={"state": "stopped", "reason": "inspection"}
+            "/api/industries/manufacturing/production",
+            json={"state": "stopped", "reason": "inspection"},
         )
         assert resp.status_code == 200
         assert resp.json()["changed"] is True
@@ -180,7 +188,9 @@ class TestProductionControl:
         client, _state, workspace, _queue, clock = cell
         await client.post("/api/industries/manufacturing/production", json={"state": "stopped"})
         clock.instant += timedelta(seconds=95)
-        resumed = await client.post("/api/industries/manufacturing/production", json={"state": "running"})
+        resumed = await client.post(
+            "/api/industries/manufacturing/production", json={"state": "running"}
+        )
         assert resumed.json()["state"] == "running"
         assert workspace.files[CONTROL_FILE]["assets"] == []
 
@@ -192,7 +202,9 @@ class TestProductionControl:
         client, _state, workspace, queue, _clock = cell
         await client.post("/api/industries/manufacturing/production", json={"state": "stopped"})
         _drain(queue)
-        again = await client.post("/api/industries/manufacturing/production", json={"state": "stopped"})
+        again = await client.post(
+            "/api/industries/manufacturing/production", json={"state": "stopped"}
+        )
         assert again.json()["changed"] is False
         assert workspace.uploads == 1
         assert _drain(queue) == []
@@ -201,21 +213,31 @@ class TestProductionControl:
         """[C7433][defect] If the control file can't be written the cell is still reported running."""
         client, _state, workspace, queue, _clock = cell
         workspace.fail = True
-        resp = await client.post("/api/industries/manufacturing/production", json={"state": "stopped"})
+        resp = await client.post(
+            "/api/industries/manufacturing/production", json={"state": "stopped"}
+        )
         assert resp.status_code == 502
         assert "workspace unreachable" in resp.json()["detail"]
-        assert (await client.get("/api/industries/manufacturing/production")).json()["state"] == "running"
+        assert (await client.get("/api/industries/manufacturing/production")).json()[
+            "state"
+        ] == "running"
         assert _drain(queue) == []
 
     async def test_rejects_bad_state_unknown_cell_and_non_admin_c7434_defect(self, cell) -> None:
         """[C7434][defect] Bad states, industries without a cell, and non-admins are refused."""
         client, _state, workspace, _queue, _clock = cell
-        bad = await client.post("/api/industries/manufacturing/production", json={"state": "paused"})
+        bad = await client.post(
+            "/api/industries/manufacturing/production", json={"state": "paused"}
+        )
         assert bad.status_code == 422
-        missing = await client.post("/api/industries/pharmaceutical/production", json={"state": "stopped"})
+        missing = await client.post(
+            "/api/industries/pharmaceutical/production", json={"state": "stopped"}
+        )
         assert missing.status_code == 404
         with patch("routes.production.app_permissions.is_admin", return_value=False):
-            denied = await client.post("/api/industries/manufacturing/production", json={"state": "stopped"})
+            denied = await client.post(
+                "/api/industries/manufacturing/production", json={"state": "stopped"}
+            )
         assert denied.status_code == 403
         assert workspace.uploads == 0
 
@@ -229,7 +251,9 @@ class TestProductionControl:
         assert "production" not in held.json()
         assert workspace.uploads == 0
 
-        inspect = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"})
+        inspect = await client.post(
+            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"}
+        )
         production = inspect.json()["production"]
         assert (production["state"], production["reason"], production["alert_id"]) == (
             "stopped",
@@ -237,7 +261,11 @@ class TestProductionControl:
             alert_id,
         )
         assert workspace.files[CONTROL_FILE]["state"] == "stopped"
-        assert [e["type"] for e in _drain(queue)] == ["alert_response", "alert_response", "production_state"]
+        assert [e["type"] for e in _drain(queue)] == [
+            "alert_response",
+            "alert_response",
+            "production_state",
+        ]
 
 
 @pytest.mark.asyncio
@@ -253,7 +281,9 @@ async def test_lakebase_path_writes_beside_every_deployment_c7436_regression() -
     )
     control = ProductionControl(workspace_factory=lambda: workspace, now_fn=clock)
 
-    change, changed = await control.set_state("manufacturing", "stopped", actor="op@example.com", db=db)
+    change, changed = await control.set_state(
+        "manufacturing", "stopped", actor="op@example.com", db=db
+    )
 
     assert changed is True
     assert sorted(workspace.files) == [
@@ -360,4 +390,6 @@ def test_production_schema_is_constrained_c7440_smoke() -> None:
     assert "industry TEXT PRIMARY KEY" in state_ddl
     assert "CHECK (state IN ('running', 'stopped'))" in state_ddl
     assert "CHECK (state IN ('running', 'stopped'))" in event_ddl
-    assert "ON production_event (industry, created_at DESC)" in app_schema.PRODUCTION_EVENT_INDEXES[0]
+    assert (
+        "ON production_event (industry, created_at DESC)" in app_schema.PRODUCTION_EVENT_INDEXES[0]
+    )

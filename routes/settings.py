@@ -75,7 +75,9 @@ async def get_settings_status(
             "SELECT settings FROM user_settings WHERE user_email = $1", user_email
         )
         if row:
-            settings = json.loads(row["settings"]) if isinstance(row["settings"], str) else row["settings"]
+            settings = (
+                json.loads(row["settings"]) if isinstance(row["settings"], str) else row["settings"]
+            )
 
     uc_status, lb_status, sec_status, wh_status = await asyncio.gather(
         status_uc(settings),
@@ -165,9 +167,12 @@ async def provision_uc_settings(request: Request, user_email: str = Depends(get_
 
     # After creating schemas, provision the streaming_metrics table in the metrics schema
     pattern = uc.get("catalog_pattern", "iot_{name}")
-    catalog_name = pattern.replace("{name}", "default") if "{name}" in pattern else (pattern or "iot_default")
+    catalog_name = (
+        pattern.replace("{name}", "default") if "{name}" in pattern else (pattern or "iot_default")
+    )
     if "metrics" in uc.get("schemas", ["raw", "metrics", "checkpoints"]):
         import os
+
         zb_client_id = os.getenv("ZEROBUS_CLIENT_ID", "")
         metrics_results = await provision_metrics_table(
             catalog=catalog_name,
@@ -194,12 +199,15 @@ async def provision_secrets_settings(request: Request, user_email: str = Depends
     provisioned: list[dict] = []
 
     if not scope_name:
-        provisioned.append({"resource": "Secret scope", "status": "failed", "error": "Scope name is empty"})
+        provisioned.append(
+            {"resource": "Secret scope", "status": "failed", "error": "Scope name is empty"}
+        )
     else:
         # Scope + streaming SP + OAuth secret + app grant — delegated to the
         # reusable provisioning helper.  Module-level (patchable) references
         # are injected so route-level test patches still take effect.
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         sp_result = await ensure_streaming_sp(
             w,
@@ -215,7 +223,9 @@ async def provision_secrets_settings(request: Request, user_email: str = Depends
 
 
 @router.post("/api/settings/provision/lakebase")
-async def provision_lakebase_settings(request: Request, user_email: str = Depends(get_current_user)):
+async def provision_lakebase_settings(
+    request: Request, user_email: str = Depends(get_current_user)
+):
     """Provision Lakebase: project, branch, role, tables, and credentials."""
     try:
         body = await request.json()
@@ -237,7 +247,12 @@ async def provision_lakebase_settings(request: Request, user_email: str = Depend
 
         if not project_id:
             validation = await validate_lakebase({"lakebase": lb})
-            return {"provisioned": [{"resource": "Lakebase", "status": "failed", "error": "project_id is empty"}], "validation": validation}
+            return {
+                "provisioned": [
+                    {"resource": "Lakebase", "status": "failed", "error": "project_id is empty"}
+                ],
+                "validation": validation,
+            }
 
         # Step 1: Create project + branch
         proj_results = await provision_lakebase_project_and_branch(project_id, branch_id)
@@ -251,6 +266,7 @@ async def provision_lakebase_settings(request: Request, user_email: str = Depend
         # the new flow grants the SP itself DML on the sink tables and uses
         # short-lived OAuth credentials per connection.
         import secrets as secrets_mod
+
         database = (lb.get("database") or "databricks_postgres").strip()
         role_password = secrets_mod.token_urlsafe(24)  # kept for back-compat UI
         role_results = await provision_lakebase_role(
@@ -289,6 +305,7 @@ async def provision_lakebase_settings(request: Request, user_email: str = Depend
         table_lb = dict(lb)
         if password_set:
             from databricks.sdk import WorkspaceClient as _WC
+
             _w = _WC()
             parent = f"projects/{project_id}/branches/{branch_id}"
             _endpoints = list(_w.postgres.list_endpoints(parent=parent))

@@ -26,9 +26,7 @@ APP_GLOBAL_SETTINGS_KEY = "__app__"
 
 async def _warehouse_from_settings_row(db: Any, key: str) -> str:
     """Return the saved warehouse_id for a user_settings key, or '' if none."""
-    row = await db.fetchrow(
-        "SELECT settings FROM user_settings WHERE user_email = $1", key
-    )
+    row = await db.fetchrow("SELECT settings FROM user_settings WHERE user_email = $1", key)
     if not row:
         return ""
     settings = (
@@ -119,7 +117,10 @@ async def execute_dbsql(
 
 
 async def get_pipeline_catalog(
-    db: Any, db_available: bool, pipeline_id: str, user_email: str,
+    db: Any,
+    db_available: bool,
+    pipeline_id: str,
+    user_email: str,
     is_admin: bool = False,
 ) -> str | None:
     """Resolve UC catalog from a pipeline's resources. Returns None if unavailable.
@@ -132,14 +133,20 @@ async def get_pipeline_catalog(
         return None
     if is_admin:
         row = await db.fetchrow(
-            "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id,
+            "SELECT resources FROM pipelines WHERE id = $1::uuid",
+            pipeline_id,
         )
     else:
         row = await db.fetchrow(
             "SELECT resources FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-            pipeline_id, user_email,
+            pipeline_id,
+            user_email,
         )
     if not row:
         return None
-    resources = row["resources"] if isinstance(row["resources"], dict) else json.loads(row["resources"] or "{}")
+    resources = (
+        row["resources"]
+        if isinstance(row["resources"], dict)
+        else json.loads(row["resources"] or "{}")
+    )
     return resources.get("uc_catalog")

@@ -31,17 +31,34 @@ async def test_teardown_dispatches_in_descending_order(mock_db) -> None:
     # resources_in_teardown_order() maps db.fetch() results; feed descending rows.
     mock_db.fetch = AsyncMock(
         return_value=[
-            {"id": "r3", "setup_id": "setup-1", "deployment_id": "dep-1",
-             "resource_type": "job", "identifier": "j", "metadata": {},
-             "teardown_order": 90},
-            {"id": "r2", "resource_type": "kafka_topic", "identifier": "t",
-             "setup_id": "setup-1", "metadata": {}, "teardown_order": 50},
-            {"id": "r1", "resource_type": "uc_catalog", "identifier": "c",
-             "setup_id": "setup-1", "metadata": {}, "teardown_order": 10},
+            {
+                "id": "r3",
+                "setup_id": "setup-1",
+                "deployment_id": "dep-1",
+                "resource_type": "job",
+                "identifier": "j",
+                "metadata": {},
+                "teardown_order": 90,
+            },
+            {
+                "id": "r2",
+                "resource_type": "kafka_topic",
+                "identifier": "t",
+                "setup_id": "setup-1",
+                "metadata": {},
+                "teardown_order": 50,
+            },
+            {
+                "id": "r1",
+                "resource_type": "uc_catalog",
+                "identifier": "c",
+                "setup_id": "setup-1",
+                "metadata": {},
+                "teardown_order": 10,
+            },
         ]
     )
-    mock_db.fetchrow = AsyncMock(return_value={"id": "r", "status": "deleted",
-                                               "metadata": {}})
+    mock_db.fetchrow = AsyncMock(return_value={"id": "r", "status": "deleted", "metadata": {}})
     mock_db.execute = AsyncMock(return_value="DELETE 1")
 
     calls: list[str] = []
@@ -56,9 +73,7 @@ async def test_teardown_dispatches_in_descending_order(mock_db) -> None:
         "uc_catalog": AsyncMock(side_effect=_rec),
     }
 
-    result = await teardown_service.teardown_setup(
-        mock_db, "setup-1", deleters=deleters
-    )
+    result = await teardown_service.teardown_setup(mock_db, "setup-1", deleters=deleters)
 
     assert calls == ["job", "kafka_topic"]
     assert result["success"] is True
@@ -71,12 +86,17 @@ async def test_teardown_dispatches_in_descending_order(mock_db) -> None:
 async def test_teardown_skips_unknown_resource_type(mock_db) -> None:
     mock_db.fetch = AsyncMock(
         return_value=[
-            {"id": "r1", "resource_type": "mystery_type", "identifier": "x",
-             "setup_id": "setup-1", "metadata": {}, "teardown_order": 5},
+            {
+                "id": "r1",
+                "resource_type": "mystery_type",
+                "identifier": "x",
+                "setup_id": "setup-1",
+                "metadata": {},
+                "teardown_order": 5,
+            },
         ]
     )
-    mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "status": "deleted",
-                                               "metadata": {}})
+    mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "status": "deleted", "metadata": {}})
     mock_db.execute = AsyncMock(return_value="DELETE 1")
 
     result = await teardown_service.teardown_setup(mock_db, "setup-1", deleters={})
@@ -90,9 +110,15 @@ async def test_teardown_skips_unknown_resource_type(mock_db) -> None:
 async def test_teardown_reports_deleter_failure(mock_db) -> None:
     mock_db.fetch = AsyncMock(
         return_value=[
-            {"id": "r1", "resource_type": "job", "identifier": "j", "metadata": {},
-             "setup_id": "setup-1", "deployment_id": "dep-1",
-             "teardown_order": 5},
+            {
+                "id": "r1",
+                "resource_type": "job",
+                "identifier": "j",
+                "metadata": {},
+                "setup_id": "setup-1",
+                "deployment_id": "dep-1",
+                "teardown_order": 5,
+            },
         ]
     )
     mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "metadata": {}})
@@ -116,9 +142,15 @@ async def test_teardown_failure_does_not_cascade_orphan(mock_db) -> None:
     # exists, so it is surfaced for retry instead of silently orphaned.
     mock_db.fetch = AsyncMock(
         return_value=[
-            {"id": "r1", "setup_id": "setup-1", "deployment_id": "dep-1",
-             "resource_type": "job", "identifier": "j",
-             "metadata": {}, "teardown_order": 10},
+            {
+                "id": "r1",
+                "setup_id": "setup-1",
+                "deployment_id": "dep-1",
+                "resource_type": "job",
+                "identifier": "j",
+                "metadata": {},
+                "teardown_order": 10,
+            },
         ]
     )
     mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "metadata": {}})
@@ -147,10 +179,14 @@ async def test_teardown_skips_shared_resources(mock_db) -> None:
     # deleter is registered for their type.
     mock_db.fetch = AsyncMock(
         return_value=[
-            {"id": "r1", "resource_type": "service_principal",
-             "setup_id": "setup-1",
-             "identifier": "iot-sss-industries", "metadata": {"shared": True},
-             "teardown_order": 1},
+            {
+                "id": "r1",
+                "resource_type": "service_principal",
+                "setup_id": "setup-1",
+                "identifier": "iot-sss-industries",
+                "metadata": {"shared": True},
+                "teardown_order": 1,
+            },
         ]
     )
     mock_db.fetchrow = AsyncMock(return_value={"id": "r1", "metadata": {}})
@@ -230,10 +266,7 @@ async def test_teardown_preserves_catalog_schema_and_sibling_resources_c7113(
 
     job_delete.assert_awaited_once()
     table_delete.assert_awaited_once()
-    assert (
-        table_delete.await_args.args[0]["identifier"]
-        == "shared.schema.target_zerobus"
-    )
+    assert table_delete.await_args.args[0]["identifier"] == "shared.schema.target_zerobus"
     schema_delete.assert_not_awaited()
     assert result["success"] is True
     assert [step["action"] for step in result["steps"]] == [
@@ -316,16 +349,20 @@ async def schema_ready(app_backend_conn):
 async def test_teardown_leaves_nothing_orphaned(schema_ready) -> None:
     db = schema_ready
     setup = await pipeline_setup_repo.create_setup(db, industry="pharmaceutical")
-    dep = await deployment_repo.create_deployment(
-        db, setup_id=setup["id"], mode="realtime"
+    dep = await deployment_repo.create_deployment(db, setup_id=setup["id"], mode="realtime")
+    await resource_ledger.record_resource(
+        db,
+        setup_id=setup["id"],
+        resource_type="uc_catalog",
+        identifier="iot_pharmaceutical",
+        teardown_order=10,
     )
     await resource_ledger.record_resource(
-        db, setup_id=setup["id"], resource_type="uc_catalog",
-        identifier="iot_pharmaceutical", teardown_order=10,
-    )
-    await resource_ledger.record_resource(
-        db, setup_id=setup["id"], deployment_id=dep["id"],
-        resource_type="kafka_topic", identifier="iot.pharmaceutical.realtime",
+        db,
+        setup_id=setup["id"],
+        deployment_id=dep["id"],
+        resource_type="kafka_topic",
+        identifier="iot.pharmaceutical.realtime",
         teardown_order=50,
     )
 
@@ -336,7 +373,8 @@ async def test_teardown_leaves_nothing_orphaned(schema_ready) -> None:
         return {"status": "deleted"}
 
     result = await teardown_service.teardown_setup(
-        db, setup["id"],
+        db,
+        setup["id"],
         deleters={"uc_catalog": _rec, "kafka_topic": _rec},
     )
 

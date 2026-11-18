@@ -32,15 +32,17 @@ class TestProvisionLakebaseTableInstallsLakeTs:
         conn.fetchval = AsyncMock(side_effect=[None, "0.1.0"])
 
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example",
-                "user": "u",
-                "password": "p",
-                "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                }
+            )
 
         assert result["status"] == "created"
         assert result.get("lakets_version") == "0.1.0"
@@ -57,16 +59,18 @@ class TestProvisionLakebaseTableInstallsLakeTs:
         conn = _stub_conn()
 
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example",
-                "user": "u",
-                "password": "p",
-                "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-                "install_lakets": False,
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                    "install_lakets": False,
+                }
+            )
 
         assert result["status"] == "created"
         assert "lakets_version" not in result
@@ -74,23 +78,23 @@ class TestProvisionLakebaseTableInstallsLakeTs:
         assert not any("LakeTS body" in sql for sql in executed)
 
     @pytest.mark.asyncio
-    async def test_lakets_failure_surfaces_as_warning_not_hard_fail(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_lakets_failure_surfaces_as_warning_not_hard_fail(self, tmp_path: Path) -> None:
         missing = tmp_path / "missing.sql"
 
         conn = _stub_conn()
 
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example",
-                "user": "u",
-                "password": "p",
-                "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(missing),
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(missing),
+                }
+            )
 
         assert result["status"] == "created"
         assert "lakets_error" in result
@@ -112,22 +116,29 @@ class TestProvisionLakebaseTableAppliesTiering:
         conn.fetchval = AsyncMock(side_effect=[None, "0.1.0", None, 1, None, 1])
 
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-                "tiering": {
-                    "hot": "1 hour",
-                    "drop": "7 days",
-                    "chunk": "15 minutes",
-                },
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                    "tiering": {
+                        "hot": "1 hour",
+                        "drop": "7 days",
+                        "chunk": "15 minutes",
+                    },
+                }
+            )
 
         assert result["status"] == "created"
         assert result.get("lakets_version") == "0.1.0"
         assert result.get("tiering_applied") == {
-            "hot": "1 hour", "drop": "7 days", "chunk": "15 minutes",
+            "hot": "1 hour",
+            "drop": "7 days",
+            "chunk": "15 minutes",
         }
 
     @pytest.mark.asyncio
@@ -139,12 +150,17 @@ class TestProvisionLakebaseTableAppliesTiering:
         conn.fetchval = AsyncMock(side_effect=[None, "0.1.0"])
 
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                }
+            )
 
         assert result.get("lakets_version") == "0.1.0"
         assert "tiering_applied" not in result
@@ -157,18 +173,21 @@ class TestProvisionLakebaseTableAppliesTiering:
 
         conn = _stub_conn()
         # install probe None, version "0.1.0", chronotable probe raises
-        conn.fetchval = AsyncMock(
-            side_effect=[None, "0.1.0", RuntimeError("registry unavailable")]
-        )
+        conn.fetchval = AsyncMock(side_effect=[None, "0.1.0", RuntimeError("registry unavailable")])
 
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-                "tiering": {"hot": "1 hour", "drop": "7 days"},
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                    "tiering": {"hot": "1 hour", "drop": "7 days"},
+                }
+            )
 
         assert result["status"] == "created"
         assert result.get("lakets_version") == "0.1.0"
@@ -180,9 +199,7 @@ class TestProvisionLakebaseTableEnablesSync:
     """When LakeTS/tiering is selected, enable_sync runs after the tier policy."""
 
     @pytest.mark.asyncio
-    async def test_full_lakets_setup_calls_enable_sync_in_order(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_full_lakets_setup_calls_enable_sync_in_order(self, tmp_path: Path) -> None:
         sql_file = tmp_path / "lakets.sql"
         sql_file.write_text("-- body\n")
 
@@ -207,25 +224,31 @@ class TestProvisionLakebaseTableEnablesSync:
             order.append("enable_sync")
             return {"resource": f"LakeTS sync on {schema}.{table}", "status": "created"}
 
-        with patch("asyncpg.connect", new=AsyncMock(return_value=conn)), patch.object(
-            provisioning_service.lakets_service, "install_lakets", new=_install
-        ), patch.object(
-            provisioning_service.lakets_service, "create_chronotable", new=_create
-        ), patch.object(
-            provisioning_service.lakets_service, "apply_tier_policy", new=_policy
-        ), patch.object(
-            provisioning_service.lakets_service, "enable_sync", new=_sync
+        with (
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch.object(provisioning_service.lakets_service, "install_lakets", new=_install),
+            patch.object(provisioning_service.lakets_service, "create_chronotable", new=_create),
+            patch.object(provisioning_service.lakets_service, "apply_tier_policy", new=_policy),
+            patch.object(provisioning_service.lakets_service, "enable_sync", new=_sync),
         ):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-                "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                    "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
+                }
+            )
 
         assert order == [
-            "install", "create_chronotable", "apply_tier_policy", "enable_sync",
+            "install",
+            "create_chronotable",
+            "apply_tier_policy",
+            "enable_sync",
         ]
         assert result["status"] == "created"
         assert result.get("sync_enabled") == {
@@ -241,19 +264,24 @@ class TestProvisionLakebaseTableEnablesSync:
         conn.fetchval = AsyncMock(side_effect=[None, "0.1.0", None, 1, None, 1])
 
         async def _sync(c, table, schema="public"):
-            return {"resource": f"LakeTS sync on {schema}.{table}",
-                    "status": "already_exists"}
+            return {"resource": f"LakeTS sync on {schema}.{table}", "status": "already_exists"}
 
-        with patch("asyncpg.connect", new=AsyncMock(return_value=conn)), patch.object(
-            provisioning_service.lakets_service, "enable_sync", new=_sync
+        with (
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch.object(provisioning_service.lakets_service, "enable_sync", new=_sync),
         ):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-                "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                    "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
+                }
+            )
 
         assert result["status"] == "created"
         assert result.get("sync_enabled") == {"sensor_readings": "already_exists"}
@@ -269,19 +297,28 @@ class TestProvisionLakebaseTableEnablesSync:
         conn.fetchval = AsyncMock(side_effect=[None, "0.1.0", None, 1, None, 1])
 
         async def _sync(c, table, schema="public"):
-            return {"resource": f"LakeTS sync on {schema}.{table}",
-                    "status": "failed", "error": "shadow build failed"}
+            return {
+                "resource": f"LakeTS sync on {schema}.{table}",
+                "status": "failed",
+                "error": "shadow build failed",
+            }
 
-        with patch("asyncpg.connect", new=AsyncMock(return_value=conn)), patch.object(
-            provisioning_service.lakets_service, "enable_sync", new=_sync
+        with (
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch.object(provisioning_service.lakets_service, "enable_sync", new=_sync),
         ):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-                "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                    "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
+                }
+            )
 
         # Provisioning still succeeds; the failure is recorded, not raised.
         assert result["status"] == "created"
@@ -296,19 +333,23 @@ class TestProvisionLakebaseTableEnablesSync:
         conn = _stub_conn()
         conn.fetchval = AsyncMock(side_effect=[None, "0.1.0"])
 
-        sync_mock = AsyncMock(
-            return_value={"resource": "x", "status": "created"}
-        )
+        sync_mock = AsyncMock(return_value={"resource": "x", "status": "created"})
 
-        with patch("asyncpg.connect", new=AsyncMock(return_value=conn)), patch.object(
-            provisioning_service.lakets_service, "enable_sync", new=sync_mock
+        with (
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch.object(provisioning_service.lakets_service, "enable_sync", new=sync_mock),
         ):
-            result = await provisioning_service.provision_lakebase_table({
-                "mode": "direct",
-                "host": "pg.example", "user": "u", "password": "p", "port": 5432,
-                "pg_table": "sensor_readings",
-                "lakets_sql_path": str(sql_file),
-            })
+            result = await provisioning_service.provision_lakebase_table(
+                {
+                    "mode": "direct",
+                    "host": "pg.example",
+                    "user": "u",
+                    "password": "p",
+                    "port": 5432,
+                    "pg_table": "sensor_readings",
+                    "lakets_sql_path": str(sql_file),
+                }
+            )
 
         sync_mock.assert_not_awaited()
         assert "sync_enabled" not in result

@@ -33,32 +33,43 @@ def _run(c):
 
 # --- The two tests specified verbatim in the task brief -------------------
 
+
 def test_start_zerobus_skips_lakebase(monkeypatch):
     calls = {"branch": 0, "sp": 0}
-    monkeypatch.setattr(isvc, "_resolve_app_sp",
-                        lambda s: calls.__setitem__("sp", calls["sp"]+1) or {"client_id":"x"})
-    monkeypatch.setattr(isvc, "_provision_lakebase_branch",
-                        lambda *a, **k: calls.__setitem__("branch", calls["branch"]+1))
+    monkeypatch.setattr(
+        isvc,
+        "_resolve_app_sp",
+        lambda s: calls.__setitem__("sp", calls["sp"] + 1) or {"client_id": "x"},
+    )
+    monkeypatch.setattr(
+        isvc,
+        "_provision_lakebase_branch",
+        lambda *a, **k: calls.__setitem__("branch", calls["branch"] + 1),
+    )
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
-    monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status":"starting"})
+    monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "starting"})
     out = _run(isvc.start_mode(None, "automotive", "zerobus"))
     assert out["pipeline"] == "iot-automotive-zerobus"
-    assert calls["branch"] == 0   # no Lakebase for zerobus
+    assert calls["branch"] == 0  # no Lakebase for zerobus
     assert calls["sp"] == 1
 
 
 def test_start_realtime_creates_branch(monkeypatch):
     calls = {"branch": 0}
-    monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id":"x"})
-    monkeypatch.setattr(isvc, "_provision_lakebase_branch",
-                        lambda *a, **k: calls.__setitem__("branch", calls["branch"]+1))
+    monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id": "x"})
+    monkeypatch.setattr(
+        isvc,
+        "_provision_lakebase_branch",
+        lambda *a, **k: calls.__setitem__("branch", calls["branch"] + 1),
+    )
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
-    monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status":"starting"})
+    monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "starting"})
     _run(isvc.start_mode(None, "manufacturing", "realtime"))
     assert calls["branch"] == 1
 
 
 # --- Additional coverage ---------------------------------------------------
+
 
 def test_start_mode_includes_topic_step_for_streaming_modes(monkeypatch):
     monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id": "x"})
@@ -89,7 +100,9 @@ def test_start_mode_writes_running_status_when_job_started(monkeypatch):
     monkeypatch.setattr(isvc, "_set_pipeline_status", fake_set)
     monkeypatch.setattr(isvc, "_resolve_app_sp", lambda s: {"client_id": "x"})
     monkeypatch.setattr(isvc, "_provision_catalog_schema", lambda *a, **k: None)
-    monkeypatch.setattr(isvc, "_deploy_and_start", lambda *a, **k: {"status": "running", "job_id": "42"})
+    monkeypatch.setattr(
+        isvc, "_deploy_and_start", lambda *a, **k: {"status": "running", "job_id": "42"}
+    )
 
     out = _run(isvc.start_mode(None, "automotive", "zerobus"))
 
@@ -170,6 +183,7 @@ async def _noop():
 
 # --- Real (unmocked) behaviour of the thin seams themselves ---------------
 
+
 def test_deploy_and_start_zerobus_without_job_returns_starting():
     # Zerobus has no continuous Spark job, but it DOES have a serverless
     # producer job that only the deploy flow can create. With no job deployed
@@ -248,9 +262,7 @@ def test_provision_lakebase_branch_calls_setup_pipeline_lakebase(monkeypatch):
         calls["params"] = params
         return {"success": True, "steps": []}
 
-    monkeypatch.setattr(
-        "services.pipeline_setup_service.setup_pipeline_lakebase", fake_setup
-    )
+    monkeypatch.setattr("services.pipeline_setup_service.setup_pipeline_lakebase", fake_setup)
 
     result = _run(isvc._provision_lakebase_branch(None, "energy", "realtime", "pid-1"))
 

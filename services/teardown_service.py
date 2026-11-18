@@ -130,7 +130,8 @@ async def teardown_setup(
             step["reason"] = "no deleter registered"
             logger.info(
                 "teardown: no deleter for %s '%s' — skipping (recorded)",
-                rtype, identifier,
+                rtype,
+                identifier,
             )
         else:
             try:
@@ -142,26 +143,27 @@ async def teardown_setup(
                 step["reason"] = str(skip)
                 logger.info(
                     "teardown: deleter for %s '%s' skipped: %s",
-                    rtype, identifier, skip,
+                    rtype,
+                    identifier,
+                    skip,
                 )
             except Exception as exc:  # concrete delete failure — non-fatal per step
                 step["action"] = "failed"
                 step["error"] = str(exc)[:300]
                 logger.warning(
                     "teardown: deleter for %s '%s' failed: %s",
-                    rtype, identifier, exc,
+                    rtype,
+                    identifier,
+                    exc,
                 )
 
         # Mark the ledger row with its actual outcome BEFORE any cascade.  A
         # ``failed`` row is thus never lost: if we bail on the cascade below it
         # survives in the ledger as the record that the cloud resource remains.
         try:
-            await resource_ledger.mark_resource_status(
-                db, res.get("id"), step["action"]
-            )
+            await resource_ledger.mark_resource_status(db, res.get("id"), step["action"])
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("teardown: could not mark %s %s: %s",
-                           res.get("id"), step["action"], exc)
+            logger.warning("teardown: could not mark %s %s: %s", res.get("id"), step["action"], exc)
 
         steps.append(step)
 
@@ -176,7 +178,9 @@ async def teardown_setup(
         deleted_setup = False
         logger.warning(
             "teardown: %d resource(s) failed for setup %s — keeping setup row "
-            "(nothing cascaded) so failures are not orphaned", len(failed), setup_id,
+            "(nothing cascaded) so failures are not orphaned",
+            len(failed),
+            setup_id,
         )
 
     summary = {

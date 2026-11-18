@@ -50,8 +50,13 @@ _SETUP = {
 
 def _ctx(mode: str) -> StepContext:
     return StepContext(
-        db=None, setup=_SETUP, state={"cluster_id": "c-1"},
-        key=f"{mode}:x", step="x", mode=mode, ws=object(),
+        db=None,
+        setup=_SETUP,
+        state={"cluster_id": "c-1"},
+        key=f"{mode}:x",
+        step="x",
+        mode=mode,
+        ws=object(),
     )
 
 
@@ -82,9 +87,7 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
 
     connection = vs._resolve_lakebase_write_conn(ctx, "pharmaceutical")
 
-    assert requested_names == [
-        "projects/test_pipelines/branches/pharmaceutical/endpoints/primary"
-    ]
+    assert requested_names == ["projects/test_pipelines/branches/pharmaceutical/endpoints/primary"]
     assert connection == ("pg.example.com", "app-client-id", "pg-token")
 
 
@@ -185,8 +188,7 @@ async def test_realtime_write_test_produces_then_consumes_c7242(monkeypatch):
     kw = produced["consumer_kw"]
     assert kw["table"] == "sensor_readings"
     assert kw["checkpoint_path"] == (
-        f"/Volumes/{UC_CATALOG}/{UC_SCHEMA}/stream_checkpoints/"
-        "pharmaceutical/validation/realtime"
+        f"/Volumes/{UC_CATALOG}/{UC_SCHEMA}/stream_checkpoints/pharmaceutical/validation/realtime"
     )
     assert kw["metrics_table_fqn"] == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
     assert "streaming_metrics_realtime/" in kw["metrics_table_location"]
@@ -223,7 +225,8 @@ async def test_microbatch_write_test_unchanged(monkeypatch):
 
     monkeypatch.setattr(vs, "_run_on_cluster", fake_run)
     monkeypatch.setattr(
-        vs.snip, "microbatch_write_test",
+        vs.snip,
+        "microbatch_write_test",
         lambda *a, **k: "MICROBATCH",
     )
     result = await vs.write_test(_ctx("microbatch"))
@@ -419,9 +422,7 @@ async def test_cdf_manual_automates_api_enablement_c7206(monkeypatch):
         called["branch"] = branch
         return FakeConn()
 
-    async def fake_enable_sync(
-        conn, *, shadow_table, table, schema="public"
-    ):
+    async def fake_enable_sync(conn, *, shadow_table, table, schema="public"):
         called["shadow_table"] = shadow_table
         called["table"] = table
         called["schema"] = schema
@@ -436,9 +437,7 @@ async def test_cdf_manual_automates_api_enablement_c7206(monkeypatch):
         }
 
     monkeypatch.setattr(vs.pps, "get_write_conn", fake_write_conn)
-    monkeypatch.setattr(
-        vs.lakets_svc, "reconcile_chronotable_shadow", fake_enable_sync
-    )
+    monkeypatch.setattr(vs.lakets_svc, "reconcile_chronotable_shadow", fake_enable_sync)
     monkeypatch.setattr(vs.cdf_config_service, "ensure_cdf_config", fake_ensure)
 
     result = await vs.cdf_manual(_ctx("realtime"))
@@ -449,15 +448,14 @@ async def test_cdf_manual_automates_api_enablement_c7206(monkeypatch):
     assert called["cdf_kwargs"]["schema"] == UC_SCHEMA
     assert result.data["cdf_shadow"] == "migrated"
     assert called["shadow_table"] == "_shadow_pharmaceutical_sensor_readings"
-    assert result.data["shadow_table"] == (
-        "lakets_cdf._shadow_pharmaceutical_sensor_readings"
-    )
+    assert result.data["shadow_table"] == ("lakets_cdf._shadow_pharmaceutical_sensor_readings")
     assert called.get("closed") is True
 
 
 @pytest.mark.asyncio
 async def test_cdf_manual_fails_if_shadow_prep_fails_c7207(monkeypatch):
     """API enablement cannot proceed without a shadow [C7207][regression]."""
+
     async def boom_conn(branch, *, ws=None):
         raise RuntimeError("branch auth failed")
 
@@ -481,8 +479,7 @@ async def test_dbsql_read_realtime_targets_cdf_synced_table_c7243(monkeypatch):
     result = await vs.dbsql_read(_ctx("realtime"))
     assert result.status == sm.PASSED
     assert (
-        f"{UC_CATALOG}.{UC_SCHEMA}."
-        "lb__shadow_pharmaceutical_sensor_readings_history"
+        f"{UC_CATALOG}.{UC_SCHEMA}.lb__shadow_pharmaceutical_sensor_readings_history"
     ) in captured["sql"]
     assert ".realtime.sensor_readings" not in captured["sql"]
     assert "industry = 'pharmaceutical'" in captured["sql"]
@@ -507,6 +504,7 @@ async def test_dbsql_read_microbatch_targets_sensor_data(monkeypatch):
 @pytest.mark.asyncio
 async def test_dbsql_read_fails_when_zero_rows(monkeypatch):
     """No-data must FAIL, not pass — the old check returned PASSED regardless."""
+
     async def fake_dbsql(sql, wh):
         return {"data": [{"n": 0}]}
 
@@ -674,8 +672,11 @@ async def test_cdf_verify_fails_when_not_streaming(monkeypatch):
         return FakeConn()
 
     async def fake_check(conn, *, shadow=None, **kw):
-        return {"name": "cdf_sync", "status": hc.FAIL,
-                "detail": "lakets_cdf._shadow_sensor_readings not STREAMING — enable managed sync"}
+        return {
+            "name": "cdf_sync",
+            "status": hc.FAIL,
+            "detail": "lakets_cdf._shadow_sensor_readings not STREAMING — enable managed sync",
+        }
 
     monkeypatch.setattr(vs.pps, "get_write_conn", fake_conn)
     monkeypatch.setattr(hc, "check_cdf_sync", fake_check)
@@ -727,7 +728,9 @@ async def test_provision_cluster_terminates_created_cluster_on_failure(monkeypat
 
     monkeypatch.setattr(vs, "_pick_gp_node", lambda w: ("m5.xlarge", 4))
     monkeypatch.setattr(vs.vc, "worker_sizing", lambda parts, cores: {"workers": 1})
-    monkeypatch.setattr(vs.vc, "build_validation_cluster_spec", lambda **k: {"cluster_name": "iot-validate-x"})
+    monkeypatch.setattr(
+        vs.vc, "build_validation_cluster_spec", lambda **k: {"cluster_name": "iot-validate-x"}
+    )
     monkeypatch.setattr(vs, "_create_validation_cluster", lambda w, spec: "0706-created")
 
     async def boom(w, cluster_id):
@@ -735,8 +738,15 @@ async def test_provision_cluster_terminates_created_cluster_on_failure(monkeypat
 
     monkeypatch.setattr(vs, "_wait_cluster_running", boom)
 
-    ctx = StepContext(db=None, setup=_SETUP, state={}, key="provision_cluster",
-                      step="provision_cluster", mode=None, ws=ws)
+    ctx = StepContext(
+        db=None,
+        setup=_SETUP,
+        state={},
+        key="provision_cluster",
+        step="provision_cluster",
+        mode=None,
+        ws=ws,
+    )
     with pytest.raises(RuntimeError):
         await vs.provision_cluster(ctx)
     # The just-created cluster was terminated rather than leaked.
@@ -770,8 +780,15 @@ async def test_provision_cluster_pins_verified_dbr(monkeypatch):
 
     monkeypatch.setattr(vs, "_install_cluster_libraries", _libs)
 
-    ctx = StepContext(db=None, setup=_SETUP, state={}, key="provision_cluster",
-                      step="provision_cluster", mode=None, ws=ws)
+    ctx = StepContext(
+        db=None,
+        setup=_SETUP,
+        state={},
+        key="provision_cluster",
+        step="provision_cluster",
+        mode=None,
+        ws=ws,
+    )
     result = await vs.provision_cluster(ctx)
     assert result.status == sm.PASSED
     # Pins the VERIFIED DBR (18.2), NOT the workspace's latest LTS (16.4).

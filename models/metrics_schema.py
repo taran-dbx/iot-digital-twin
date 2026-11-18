@@ -116,18 +116,14 @@ def metrics_managed_table_ddl(fqn: str) -> str:
     No ``LOCATION`` clause (managed storage), and a leading ``mode STRING``
     column so realtime/micro-batch metrics coexist in one table.
     """
-    columns = ",\n".join(
-        f"    {s.column} {s.delta_type}" for s in metrics_managed_columns()
-    )
+    columns = ",\n".join(f"    {s.column} {s.delta_type}" for s in metrics_managed_columns())
     return f"CREATE TABLE IF NOT EXISTS {fqn} (\n{columns}\n) USING DELTA"
 
 
 def _validate_mode(mode: str) -> str:
     """Return ``mode`` if it's one of :data:`ALL_METRIC_MODES`, else raise."""
     if mode not in ALL_METRIC_MODES:
-        raise ValueError(
-            f"unknown metrics mode {mode!r}; expected one of {ALL_METRIC_MODES}"
-        )
+        raise ValueError(f"unknown metrics mode {mode!r}; expected one of {ALL_METRIC_MODES}")
     return mode
 
 
@@ -164,10 +160,7 @@ def metrics_external_table_ddl(catalog: str, storage_base: str, mode: str) -> st
     fqn = metrics_table_fqn(catalog, mode)
     location = metrics_table_location(catalog, storage_base, mode)
     columns = ",\n".join(f"    {s.column} {s.delta_type}" for s in METRICS_FIELD_MAP)
-    return (
-        f"CREATE TABLE IF NOT EXISTS {fqn} (\n{columns}\n) "
-        f"USING DELTA\nLOCATION '{location}'"
-    )
+    return f"CREATE TABLE IF NOT EXISTS {fqn} (\n{columns}\n) USING DELTA\nLOCATION '{location}'"
 
 
 def metrics_tables(catalog: str) -> dict[str, str]:

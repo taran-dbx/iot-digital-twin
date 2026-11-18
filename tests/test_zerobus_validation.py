@@ -96,9 +96,11 @@ def test_snippet_workspace_url_gets_https_prefix_guard():
 
 
 def test_snippet_embeds_table_and_endpoint_and_num_records():
-    code = _snippet(table_fqn="iot_energy.zerobus.iot_sensor_data",
-                     server_endpoint="123.zerobus.us-west-2.cloud.databricks.com",
-                     num_records=42)
+    code = _snippet(
+        table_fqn="iot_energy.zerobus.iot_sensor_data",
+        server_endpoint="123.zerobus.us-west-2.cloud.databricks.com",
+        num_records=42,
+    )
     assert "iot_energy.zerobus.iot_sensor_data" in code
     assert "123.zerobus.us-west-2.cloud.databricks.com" in code
     assert "range(42)" in code
@@ -136,9 +138,7 @@ def test_resolve_creds_uses_databricks_env_when_only_app_sp_set(monkeypatch):
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-client-id")
     monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "app-sp-client-secret")
     # No ZEROBUS_* vars, no UC scope.
-    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
-        None, None, None, None
-    )
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(None, None, None, None)
     assert resolved_id == "app-sp-client-id"
     assert resolved_secret == "app-sp-client-secret"
     assert error is None
@@ -162,9 +162,7 @@ def test_resolve_creds_databricks_env_beats_zerobus_env(monkeypatch):
     monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "db-secret")
     monkeypatch.setenv("ZEROBUS_CLIENT_ID", "zb-id")
     monkeypatch.setenv("ZEROBUS_CLIENT_SECRET", "zb-secret")
-    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
-        None, None, None, None
-    )
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(None, None, None, None)
     assert resolved_id == "db-id"
     assert resolved_secret == "db-secret"
     assert error is None
@@ -176,9 +174,7 @@ def test_resolve_creds_falls_back_to_zerobus_env_when_no_databricks(monkeypatch)
     monkeypatch.delenv("DATABRICKS_CLIENT_SECRET", raising=False)
     monkeypatch.setenv("ZEROBUS_CLIENT_ID", "zb-id")
     monkeypatch.setenv("ZEROBUS_CLIENT_SECRET", "zb-secret")
-    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
-        None, None, None, None
-    )
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(None, None, None, None)
     assert resolved_id == "zb-id"
     assert resolved_secret == "zb-secret"
     assert error is None
@@ -190,9 +186,7 @@ def test_resolve_creds_returns_none_when_no_creds_set(monkeypatch):
     monkeypatch.delenv("DATABRICKS_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("ZEROBUS_CLIENT_ID", raising=False)
     monkeypatch.delenv("ZEROBUS_CLIENT_SECRET", raising=False)
-    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(
-        None, None, None, None
-    )
+    resolved_id, resolved_secret, error = zbv._resolve_zerobus_creds(None, None, None, None)
     assert resolved_id is None
     assert resolved_secret is None
     assert error is None
@@ -218,8 +212,10 @@ def test_auth_probe_dns_failure():
 
 
 def test_auth_probe_tcp_failure():
-    with patch("socket.gethostbyname", return_value="10.0.0.1"), \
-         patch("socket.create_connection", side_effect=OSError("connection refused")):
+    with (
+        patch("socket.gethostbyname", return_value="10.0.0.1"),
+        patch("socket.create_connection", side_effect=OSError("connection refused")),
+    ):
         ok, detail = zbv.auth_probe(
             "https://x.cloud.databricks.com", "host.zerobus.example.com", "cat.sch.tbl"
         )
@@ -230,11 +226,14 @@ def test_auth_probe_tcp_failure():
 
 
 def test_auth_probe_reachable_no_credentials_skips_token_check():
-    with patch("socket.gethostbyname", return_value="10.0.0.1"), \
-         patch("socket.create_connection", MagicMock()), \
-         patch.dict("os.environ", {}, clear=True):
+    with (
+        patch("socket.gethostbyname", return_value="10.0.0.1"),
+        patch("socket.create_connection", MagicMock()),
+        patch.dict("os.environ", {}, clear=True),
+    ):
         ok, detail = zbv.auth_probe(
-            "https://x.cloud.databricks.com", "123.zerobus.us-east-1.cloud.databricks.com",
+            "https://x.cloud.databricks.com",
+            "123.zerobus.us-east-1.cloud.databricks.com",
             "cat.sch.tbl",
         )
     assert ok is True
@@ -249,9 +248,11 @@ def test_auth_probe_token_exchange_success():
     fake_resp = MagicMock()
     fake_resp.status_code = 200
     fake_resp.json.return_value = {"access_token": "eyFakeToken"}
-    with patch("socket.gethostbyname", return_value="10.0.0.1"), \
-         patch("socket.create_connection", MagicMock()), \
-         patch("requests.post", return_value=fake_resp) as mock_post:
+    with (
+        patch("socket.gethostbyname", return_value="10.0.0.1"),
+        patch("socket.create_connection", MagicMock()),
+        patch("requests.post", return_value=fake_resp) as mock_post,
+    ):
         ok, detail = zbv.auth_probe(
             "https://x.cloud.databricks.com",
             "123.zerobus.us-east-1.cloud.databricks.com",
@@ -272,11 +273,15 @@ def test_auth_probe_token_exchange_missing_grants_fails_clearly():
     MODIFY grants gets a 401 invalid_authorization_details."""
     fake_resp = MagicMock()
     fake_resp.status_code = 401
-    fake_resp.text = '{"error":"invalid_authorization_details","error_description":"User is not authorized"}'
+    fake_resp.text = (
+        '{"error":"invalid_authorization_details","error_description":"User is not authorized"}'
+    )
     fake_resp.json.return_value = {}
-    with patch("socket.gethostbyname", return_value="10.0.0.1"), \
-         patch("socket.create_connection", MagicMock()), \
-         patch("requests.post", return_value=fake_resp):
+    with (
+        patch("socket.gethostbyname", return_value="10.0.0.1"),
+        patch("socket.create_connection", MagicMock()),
+        patch("requests.post", return_value=fake_resp),
+    ):
         ok, detail = zbv.auth_probe(
             "https://x.cloud.databricks.com",
             "123.zerobus.us-east-1.cloud.databricks.com",
@@ -290,9 +295,11 @@ def test_auth_probe_token_exchange_missing_grants_fails_clearly():
 
 
 def test_auth_probe_bad_table_fqn_fails_before_network_call():
-    with patch("socket.gethostbyname", return_value="10.0.0.1"), \
-         patch("socket.create_connection", MagicMock()), \
-         patch("requests.post") as mock_post:
+    with (
+        patch("socket.gethostbyname", return_value="10.0.0.1"),
+        patch("socket.create_connection", MagicMock()),
+        patch("requests.post") as mock_post,
+    ):
         ok, detail = zbv.auth_probe(
             "https://x.cloud.databricks.com",
             "123.zerobus.us-east-1.cloud.databricks.com",

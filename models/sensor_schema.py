@@ -81,28 +81,37 @@ class FieldSpec:
 # ``SensorRecord`` field order.
 # ---------------------------------------------------------------------------
 SENSOR_FIELD_MAP: tuple[FieldSpec, ...] = (
-    FieldSpec("sensor_name", "sensor_name", "TEXT", "STRING", "StringType()",
-              pg_not_null=True),
-    FieldSpec("industry", "industry", "TEXT", "STRING", "StringType()",
-              pg_not_null=True),
-    FieldSpec("value", "value", "DOUBLE PRECISION", "DOUBLE", "DoubleType()",
-              pg_not_null=True),
+    FieldSpec("sensor_name", "sensor_name", "TEXT", "STRING", "StringType()", pg_not_null=True),
+    FieldSpec("industry", "industry", "TEXT", "STRING", "StringType()", pg_not_null=True),
+    FieldSpec("value", "value", "DOUBLE PRECISION", "DOUBLE", "DoubleType()", pg_not_null=True),
     FieldSpec("unit", "unit", "TEXT", "STRING", "StringType()"),
     FieldSpec("sensor_type", "sensor_type", "TEXT", "STRING", "StringType()"),
     # Epoch seconds (float) in the raw JSON → TIMESTAMPTZ column on insert.
-    FieldSpec("timestamp", "event_time", "TIMESTAMPTZ", "TIMESTAMP", "DoubleType()",
-              pg_not_null=True, transform="epoch_to_timestamptz"),
+    FieldSpec(
+        "timestamp",
+        "event_time",
+        "TIMESTAMPTZ",
+        "TIMESTAMP",
+        "DoubleType()",
+        pg_not_null=True,
+        transform="epoch_to_timestamptz",
+    ),
     FieldSpec("min_value", "min_value", "DOUBLE PRECISION", "DOUBLE", "DoubleType()"),
     FieldSpec("max_value", "max_value", "DOUBLE PRECISION", "DOUBLE", "DoubleType()"),
-    FieldSpec("nominal_value", "nominal_value", "DOUBLE PRECISION", "DOUBLE",
-              "DoubleType()"),
-    FieldSpec("fault_active", "fault_active", "BOOLEAN", "BOOLEAN", "BooleanType()",
-              pg_default="FALSE"),
+    FieldSpec("nominal_value", "nominal_value", "DOUBLE PRECISION", "DOUBLE", "DoubleType()"),
+    FieldSpec(
+        "fault_active", "fault_active", "BOOLEAN", "BOOLEAN", "BooleanType()", pg_default="FALSE"
+    ),
     # PG JSONB; Delta/Kafka use MAP<STRING,STRING> (VARIANT deferred per the
     # Phase-0 probe — the STRING/MAP fallback in §1.9).
-    FieldSpec("metadata", "metadata", "JSONB", "MAP<STRING, STRING>",
-              "MapType(StringType(), StringType())",
-              pg_default="jsonb_build_object()"),
+    FieldSpec(
+        "metadata",
+        "metadata",
+        "JSONB",
+        "MAP<STRING, STRING>",
+        "MapType(StringType(), StringType())",
+        pg_default="jsonb_build_object()",
+    ),
 )
 
 # App-added Postgres columns (not part of the canonical SensorRecord).
@@ -172,10 +181,7 @@ def pg_chronotable_ddl(table: str) -> str:
     columns += [f"    {_pg_column_clause(spec)}" for spec in SENSOR_FIELD_MAP]
     columns.append(f"    {SOURCE_COLUMN}")
     body = ",\n".join(columns)
-    return (
-        f"CREATE SEQUENCE IF NOT EXISTS {seq};\n"
-        f"CREATE TABLE IF NOT EXISTS {table} (\n{body}\n)"
-    )
+    return f"CREATE SEQUENCE IF NOT EXISTS {seq};\nCREATE TABLE IF NOT EXISTS {table} (\n{body}\n)"
 
 
 def delta_table_ddl(fqn: str) -> str:
@@ -197,9 +203,7 @@ def kafka_parse_schema() -> str:
     map, …); the epoch→``TIMESTAMPTZ`` transform is applied at insert time.
     """
     lines = ["StructType()"]
-    lines += [
-        f'    .add("{field}", {spark_type})' for field, spark_type in kafka_schema_fields()
-    ]
+    lines += [f'    .add("{field}", {spark_type})' for field, spark_type in kafka_schema_fields()]
     return "\n".join(lines)
 
 

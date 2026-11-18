@@ -80,9 +80,13 @@ class TestModeStatus:
         assert pv.mode_status(_deployed(), rt, flowing=False) == pv.STATUS_RUNNING
 
     def test_build_mode_view_surfaces_runtime_detail_and_tasks(self):
-        rt = {"running": True, "degraded": True, "detail": "data_producer: boom",
-              "restartable": True,
-              "tasks": [{"task": "data_producer", "life_cycle": "INTERNAL_ERROR"}]}
+        rt = {
+            "running": True,
+            "degraded": True,
+            "detail": "data_producer: boom",
+            "restartable": True,
+            "tasks": [{"task": "data_producer", "life_cycle": "INTERNAL_ERROR"}],
+        }
         v = pv.build_mode_view(None, _deployed(), "microbatch", rt)
         assert v["status"] == pv.STATUS_DEGRADED
         assert v["runtime_detail"] == "data_producer: boom"
@@ -104,8 +108,11 @@ class TestModeStatus:
         assert v["flowing"] is False
 
     def test_rollup_degraded_beats_running(self):
-        views = [{"status": pv.STATUS_RUNNING}, {"status": pv.STATUS_DEGRADED},
-                 {"status": pv.STATUS_DRAFT}]
+        views = [
+            {"status": pv.STATUS_RUNNING},
+            {"status": pv.STATUS_DEGRADED},
+            {"status": pv.STATUS_DRAFT},
+        ]
         assert pv.rollup_status(views) == pv.STATUS_DEGRADED
 
     def test_rollup_running_with_undeployed_modes_is_running(self):
@@ -113,8 +120,11 @@ class TestModeStatus:
         assert pv.rollup_status(views) == pv.STATUS_RUNNING
 
     def test_rollup_starting_beats_stopped_and_draft(self):
-        views = [{"status": pv.STATUS_DRAFT}, {"status": pv.STATUS_STOPPED},
-                 {"status": pv.STATUS_STARTING}]
+        views = [
+            {"status": pv.STATUS_DRAFT},
+            {"status": pv.STATUS_STOPPED},
+            {"status": pv.STATUS_STARTING},
+        ]
         assert pv.rollup_status(views) == pv.STATUS_STARTING
 
 
@@ -195,11 +205,16 @@ class TestBuildPipelineView:
         # Deployed realtime with CDF not done -> unhealthy + not startable (the
         # real-world state of current pipelines).
         setup = {
-            "id": "s1", "industry": "pharma", "enabled_modes": ["realtime"],
-            "validation_state": {"steps": {
-                k: {"status": sm.PASSED}
-                for k in sm.mode_required_keys("realtime") if "cdf" not in k
-            }},
+            "id": "s1",
+            "industry": "pharma",
+            "enabled_modes": ["realtime"],
+            "validation_state": {
+                "steps": {
+                    k: {"status": sm.PASSED}
+                    for k in sm.mode_required_keys("realtime")
+                    if "cdf" not in k
+                }
+            },
         }
         deployments = [_deployed("realtime")]
         view = pv.build_pipeline_view(setup, deployments, {"123": False})
@@ -209,12 +224,14 @@ class TestBuildPipelineView:
 
     def test_running_job_preserves_flowing_signal_c7264(self):
         """[C7264][regression] Lifecycle and sink freshness stay independent."""
-        setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
-                 "validation_state": _all_passed_state("microbatch")}
+        setup = {
+            "id": "s1",
+            "industry": "pharma",
+            "enabled_modes": ["microbatch"],
+            "validation_state": _all_passed_state("microbatch"),
+        }
         deployments = [_deployed("microbatch")]
-        view = pv.build_pipeline_view(
-            setup, deployments, {"123": True}, {"microbatch": True}
-        )
+        view = pv.build_pipeline_view(setup, deployments, {"123": True}, {"microbatch": True})
         assert view["status"] == pv.STATUS_RUNNING
         assert view["health"] == pv.HEALTH_HEALTHY
         assert view["startable"] is True
@@ -265,8 +282,12 @@ class TestBuildPipelineView:
     def test_running_job_without_flow_reports_freshness_separately_c7264(self):
         """[C7264][defect][regression] Missing freshness does not block RUNNING."""
         # Job lifecycle settles at RUNNING while sink freshness stays observable.
-        setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
-                 "validation_state": _all_passed_state("microbatch")}
+        setup = {
+            "id": "s1",
+            "industry": "pharma",
+            "enabled_modes": ["microbatch"],
+            "validation_state": _all_passed_state("microbatch"),
+        }
         deployments = [_deployed("microbatch")]
         view = pv.build_pipeline_view(setup, deployments, {"123": True}, {})
         assert view["status"] == pv.STATUS_RUNNING
@@ -275,8 +296,12 @@ class TestBuildPipelineView:
         assert view["modes"][0]["flowing"] is False
 
     def test_pending_run_is_starting(self):
-        setup = {"id": "s1", "industry": "pharma", "enabled_modes": ["microbatch"],
-                 "validation_state": _all_passed_state("microbatch")}
+        setup = {
+            "id": "s1",
+            "industry": "pharma",
+            "enabled_modes": ["microbatch"],
+            "validation_state": _all_passed_state("microbatch"),
+        }
         deployments = [_deployed("microbatch")]
         job = {"123": {"running": False, "starting": True, "degraded": False}}
         view = pv.build_pipeline_view(setup, deployments, job, {})
@@ -291,23 +316,18 @@ class TestBuildPipelineView:
         assert view["health"] == pv.HEALTH_DRAFT
 
     def test_rollup_status_reports_any_healthy_running_mode(self):
-        assert pv.rollup_status(
-            [{"status": "stopped"}, {"status": "running"}]
-        ) == pv.STATUS_RUNNING
-        assert pv.rollup_status(
-            [{"status": "draft"}, {"status": "stopped"}]
-        ) == pv.STATUS_STOPPED
+        assert pv.rollup_status([{"status": "stopped"}, {"status": "running"}]) == pv.STATUS_RUNNING
+        assert pv.rollup_status([{"status": "draft"}, {"status": "stopped"}]) == pv.STATUS_STOPPED
         assert pv.rollup_status([{"status": "draft"}]) == pv.STATUS_DRAFT
 
     def test_rollup_health_unhealthy_wins(self):
-        assert pv.rollup_health(
-            [{"health": "healthy"}, {"health": "unhealthy"}]
-        ) == pv.HEALTH_UNHEALTHY
+        assert (
+            pv.rollup_health([{"health": "healthy"}, {"health": "unhealthy"}])
+            == pv.HEALTH_UNHEALTHY
+        )
         assert pv.rollup_health([{"health": "healthy"}]) == pv.HEALTH_HEALTHY
         assert pv.rollup_health([{"health": "draft"}]) == pv.HEALTH_DRAFT
-        assert pv.rollup_health(
-            [{"health": "healthy"}, {"health": "draft"}]
-        ) == pv.HEALTH_HEALTHY
+        assert pv.rollup_health([{"health": "healthy"}, {"health": "draft"}]) == pv.HEALTH_HEALTHY
 
 
 class TestRollupApiHealth:

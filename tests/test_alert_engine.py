@@ -98,9 +98,7 @@ class FakeAlertDb:
                 or current_status == "cleared"
                 or (
                     current_status != "cleared"
-                    and not (
-                        current_status == "acknowledged" and proposed_status == "open"
-                    )
+                    and not (current_status == "acknowledged" and proposed_status == "open")
                     and proposed_version >= current_version
                 )
             )
@@ -533,10 +531,7 @@ class TestAlertEngineStateMachine:
         joined = "\n".join(sqls)
         assert "INSERT INTO alert" in joined
         assert "INSERT INTO alert_event" in joined
-        assert any(
-            "INSERT INTO alert" in sql and "INSERT INTO alert_event" in sql
-            for sql in sqls
-        )
+        assert any("INSERT INTO alert" in sql and "INSERT INTO alert_event" in sql for sql in sqls)
         assert db.by_fp
         assert db.events
 
@@ -544,9 +539,7 @@ class TestAlertEngineStateMachine:
         """[C7407][defect] After restart, in-memory/SSE ids match Lakebase fingerprint identity."""
         db = FakeAlertDb()
         first = AlertEngine()
-        opened = await first.evaluate(
-            [_reading(85.0)], [_spindle_rule()], db=db, pipeline_id="p1"
-        )
+        opened = await first.evaluate([_reading(85.0)], [_spindle_rule()], db=db, pipeline_id="p1")
         persisted_id = opened[0].alert.id
         assert db.by_id[persisted_id]["fingerprint"] == opened[0].alert.fingerprint
 
@@ -558,9 +551,7 @@ class TestAlertEngineStateMachine:
         listed = await restarted.list_alerts(db=db, status="open")
         assert listed[0].id == persisted_id
 
-        await first.evaluate(
-            [_reading(50.0)], [_spindle_rule()], db=db, pipeline_id="p1"
-        )
+        await first.evaluate([_reading(50.0)], [_spindle_rule()], db=db, pipeline_id="p1")
         third = AlertEngine()
         reopened = await third.evaluate(
             [_reading(90.0)], [_spindle_rule()], db=db, pipeline_id="p1"
@@ -579,9 +570,7 @@ class TestAlertEngineStateMachine:
         ack = await engine.acknowledge(alert_id, user="ops@example.com", db=db)
         assert ack is not None
         assert db.by_id[alert_id]["status"] == "acknowledged"
-        compact = " ".join(
-            sql for kind, sql in db.calls if kind == "fetchrow"
-        ).lower()
+        compact = " ".join(sql for kind, sql in db.calls if kind == "fetchrow").lower()
         assert "version" in compact
         assert "acknowledged" in compact
 
@@ -635,9 +624,7 @@ class TestAlertEngineStateMachine:
         alerts = await engine.list_alerts()
         assert len(alerts) == 1
         ack_task = engine.acknowledge(alerts[0].id, user="ops@example.com")
-        update_task = engine.evaluate(
-            [_reading(95.0)], [rule], pipeline_id="p-lock"
-        )
+        update_task = engine.evaluate([_reading(95.0)], [rule], pipeline_id="p-lock")
         ack, updated = await asyncio.gather(ack_task, update_task)
         assert engine.get_alert_sync(alerts[0].id) is not None
         assert len(await engine.list_alerts()) == 1

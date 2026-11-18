@@ -155,6 +155,7 @@ def zerobus_produce_snippet(
     """
     if secret_scope is None:
         from core.workspace_config import get_secret_scope
+
         secret_scope = get_secret_scope()
     record_fields = (
         ("sensor_name", "s"),
@@ -174,7 +175,9 @@ def zerobus_produce_snippet(
     record_lines = ",\n            ".join(
         f"{_col(field)!r}: {expr}" for field, expr in record_fields
     )
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     import random, time
     from zerobus.sdk.shared import RecordType, StreamConfigurationOptions, TableProperties
@@ -216,7 +219,8 @@ try:
     _ok(table=TABLE, produced={num_records}, server_endpoint=SERVER_ENDPOINT)
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -246,15 +250,9 @@ def _resolve_zerobus_creds(
     Returns ``(resolved_id, resolved_secret, error)``; ``error`` is non-None
     only when a UC secret lookup was attempted and failed.
     """
-    resolved_id = (
-        client_id
-        or os.getenv("DATABRICKS_CLIENT_ID")
-        or os.getenv("ZEROBUS_CLIENT_ID")
-    )
+    resolved_id = client_id or os.getenv("DATABRICKS_CLIENT_ID") or os.getenv("ZEROBUS_CLIENT_ID")
     resolved_secret = (
-        client_secret
-        or os.getenv("DATABRICKS_CLIENT_SECRET")
-        or os.getenv("ZEROBUS_CLIENT_SECRET")
+        client_secret or os.getenv("DATABRICKS_CLIENT_SECRET") or os.getenv("ZEROBUS_CLIENT_SECRET")
     )
     if not resolved_secret and secret_scope and secret_key:
         try:
@@ -336,8 +334,7 @@ def auth_probe(
     if not resolved_id or not resolved_secret:
         detail["token_ok"] = None
         detail["token_skipped"] = (
-            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or "
-            "ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
         )
         return True, detail  # reachability alone passes when creds are absent
 
@@ -452,8 +449,7 @@ def produce(
         detail["secret_error"] = secret_error
     if not resolved_id or not resolved_secret:
         detail["error"] = (
-            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or "
-            "ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
         )
         return False, detail
 
@@ -463,7 +459,9 @@ def produce(
 
     # Derive industry from catalog name (iot_<industry>).
     catalog_part = table_fqn.split(".")[0]
-    industry = catalog_part.removeprefix("iot_") if catalog_part.startswith("iot_") else catalog_part
+    industry = (
+        catalog_part.removeprefix("iot_") if catalog_part.startswith("iot_") else catalog_part
+    )
 
     try:
         table_props = TableProperties(table_fqn)

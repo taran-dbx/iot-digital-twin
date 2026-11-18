@@ -17,17 +17,20 @@ async def list_warehouses():
     """List SQL warehouses available in the workspace."""
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         warehouses = []
         for wh in w.warehouses.list():
-            warehouses.append({
-                "id": wh.id,
-                "name": wh.name,
-                "cluster_size": wh.cluster_size,
-                "state": str(wh.state.value) if wh.state else "UNKNOWN",
-                "serverless": bool(wh.enable_serverless_compute),
-                "auto_stop_mins": wh.auto_stop_mins or 0,
-            })
+            warehouses.append(
+                {
+                    "id": wh.id,
+                    "name": wh.name,
+                    "cluster_size": wh.cluster_size,
+                    "state": str(wh.state.value) if wh.state else "UNKNOWN",
+                    "serverless": bool(wh.enable_serverless_compute),
+                    "auto_stop_mins": wh.auto_stop_mins or 0,
+                }
+            )
         return warehouses
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)[:300]})
@@ -48,6 +51,7 @@ async def create_warehouse(request: Request):
     try:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.sql import CreateWarehouseRequestWarehouseType
+
         w = WorkspaceClient()
         waiter = w.warehouses.create(
             name=name,

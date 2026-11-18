@@ -108,9 +108,7 @@ async def acknowledge_alert(
     existing = await engine.get_alert(alert_id, db=_backend_db(state))
     if existing is None:
         raise HTTPException(status_code=404, detail="Alert not found")
-    transition = await engine.acknowledge(
-        alert_id, user=user_email, db=_backend_db(state)
-    )
+    transition = await engine.acknowledge(alert_id, user=user_email, db=_backend_db(state))
     if transition is None:
         raise HTTPException(status_code=409, detail="Alert cannot be acknowledged")
     payload = build_lifecycle_payload(transition.event_type, transition.alert)
@@ -205,8 +203,7 @@ async def evaluate_alerts(
         pipeline_id=str(pipeline_id) if pipeline_id else None,
     )
     payloads = [
-        build_lifecycle_payload(item.event_type, item.alert, item.extra)
-        for item in transitions
+        build_lifecycle_payload(item.event_type, item.alert, item.extra) for item in transitions
     ]
     return JSONResponse(
         content={

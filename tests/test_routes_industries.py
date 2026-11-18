@@ -39,10 +39,13 @@ class TestIndustriesCatalog:
         transport = ASGITransport(app=app)
 
         fake_catalog = [{"id": "pharmaceutical", "modes": []}]
-        with patch(
-            "routes.industries.industry_service.get_catalog",
-            AsyncMock(return_value=fake_catalog),
-        ), patch("routes.industries.app_permissions.is_admin", MagicMock(return_value=False)):
+        with (
+            patch(
+                "routes.industries.industry_service.get_catalog",
+                AsyncMock(return_value=fake_catalog),
+            ),
+            patch("routes.industries.app_permissions.is_admin", MagicMock(return_value=False)),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/industries/catalog")
 
@@ -57,9 +60,10 @@ class TestIndustriesCatalog:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.industries.industry_service.get_catalog", AsyncMock(return_value=[])
-        ), patch("routes.industries.app_permissions.is_admin", MagicMock(return_value=True)):
+        with (
+            patch("routes.industries.industry_service.get_catalog", AsyncMock(return_value=[])),
+            patch("routes.industries.app_permissions.is_admin", MagicMock(return_value=True)),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/industries/catalog")
 
@@ -77,9 +81,7 @@ class TestStartIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.industries.industry_service.start_mode", AsyncMock()
-        ) as start_mock:
+        with patch("routes.industries.industry_service.start_mode", AsyncMock()) as start_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/banking/modes/realtime/start")
 
@@ -93,13 +95,9 @@ class TestStartIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch(
-            "routes.industries.industry_service.start_mode", AsyncMock()
-        ) as start_mock:
+        with patch("routes.industries.industry_service.start_mode", AsyncMock()) as start_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    "/api/industries/pharmaceutical/modes/nightly/start"
-                )
+                resp = await client.post("/api/industries/pharmaceutical/modes/nightly/start")
 
         assert resp.status_code == 400
         assert "nightly" in resp.json()["error"]
@@ -115,9 +113,7 @@ class TestStartIndustryMode:
         start_mock = AsyncMock(return_value=fake_result)
         with patch("routes.industries.industry_service.start_mode", start_mock):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    "/api/industries/pharmaceutical/modes/realtime/start"
-                )
+                resp = await client.post("/api/industries/pharmaceutical/modes/realtime/start")
 
         assert resp.status_code == 200
         assert resp.json() == fake_result
@@ -149,9 +145,7 @@ class TestStopIndustryMode:
 
         with patch("routes.industries.industry_service.stop_mode", AsyncMock()) as stop_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    "/api/industries/pharmaceutical/modes/nightly/stop"
-                )
+                resp = await client.post("/api/industries/pharmaceutical/modes/nightly/stop")
 
         assert resp.status_code == 400
         stop_mock.assert_not_awaited()
@@ -166,9 +160,7 @@ class TestStopIndustryMode:
         stop_mock = AsyncMock(return_value=fake_result)
         with patch("routes.industries.industry_service.stop_mode", stop_mock):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.post(
-                    "/api/industries/manufacturing/modes/microbatch/stop"
-                )
+                resp = await client.post("/api/industries/manufacturing/modes/microbatch/stop")
 
         assert resp.status_code == 200
         assert resp.json() == fake_result
@@ -241,12 +233,15 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         running_row = {"id": "pid-1", "status": "running"}
-        with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode",
-            AsyncMock(return_value=running_row),
-        ), patch(
-            "routes.industries.industry_service.update_pipeline_config", AsyncMock()
-        ) as update_mock:
+        with (
+            patch(
+                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                AsyncMock(return_value=running_row),
+            ),
+            patch(
+                "routes.industries.industry_service.update_pipeline_config", AsyncMock()
+            ) as update_mock,
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
                     "/api/industries/pharmaceutical/modes/realtime/config",
@@ -264,12 +259,15 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         starting_row = {"id": "pid-1", "status": "starting"}
-        with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode",
-            AsyncMock(return_value=starting_row),
-        ), patch(
-            "routes.industries.industry_service.update_pipeline_config", AsyncMock()
-        ) as update_mock:
+        with (
+            patch(
+                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                AsyncMock(return_value=starting_row),
+            ),
+            patch(
+                "routes.industries.industry_service.update_pipeline_config", AsyncMock()
+            ) as update_mock,
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
                     "/api/industries/pharmaceutical/modes/realtime/config",
@@ -287,13 +285,16 @@ class TestUpdateIndustryModeConfig:
 
         stopped_row = {"id": "pid-1", "status": "stopped"}
         merged = {"rate_hz": 10, "capture_metrics": False}
-        with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode",
-            AsyncMock(return_value=stopped_row),
-        ), patch(
-            "routes.industries.industry_service.update_pipeline_config",
-            AsyncMock(return_value=merged),
-        ) as update_mock:
+        with (
+            patch(
+                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                AsyncMock(return_value=stopped_row),
+            ),
+            patch(
+                "routes.industries.industry_service.update_pipeline_config",
+                AsyncMock(return_value=merged),
+            ) as update_mock,
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
                     "/api/industries/pharmaceutical/modes/realtime/config",
@@ -315,12 +316,15 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         idle_row = {"id": "pid-1", "status": "idle"}
-        with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode",
-            AsyncMock(return_value=idle_row),
-        ), patch(
-            "routes.industries.industry_service.update_pipeline_config",
-            AsyncMock(return_value={"rate_hz": 3}),
+        with (
+            patch(
+                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                AsyncMock(return_value=idle_row),
+            ),
+            patch(
+                "routes.industries.industry_service.update_pipeline_config",
+                AsyncMock(return_value={"rate_hz": 3}),
+            ),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
@@ -337,13 +341,16 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         stopped_row = {"id": "pid-2", "status": "stopped"}
-        with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode",
-            AsyncMock(return_value=stopped_row),
-        ), patch(
-            "routes.industries.industry_service.update_pipeline_config",
-            AsyncMock(return_value={"rate_hz": 2}),
-        ) as update_mock:
+        with (
+            patch(
+                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                AsyncMock(return_value=stopped_row),
+            ),
+            patch(
+                "routes.industries.industry_service.update_pipeline_config",
+                AsyncMock(return_value={"rate_hz": 2}),
+            ) as update_mock,
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
                     "/api/industries/pharmaceutical/modes/zerobus/config",

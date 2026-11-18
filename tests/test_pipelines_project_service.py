@@ -142,10 +142,7 @@ class TestProvisionIndustryBranch:
         assert ce_kwargs["endpoint_id"] == "replica"
         from databricks.sdk.service.postgres import EndpointType
 
-        assert (
-            ce_kwargs["endpoint"].spec.endpoint_type
-            == EndpointType.ENDPOINT_TYPE_READ_ONLY
-        )
+        assert ce_kwargs["endpoint"].spec.endpoint_type == EndpointType.ENDPOINT_TYPE_READ_ONLY
 
         # Return contract
         assert result["project"] == get_pipelines_project()
@@ -176,9 +173,7 @@ class TestProvisionIndustryBranch:
             return kwargs
 
         with patch.object(pps, "record_resource", side_effect=_record):
-            await pps.provision_industry_branch(
-                "pharmaceutical", ws=ws, db=db, setup_id="setup-1"
-            )
+            await pps.provision_industry_branch("pharmaceutical", ws=ws, db=db, setup_id="setup-1")
 
         types = [r["resource_type"] for r in recorded]
         assert "lakebase_branch" in types
@@ -336,9 +331,7 @@ async def test_integration_branch_primary_write_replica_read() -> None:
 
         # The read replica must reject writes.
         with pytest.raises(Exception):
-            await read_mgr.execute(
-                "INSERT INTO itest_probe (token) VALUES ($1)", uuid.uuid4().hex
-            )
+            await read_mgr.execute("INSERT INTO itest_probe (token) VALUES ($1)", uuid.uuid4().hex)
     finally:
         if write_mgr is not None:
             try:
@@ -353,9 +346,7 @@ async def test_integration_branch_primary_write_replica_read() -> None:
         # Tear down the throwaway branch (removes its primary endpoint too);
         # delete the replica first.
         try:
-            ws.postgres.delete_endpoint(
-                name=pps.endpoint_resource_name(branch, "replica")
-            )
+            ws.postgres.delete_endpoint(name=pps.endpoint_resource_name(branch, "replica"))
         except Exception:
             pass
         try:

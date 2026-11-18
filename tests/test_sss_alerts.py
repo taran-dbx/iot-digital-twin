@@ -16,6 +16,7 @@ from core.state import AppState
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_alerts_app(state: AppState):
     """Create a minimal FastAPI app that includes the websocket router."""
     from fastapi import FastAPI
@@ -61,46 +62,37 @@ async def alerts_client_no_sse() -> AsyncGenerator[AsyncClient, None]:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestSssAlertsIngest:
     """POST /api/sss/alerts endpoint behaviour."""
 
     @pytest.mark.asyncio
-    async def test_returns_200_with_empty_alerts(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_returns_200_with_empty_alerts(self, alerts_client: tuple) -> None:
         client, _ = alerts_client
         resp = await client.post("/api/sss/alerts", json={"alerts": []})
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_empty_alerts_count_is_zero(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_empty_alerts_count_is_zero(self, alerts_client: tuple) -> None:
         client, _ = alerts_client
         resp = await client.post("/api/sss/alerts", json={"alerts": []})
         assert resp.json()["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_empty_alerts_status_is_ok(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_empty_alerts_status_is_ok(self, alerts_client: tuple) -> None:
         client, _ = alerts_client
         resp = await client.post("/api/sss/alerts", json={"alerts": []})
         assert resp.json()["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_missing_alerts_key_treated_as_empty(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_missing_alerts_key_treated_as_empty(self, alerts_client: tuple) -> None:
         client, _ = alerts_client
         resp = await client.post("/api/sss/alerts", json={})
         assert resp.status_code == 200
         assert resp.json()["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_single_alert_returns_count_one(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_single_alert_returns_count_one(self, alerts_client: tuple) -> None:
         client, _ = alerts_client
         payload = {
             "alerts": [
@@ -121,9 +113,7 @@ class TestSssAlertsIngest:
         assert resp.json()["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_alert_dispatched_to_sse_queue(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_alert_dispatched_to_sse_queue(self, alerts_client: tuple) -> None:
         client, queue = alerts_client
         payload = {
             "alerts": [
@@ -143,9 +133,7 @@ class TestSssAlertsIngest:
         assert not queue.empty()
 
     @pytest.mark.asyncio
-    async def test_event_type_is_alert_opened(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_event_type_is_alert_opened(self, alerts_client: tuple) -> None:
         client, queue = alerts_client
         payload = {
             "alerts": [
@@ -166,9 +154,7 @@ class TestSssAlertsIngest:
         assert event["type"] == "alert_opened"
 
     @pytest.mark.asyncio
-    async def test_event_fields_match_alert_payload(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_event_fields_match_alert_payload(self, alerts_client: tuple) -> None:
         client, queue = alerts_client
         alert = {
             "pipeline_id": "pipe-1",
@@ -191,25 +177,26 @@ class TestSssAlertsIngest:
         assert event["timestamp"] == alert["timestamp"]
 
     @pytest.mark.asyncio
-    async def test_multiple_alerts_all_dispatched(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_multiple_alerts_all_dispatched(self, alerts_client: tuple) -> None:
         client, queue = alerts_client
         alerts = [
-            {"pipeline_id": f"pipe-{i}", "sensor_id": f"s-{i}",
-             "sensor_type": "temperature", "industry": "manufacturing",
-             "value": float(i),
-             "threshold_min": None, "threshold_max": None,
-             "timestamp": "2026-04-05T10:00:00Z"}
+            {
+                "pipeline_id": f"pipe-{i}",
+                "sensor_id": f"s-{i}",
+                "sensor_type": "temperature",
+                "industry": "manufacturing",
+                "value": float(i),
+                "threshold_min": None,
+                "threshold_max": None,
+                "timestamp": "2026-04-05T10:00:00Z",
+            }
             for i in range(3)
         ]
         await client.post("/api/sss/alerts", json={"alerts": alerts})
         assert queue.qsize() == 3
 
     @pytest.mark.asyncio
-    async def test_no_sse_clients_still_returns_ok(
-        self, alerts_client_no_sse: AsyncClient
-    ) -> None:
+    async def test_no_sse_clients_still_returns_ok(self, alerts_client_no_sse: AsyncClient) -> None:
         payload = {
             "alerts": [
                 {
@@ -229,9 +216,7 @@ class TestSssAlertsIngest:
         assert resp.json()["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_partial_alert_fields_handled_gracefully(
-        self, alerts_client: tuple
-    ) -> None:
+    async def test_partial_alert_fields_handled_gracefully(self, alerts_client: tuple) -> None:
         """Alerts with missing fields should not raise — None values are acceptable."""
         client, queue = alerts_client
         resp = await client.post(

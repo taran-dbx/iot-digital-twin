@@ -17,6 +17,7 @@ from services.source_registry import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db(fetchrow_return=None) -> MagicMock:
     db = MagicMock()
     db.fetchrow = AsyncMock(return_value=fetchrow_return)
@@ -27,6 +28,7 @@ def _make_db(fetchrow_return=None) -> MagicMock:
 # ---------------------------------------------------------------------------
 # Task 2: derive_source_key
 # ---------------------------------------------------------------------------
+
 
 class TestDeriveSourceKey:
     """Verify normalized key derivation for all 6 source types."""
@@ -122,13 +124,16 @@ class TestDeriveSourceKey:
 # Task 3: check_source_available
 # ---------------------------------------------------------------------------
 
+
 class TestCheckSourceAvailable:
     """Verify check_source_available returns correct availability dicts."""
 
     @pytest.mark.asyncio
     async def test_returns_available_true_when_no_row(self) -> None:
         db = _make_db(fetchrow_return=None)
-        result = await check_source_available(db, "kinesis", {"region": "us-east-1", "stream_name": "s"})
+        result = await check_source_available(
+            db, "kinesis", {"region": "us-east-1", "stream_name": "s"}
+        )
         assert result == {"available": True}
 
     @pytest.mark.asyncio
@@ -169,6 +174,7 @@ class TestCheckSourceAvailable:
 # ---------------------------------------------------------------------------
 # Task 3: claim_source
 # ---------------------------------------------------------------------------
+
 
 class TestClaimSource:
     """Verify claim_source inserts or returns conflict info."""
@@ -234,6 +240,7 @@ class TestClaimSource:
 # ---------------------------------------------------------------------------
 # Task 3: release_source
 # ---------------------------------------------------------------------------
+
 
 class TestReleaseSource:
     """Verify release_source issues correct UPDATE statement."""

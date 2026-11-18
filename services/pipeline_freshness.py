@@ -109,9 +109,7 @@ async def _realtime_flowing(handle: Any, window_minutes: int) -> bool:
         return False
 
 
-async def _dbsql_flowing(
-    run_sql: RunSql, industry: str, mode: str, window_minutes: int
-) -> bool:
+async def _dbsql_flowing(run_sql: RunSql, industry: str, mode: str, window_minutes: int) -> bool:
     """True when the mode's Delta sink has a row inside the window (via DBSQL).
 
     Cheap ``LIMIT 1`` existence probe; never raises — any error (missing table,
@@ -134,7 +132,9 @@ async def _dbsql_flowing(
     except Exception as exc:
         logger.info(
             "%s freshness probe failed for %s (treating as not flowing): %s",
-            mode, industry, exc,
+            mode,
+            industry,
+            exc,
         )
         return False
 
@@ -201,9 +201,7 @@ def _mode_job_running(deployment: Mapping, job_running: Mapping[str, Any]) -> bo
     job_id = deployment.get("job_id")
     if not job_id:
         return False
-    running, degraded, _starting, _restartable, _detail = pv._runtime(
-        job_running.get(str(job_id))
-    )
+    running, degraded, _starting, _restartable, _detail = pv._runtime(job_running.get(str(job_id)))
     return running and not degraded
 
 
@@ -230,9 +228,7 @@ async def flowing_lookup(
     to_probe = [
         d.get("mode")
         for d in (deployments or [])
-        if pv.is_deployed(d)
-        and d.get("mode")
-        and _mode_job_running(d, job_running)
+        if pv.is_deployed(d) and d.get("mode") and _mode_job_running(d, job_running)
     ]
     if not to_probe:
         return {}

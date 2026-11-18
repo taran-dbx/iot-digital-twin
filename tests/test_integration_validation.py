@@ -45,14 +45,20 @@ async def test_provision_cluster_live(app_backend_conn):
     setup = await pipeline_setup_repo.get_setup_by_industry(app_backend_conn, _INDUSTRY)
     if setup is None:
         setup = await pipeline_setup_repo.create_setup(
-            app_backend_conn, industry=_INDUSTRY, enabled_modes=["microbatch"],
+            app_backend_conn,
+            industry=_INDUSTRY,
+            enabled_modes=["microbatch"],
             bootstrap_servers=os.getenv("IOT_BOOTSTRAP", ""),
         )
 
     ctx = validation_service.StepContext(
-        db=app_backend_conn, setup=setup,
+        db=app_backend_conn,
+        setup=setup,
         state=sm.initial_state(setup.get("enabled_modes") or []),
-        key="provision_cluster", step="provision_cluster", mode=None, ws=ws,
+        key="provision_cluster",
+        step="provision_cluster",
+        mode=None,
+        ws=ws,
     )
     result = await validation_steps.provision_cluster(ctx)
     try:
@@ -78,10 +84,13 @@ def test_verified_cluster_config_is_locked(monkeypatch):
     import importlib
 
     import services.validation_config as _vc
+
     importlib.reload(_vc)
 
     spec = _vc.build_validation_cluster_spec(
-        node_type_id="m5d.xlarge", num_workers=2, single_user_name="a@b.com",
+        node_type_id="m5d.xlarge",
+        num_workers=2,
+        single_user_name="a@b.com",
     )
     assert spec["spark_version"] == "18.2.x-scala2.13"
     assert spec["data_security_mode"] == "SINGLE_USER"

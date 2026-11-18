@@ -65,9 +65,7 @@ async def get_deployment(db: DBExecutor, deployment_id: Any) -> dict | None:
     return _to_dict(row)
 
 
-async def get_deployment_by_mode(
-    db: DBExecutor, setup_id: Any, mode: str
-) -> dict | None:
+async def get_deployment_by_mode(db: DBExecutor, setup_id: Any, mode: str) -> dict | None:
     """Return the deployment for a (setup, mode) pair, or None."""
     row = await db.fetchrow(
         f"SELECT * FROM {TABLE} WHERE setup_id = $1 AND mode = $2",
@@ -86,9 +84,7 @@ async def list_deployments(db: DBExecutor, setup_id: Any) -> list[dict]:
     return [_to_dict(r) for r in rows]
 
 
-async def update_deployment(
-    db: DBExecutor, deployment_id: Any, **fields: Any
-) -> dict | None:
+async def update_deployment(db: DBExecutor, deployment_id: Any, **fields: Any) -> dict | None:
     """Update the given columns on a deployment and return the updated row."""
     if not fields:
         return await get_deployment(db, deployment_id)

@@ -85,27 +85,33 @@ async def start_data_producer(
         run_id = waiter.response.run_id
         logger.info(
             "Submitted serverless %s producer run_id=%s for pipeline %s",
-            source_type, run_id, short_id,
+            source_type,
+            run_id,
+            short_id,
         )
 
-        state.update({
-            "running": True,
-            "source_type": source_type,
-            "source_label": source_label(source_type),
-            "destination": destination,
-            "run_id": run_id,
-            "state": "STARTING",
-            "error": None,
-        })
+        state.update(
+            {
+                "running": True,
+                "source_type": source_type,
+                "source_label": source_label(source_type),
+                "destination": destination,
+                "run_id": run_id,
+                "state": "STARTING",
+                "error": None,
+            }
+        )
 
     except Exception as exc:
-        state.update({
-            "running": False,
-            "source_type": source_type,
-            "source_label": source_label(source_type),
-            "state": "FAILED",
-            "error": str(exc)[:500],
-        })
+        state.update(
+            {
+                "running": False,
+                "source_type": source_type,
+                "source_label": source_label(source_type),
+                "state": "FAILED",
+                "error": str(exc)[:500],
+            }
+        )
         logger.error("Data producer start failed: %s\n%s", exc, traceback.format_exc())
 
     return state
@@ -121,6 +127,7 @@ async def stop_data_producer(
     if run_id:
         try:
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
             w.jobs.cancel_run(run_id=run_id)
             logger.info("Data producer run %s cancelled for pipeline %s", run_id, pipeline_id[:8])
@@ -139,9 +146,14 @@ def poll_producer_state(state: dict) -> dict:
         return state
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         run = w.jobs.get_run(run_id=run_id)
-        lcs = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
+        lcs = (
+            run.state.life_cycle_state.value
+            if run.state and run.state.life_cycle_state
+            else "UNKNOWN"
+        )
 
         if lcs == "RUNNING":
             state["state"] = "RUNNING"

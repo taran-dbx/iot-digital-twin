@@ -42,11 +42,7 @@ def _is_missing_metastore_storage(exc: Exception) -> bool:
     changes still trigger the user-friendly hint.
     """
     msg = str(exc).lower()
-    return (
-        "metastore storage root" in msg
-        or "default storage" in msg
-        or "managed location" in msg
-    )
+    return "metastore storage root" in msg or "default storage" in msg or "managed location" in msg
 
 
 async def _load_user_settings(state: AppState, user_email: str) -> dict:
@@ -102,9 +98,7 @@ async def _resolve_uc_storage_root(
     return env_root.rstrip("/") if env_root else ""
 
 
-async def _load_pipeline_sink_config(
-    state: AppState, pipeline_id: str | None
-) -> dict:
+async def _load_pipeline_sink_config(state: AppState, pipeline_id: str | None) -> dict:
     """Return the pipeline's ``sink_config`` dict, or ``{}`` if unavailable.
 
     Handles missing pipeline_id, unavailable DB, missing row, malformed JSON,
@@ -220,9 +214,7 @@ def _bind_catalog_to_workspace(w, catalog_name: str) -> dict:
                 )
             ],
         )
-        logger.info(
-            "Bound catalog '%s' READ_WRITE to workspace %s", catalog_name, workspace_id
-        )
+        logger.info("Bound catalog '%s' READ_WRITE to workspace %s", catalog_name, workspace_id)
         return {"resource": resource, "status": "bound", "workspace_id": workspace_id}
     except Exception as exc:
         logger.warning(
@@ -260,12 +252,14 @@ def _grant_zerobus_sp(w, catalog_name: str, schemas: list[str], sp_app_id: str) 
         from databricks.sdk.service.catalog import PermissionsChange, Privilege
     except ImportError as exc:
         logger.error("SDK grant enums unavailable; cannot grant Zerobus SP: %s", exc)
-        return [{
-            "resource": f"Zerobus SP grants on {catalog_name}",
-            "principal": sp_app_id,
-            "status": "failed",
-            "error": f"SDK grant enums unavailable: {exc}",
-        }]
+        return [
+            {
+                "resource": f"Zerobus SP grants on {catalog_name}",
+                "principal": sp_app_id,
+                "status": "failed",
+                "error": f"SDK grant enums unavailable: {exc}",
+            }
+        ]
 
     def _apply(securable_type: str, full_name: str, privileges: list) -> None:
         try:
@@ -274,24 +268,31 @@ def _grant_zerobus_sp(w, catalog_name: str, schemas: list[str], sp_app_id: str) 
                 full_name=full_name,
                 changes=[PermissionsChange(principal=sp_app_id, add=list(privileges))],
             )
-            results.append({
-                "resource": f"{securable_type}:{full_name}",
-                "principal": sp_app_id,
-                "privileges": [p.value for p in privileges],
-                "status": "created",
-            })
+            results.append(
+                {
+                    "resource": f"{securable_type}:{full_name}",
+                    "principal": sp_app_id,
+                    "privileges": [p.value for p in privileges],
+                    "status": "created",
+                }
+            )
         except Exception as grant_exc:
             logger.error(
                 "Zerobus SP grant on %s '%s' for principal %s FAILED (non-fatal): %s",
-                securable_type, full_name, sp_app_id, grant_exc,
+                securable_type,
+                full_name,
+                sp_app_id,
+                grant_exc,
             )
-            results.append({
-                "resource": f"{securable_type}:{full_name}",
-                "principal": sp_app_id,
-                "privileges": [p.value for p in privileges],
-                "status": "failed",
-                "error": str(grant_exc),
-            })
+            results.append(
+                {
+                    "resource": f"{securable_type}:{full_name}",
+                    "principal": sp_app_id,
+                    "privileges": [p.value for p in privileges],
+                    "status": "failed",
+                    "error": str(grant_exc),
+                }
+            )
 
     # Catalog first so USE_CATALOG exists before schema-level access is used.
     _apply("catalog", catalog_name, [Privilege.USE_CATALOG])
@@ -354,6 +355,7 @@ async def provision_uc(
             """Check if exception indicates resource already exists."""
             try:
                 from databricks.sdk.errors import AlreadyExists
+
                 if isinstance(exc, AlreadyExists):
                     return True
             except ImportError:
@@ -395,8 +397,12 @@ async def provision_uc(
 
         pipeline_id = body.get("pipeline_id")
         if pipeline_id:
-            await track_resource(state.db, state.db_available, pipeline_id, "uc_catalog", catalog_name)
-            await track_resource(state.db, state.db_available, pipeline_id, "uc_schema", schema_name)
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "uc_catalog", catalog_name
+            )
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "uc_schema", schema_name
+            )
 
         return {"catalog": catalog_name, "schema": schema_name, "status": status}
 
@@ -525,15 +531,23 @@ async def provision_pipeline_catalog(
                     "Zerobus SP grants partially failed for catalog '%s': %d of %d "
                     "grant(s) failed — the SP may be unable to write to the Delta "
                     "table. Failures: %s",
-                    catalog_name, len(failed), len(grants),
+                    catalog_name,
+                    len(failed),
+                    len(grants),
                     [g.get("resource") for g in failed],
                 )
 
         volume_path = f"/Volumes/{catalog_name}/checkpoints/{volume_name}"
         if pipeline_id:
-            await track_resource(state.db, state.db_available, pipeline_id, "uc_catalog", catalog_name)
-            await track_resource(state.db, state.db_available, pipeline_id, "checkpoint_volume", volume_path)
-            await track_resource(state.db, state.db_available, pipeline_id, "catalog_schemas", json.dumps(schemas))
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "uc_catalog", catalog_name
+            )
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "checkpoint_volume", volume_path
+            )
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "catalog_schemas", json.dumps(schemas)
+            )
 
         return {
             "catalog": catalog_name,
@@ -623,6 +637,7 @@ async def list_pipeline_secret_keys(
 
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         secret_list = w.secrets.list_secrets(scope=scope_name)
         keys = [s.key for s in secret_list if s.key]
@@ -687,7 +702,9 @@ async def provision_lakebase_table(
             if not project_id:
                 return JSONResponse(
                     status_code=422,
-                    content={"error": "project_id is required (and could not be derived from LAKEBASE_ENDPOINT)"},
+                    content={
+                        "error": "project_id is required (and could not be derived from LAKEBASE_ENDPOINT)"
+                    },
                 )
             lb["project_id"] = project_id
             lb["branch_id"] = branch_id
@@ -704,12 +721,18 @@ async def provision_lakebase_table(
 
         svc_result = await provisioning_service.provision_lakebase_table(lb)
         if svc_result.get("status") == "failed":
-            return JSONResponse(status_code=500, content={"error": svc_result.get("error", "Provisioning failed")})
+            return JSONResponse(
+                status_code=500, content={"error": svc_result.get("error", "Provisioning failed")}
+            )
         if svc_result.get("status") == "already_exists":
-            return JSONResponse(status_code=409, content={"error": f"Table '{table_name}' already exists"})
+            return JSONResponse(
+                status_code=409, content={"error": f"Table '{table_name}' already exists"}
+            )
 
         if pipeline_id:
-            await track_resource(state.db, state.db_available, pipeline_id, "lakebase_table", table_name)
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "lakebase_table", table_name
+            )
 
         response: dict = {
             "table": table_name,
@@ -749,7 +772,9 @@ async def provision_lakebase_table(
             if not project_id:
                 return JSONResponse(
                     status_code=422,
-                    content={"error": "project_id is required (and could not be derived from LAKEBASE_ENDPOINT)"},
+                    content={
+                        "error": "project_id is required (and could not be derived from LAKEBASE_ENDPOINT)"
+                    },
                 )
             branch_id = branch_id or "production"
             parent = f"projects/{project_id}/branches/{branch_id}"
@@ -804,7 +829,9 @@ async def provision_lakebase_table(
             await conn.close()
 
         if pipeline_id:
-            await track_resource(state.db, state.db_available, pipeline_id, "lakebase_table", table_name)
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "lakebase_table", table_name
+            )
 
         response_no_tier: dict = {"table": table_name, "database": database, "status": "created"}
         if sse_metrics:

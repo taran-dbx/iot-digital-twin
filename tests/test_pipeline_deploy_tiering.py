@@ -35,6 +35,7 @@ from routes import provisioning as prov_route
 # ---------------------------------------------------------------------------
 def _make_request(body: dict) -> SimpleNamespace:
     """Build a minimal async request object that returns ``body`` from .json()."""
+
     async def _json() -> dict:
         return body
 
@@ -88,17 +89,15 @@ class TestExtractValidTiering:
         assert prov_route._extract_valid_tiering({"tiering": {"hot": "1 hour"}}) is None
 
     def test_none_when_hot_empty_string(self) -> None:
-        assert prov_route._extract_valid_tiering(
-            {"tiering": {"hot": "", "drop": "7 days"}}
-        ) is None
+        assert prov_route._extract_valid_tiering({"tiering": {"hot": "", "drop": "7 days"}}) is None
 
     def test_none_when_tiering_is_not_dict(self) -> None:
         assert prov_route._extract_valid_tiering({"tiering": ["1 hour", "7 days"]}) is None
 
     def test_none_when_hot_not_string(self) -> None:
-        assert prov_route._extract_valid_tiering(
-            {"tiering": {"hot": 3600, "drop": "7 days"}}
-        ) is None
+        assert (
+            prov_route._extract_valid_tiering({"tiering": {"hot": 3600, "drop": "7 days"}}) is None
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +105,10 @@ class TestExtractValidTiering:
 # ---------------------------------------------------------------------------
 class TestExtractSseMetrics:
     def test_returns_clean_string_list(self) -> None:
-        assert prov_route._extract_sse_metrics(
-            {"sse_metrics": ["temp", "humidity"]}
-        ) == ["temp", "humidity"]
+        assert prov_route._extract_sse_metrics({"sse_metrics": ["temp", "humidity"]}) == [
+            "temp",
+            "humidity",
+        ]
 
     def test_empty_when_missing(self) -> None:
         assert prov_route._extract_sse_metrics({}) == []
@@ -193,35 +193,46 @@ class TestProvisionRouteForwardsTiering:
         }
         state = _make_state(sink_config)
 
-        request = _make_request({
-            "mode": "direct",
-            "table_name": "sensor_readings",
-            "host": "pg.example",
-            "user": "u",
-            "password": "p",
-            "port": 5432,
-            "pipeline_id": "pipe-123",
-        })
+        request = _make_request(
+            {
+                "mode": "direct",
+                "table_name": "sensor_readings",
+                "host": "pg.example",
+                "user": "u",
+                "password": "p",
+                "port": 5432,
+                "pipeline_id": "pipe-123",
+            }
+        )
 
-        svc_mock = AsyncMock(return_value={
-            "status": "created",
-            "lakets_version": "0.1.0",
-            "tiering_applied": {
-                "hot": "1 hour", "drop": "7 days", "chunk": "15 minutes",
-            },
-        })
+        svc_mock = AsyncMock(
+            return_value={
+                "status": "created",
+                "lakets_version": "0.1.0",
+                "tiering_applied": {
+                    "hot": "1 hour",
+                    "drop": "7 days",
+                    "chunk": "15 minutes",
+                },
+            }
+        )
 
-        with patch.object(prov_route.provisioning_service,
-                          "provision_lakebase_table", new=svc_mock):
+        with patch.object(
+            prov_route.provisioning_service, "provision_lakebase_table", new=svc_mock
+        ):
             response = await prov_route.provision_lakebase_table(
-                request=request, user_email="u@test.com", state=state,
+                request=request,
+                user_email="u@test.com",
+                state=state,
             )
 
         # Service was called, and received the full tiering block
         svc_mock.assert_awaited_once()
         lb_arg = svc_mock.await_args.args[0]
         assert lb_arg["tiering"] == {
-            "hot": "1 hour", "drop": "7 days", "chunk": "15 minutes",
+            "hot": "1 hour",
+            "drop": "7 days",
+            "chunk": "15 minutes",
         }
         assert lb_arg["mode"] == "direct"
         assert lb_arg["pg_table"] == "sensor_readings"
@@ -229,7 +240,9 @@ class TestProvisionRouteForwardsTiering:
         # Response carries tiering_applied + sse_metrics for client confirmation
         assert response["status"] == "created"
         assert response["tiering_applied"] == {
-            "hot": "1 hour", "drop": "7 days", "chunk": "15 minutes",
+            "hot": "1 hour",
+            "drop": "7 days",
+            "chunk": "15 minutes",
         }
         assert response["sse_metrics"] == ["temperature", "pressure"]
         assert response["lakets_version"] == "0.1.0"
@@ -239,15 +252,17 @@ class TestProvisionRouteForwardsTiering:
         """Pipeline with no sink_config → service is NOT called, no crash."""
         state = _make_state(_SENTINEL_NO_ROW)
 
-        request = _make_request({
-            "mode": "direct",
-            "table_name": "sensor_readings",
-            "host": "pg.example",
-            "user": "u",
-            "password": "p",
-            "port": 5432,
-            "pipeline_id": "pipe-missing",
-        })
+        request = _make_request(
+            {
+                "mode": "direct",
+                "table_name": "sensor_readings",
+                "host": "pg.example",
+                "user": "u",
+                "password": "p",
+                "port": 5432,
+                "pipeline_id": "pipe-missing",
+            }
+        )
 
         svc_mock = AsyncMock()
         # Mock asyncpg so the fallback direct path completes cleanly
@@ -255,11 +270,14 @@ class TestProvisionRouteForwardsTiering:
         conn.execute = AsyncMock(return_value=None)
         conn.close = AsyncMock(return_value=None)
 
-        with patch.object(prov_route.provisioning_service,
-                          "provision_lakebase_table", new=svc_mock), \
-             patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
+        with (
+            patch.object(prov_route.provisioning_service, "provision_lakebase_table", new=svc_mock),
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+        ):
             response = await prov_route.provision_lakebase_table(
-                request=request, user_email="u@test.com", state=state,
+                request=request,
+                user_email="u@test.com",
+                state=state,
             )
 
         svc_mock.assert_not_awaited()
@@ -279,26 +297,31 @@ class TestProvisionRouteForwardsTiering:
         }
         state = _make_state(sink_config)
 
-        request = _make_request({
-            "mode": "direct",
-            "table_name": "sensor_readings",
-            "host": "pg.example",
-            "user": "u",
-            "password": "p",
-            "port": 5432,
-            "pipeline_id": "pipe-malformed",
-        })
+        request = _make_request(
+            {
+                "mode": "direct",
+                "table_name": "sensor_readings",
+                "host": "pg.example",
+                "user": "u",
+                "password": "p",
+                "port": 5432,
+                "pipeline_id": "pipe-malformed",
+            }
+        )
 
         svc_mock = AsyncMock()
         conn = MagicMock()
         conn.execute = AsyncMock(return_value=None)
         conn.close = AsyncMock(return_value=None)
 
-        with patch.object(prov_route.provisioning_service,
-                          "provision_lakebase_table", new=svc_mock), \
-             patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
+        with (
+            patch.object(prov_route.provisioning_service, "provision_lakebase_table", new=svc_mock),
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+        ):
             response = await prov_route.provision_lakebase_table(
-                request=request, user_email="u@test.com", state=state,
+                request=request,
+                user_email="u@test.com",
+                state=state,
             )
 
         svc_mock.assert_not_awaited()
@@ -312,26 +335,31 @@ class TestProvisionRouteForwardsTiering:
         """tiering = [...] (wrong shape) → gracefully skipped."""
         state = _make_state({"tiering": ["hot", "drop"]})
 
-        request = _make_request({
-            "mode": "direct",
-            "table_name": "sensor_readings",
-            "host": "pg.example",
-            "user": "u",
-            "password": "p",
-            "port": 5432,
-            "pipeline_id": "pipe-bad-shape",
-        })
+        request = _make_request(
+            {
+                "mode": "direct",
+                "table_name": "sensor_readings",
+                "host": "pg.example",
+                "user": "u",
+                "password": "p",
+                "port": 5432,
+                "pipeline_id": "pipe-bad-shape",
+            }
+        )
 
         svc_mock = AsyncMock()
         conn = MagicMock()
         conn.execute = AsyncMock(return_value=None)
         conn.close = AsyncMock(return_value=None)
 
-        with patch.object(prov_route.provisioning_service,
-                          "provision_lakebase_table", new=svc_mock), \
-             patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
+        with (
+            patch.object(prov_route.provisioning_service, "provision_lakebase_table", new=svc_mock),
+            patch("asyncpg.connect", new=AsyncMock(return_value=conn)),
+        ):
             response = await prov_route.provision_lakebase_table(
-                request=request, user_email="u@test.com", state=state,
+                request=request,
+                user_email="u@test.com",
+                state=state,
             )
 
         svc_mock.assert_not_awaited()
@@ -345,25 +373,32 @@ class TestProvisionRouteForwardsTiering:
         sink_config = {"tiering": {"hot": "1 hour", "drop": "7 days"}}
         state = _make_state(sink_config)
 
-        request = _make_request({
-            "mode": "direct",
-            "table_name": "sensor_readings",
-            "host": "pg.example",
-            "user": "u",
-            "password": "p",
-            "port": 5432,
-            "pipeline_id": "pipe-x",
-        })
+        request = _make_request(
+            {
+                "mode": "direct",
+                "table_name": "sensor_readings",
+                "host": "pg.example",
+                "user": "u",
+                "password": "p",
+                "port": 5432,
+                "pipeline_id": "pipe-x",
+            }
+        )
 
-        svc_mock = AsyncMock(return_value={
-            "status": "failed",
-            "error": "install_lakets blew up",
-        })
+        svc_mock = AsyncMock(
+            return_value={
+                "status": "failed",
+                "error": "install_lakets blew up",
+            }
+        )
 
-        with patch.object(prov_route.provisioning_service,
-                          "provision_lakebase_table", new=svc_mock):
+        with patch.object(
+            prov_route.provisioning_service, "provision_lakebase_table", new=svc_mock
+        ):
             response = await prov_route.provision_lakebase_table(
-                request=request, user_email="u@test.com", state=state,
+                request=request,
+                user_email="u@test.com",
+                state=state,
             )
 
         assert isinstance(response, JSONResponse)
@@ -375,20 +410,25 @@ class TestProvisionRouteForwardsTiering:
         sink_config = {"tiering": {"hot": "1 hour", "drop": "7 days"}}
         state = _make_state(sink_config)
 
-        request = _make_request({
-            "mode": "autoscale",
-            "table_name": "sensor_readings",
-            "project_id": "proj-1",
-            "branch_id": "production",
-            "pipeline_id": "pipe-123",
-        })
+        request = _make_request(
+            {
+                "mode": "autoscale",
+                "table_name": "sensor_readings",
+                "project_id": "proj-1",
+                "branch_id": "production",
+                "pipeline_id": "pipe-123",
+            }
+        )
 
         svc_mock = AsyncMock(return_value={"status": "created", "lakets_version": "0.1.0"})
 
-        with patch.object(prov_route.provisioning_service,
-                          "provision_lakebase_table", new=svc_mock):
+        with patch.object(
+            prov_route.provisioning_service, "provision_lakebase_table", new=svc_mock
+        ):
             response = await prov_route.provision_lakebase_table(
-                request=request, user_email="u@test.com", state=state,
+                request=request,
+                user_email="u@test.com",
+                state=state,
             )
 
         svc_mock.assert_awaited_once()

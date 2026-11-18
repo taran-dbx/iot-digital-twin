@@ -19,6 +19,7 @@ logger = logging.getLogger("iot_digital_twin.services.settings")
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def _check(name: str, status: str, detail: str) -> dict:
     return {"name": name, "status": status, "detail": detail}
 
@@ -38,6 +39,7 @@ def _section_result(checks: list[dict]) -> dict:
 # Validation helpers
 # ---------------------------------------------------------------------------
 
+
 async def validate_uc(body: dict) -> dict:
     """Validate Unity Catalog settings."""
     uc = body.get("uc", {})
@@ -47,7 +49,13 @@ async def validate_uc(body: dict) -> dict:
     if "{name}" in pattern:
         checks.append(_check("Catalog pattern valid", "pass", "Contains {name}"))
     elif pattern:
-        checks.append(_check("Catalog pattern valid", "warn", "Pattern missing {name} placeholder — fixed name will be used"))
+        checks.append(
+            _check(
+                "Catalog pattern valid",
+                "warn",
+                "Pattern missing {name} placeholder — fixed name will be used",
+            )
+        )
     else:
         checks.append(_check("Catalog pattern valid", "fail", "Catalog pattern is empty"))
 
@@ -55,9 +63,13 @@ async def validate_uc(body: dict) -> dict:
     if not storage_root:
         checks.append(_check("Storage root format", "skip", "Not configured"))
     elif storage_root.startswith(("s3://", "abfss://", "gs://")):
-        checks.append(_check("Storage root format", "pass", f"Valid cloud path: {storage_root[:30]}..."))
+        checks.append(
+            _check("Storage root format", "pass", f"Valid cloud path: {storage_root[:30]}...")
+        )
     else:
-        checks.append(_check("Storage root format", "warn", "Should start with s3://, abfss://, or gs://"))
+        checks.append(
+            _check("Storage root format", "warn", "Should start with s3://, abfss://, or gs://")
+        )
 
     return _section_result(checks)
 
@@ -81,16 +93,21 @@ async def validate_lakebase(body: dict) -> dict:
                 return _section_result(checks)
 
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
             parent = f"projects/{project_id}/branches/{branch_id}"
             try:
                 endpoints = list(w.postgres.list_endpoints(parent=parent))
                 if not endpoints:
-                    checks.append(_check("Lakebase endpoint reachable", "fail", f"No endpoints for {parent}"))
+                    checks.append(
+                        _check("Lakebase endpoint reachable", "fail", f"No endpoints for {parent}")
+                    )
                     checks.append(_check("Database connectable", "skip", "No endpoint"))
                     checks.append(_check("Table exists", "skip", "No connection"))
                     return _section_result(checks)
-                checks.append(_check("Lakebase endpoint reachable", "pass", f"Found endpoint in {parent}"))
+                checks.append(
+                    _check("Lakebase endpoint reachable", "pass", f"Found endpoint in {parent}")
+                )
             except Exception as exc:
                 checks.append(_check("Lakebase endpoint reachable", "fail", str(exc)[:120]))
                 checks.append(_check("Database connectable", "skip", "Endpoint unreachable"))
@@ -105,8 +122,12 @@ async def validate_lakebase(body: dict) -> dict:
                 cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
                 database = lb.get("database", "databricks_postgres")
                 conn = await asyncpg.connect(
-                    host=pg_host, database=database, user=pg_user,
-                    password=cred.token, port=5432, ssl="require",
+                    host=pg_host,
+                    database=database,
+                    user=pg_user,
+                    password=cred.token,
+                    port=5432,
+                    ssl="require",
                 )
                 checks.append(_check("Database connectable", "pass", f"Connected to {database}"))
             except Exception as exc:
@@ -124,16 +145,23 @@ async def validate_lakebase(body: dict) -> dict:
                 port = int(lb.get("port", 5432))
                 database = lb.get("database", "databricks_postgres")
                 conn = await asyncpg.connect(
-                    host=host, database=database,
-                    user="probe", password="probe",
-                    port=port, ssl="require",
+                    host=host,
+                    database=database,
+                    user="probe",
+                    password="probe",
+                    port=port,
+                    ssl="require",
                     timeout=5,
                 )
                 checks.append(_check("Host connectable", "pass", f"Connected to {host}:{port}"))
             except Exception as exc:
                 err = str(exc)[:120]
                 if "authentication" in err.lower() or "password" in err.lower():
-                    checks.append(_check("Host connectable", "pass", f"Host reachable (auth needed at runtime)"))
+                    checks.append(
+                        _check(
+                            "Host connectable", "pass", f"Host reachable (auth needed at runtime)"
+                        )
+                    )
                 else:
                     checks.append(_check("Host connectable", "warn", f"Could not connect: {err}"))
                 checks.append(_check("Table exists", "skip", "Connection not fully established"))
@@ -174,27 +202,31 @@ async def validate_secrets(body: dict) -> dict:
 
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         try:
             secret_list = list(w.secrets.list_secrets(scope=scope_name))
             checks.append(_check("Secret scope exists", "pass", f"Scope '{scope_name}' found"))
 
-            expected_keys = [
-                v for k, v in sec.items()
-                if k.endswith("_key") and v
-            ]
+            expected_keys = [v for k, v in sec.items() if k.endswith("_key") and v]
             existing_keys = {s.key for s in secret_list if s.key}
             missing = [k for k in expected_keys if k not in existing_keys]
             if not expected_keys:
                 checks.append(_check("Expected keys present", "skip", "No key names configured"))
             elif missing:
-                checks.append(_check("Expected keys present", "warn", f"Missing keys: {', '.join(missing)}"))
+                checks.append(
+                    _check("Expected keys present", "warn", f"Missing keys: {', '.join(missing)}")
+                )
             else:
-                checks.append(_check("Expected keys present", "pass", f"All {len(expected_keys)} keys found"))
+                checks.append(
+                    _check("Expected keys present", "pass", f"All {len(expected_keys)} keys found")
+                )
         except Exception as exc:
             err = str(exc)
             if "RESOURCE_DOES_NOT_EXIST" in err or "does not exist" in err.lower():
-                checks.append(_check("Secret scope exists", "fail", f"Scope '{scope_name}' not found"))
+                checks.append(
+                    _check("Secret scope exists", "fail", f"Scope '{scope_name}' not found")
+                )
                 checks.append(_check("Expected keys present", "skip", "Scope does not exist"))
             else:
                 checks.append(_check("Secret scope exists", "fail", str(exc)[:120]))
@@ -218,13 +250,16 @@ async def validate_cluster(body: dict) -> dict:
     else:
         try:
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
             resp = w.clusters.list_node_types()
             valid_ids = {nt.node_type_id for nt in (resp.node_types or [])}
             if node_type in valid_ids:
                 checks.append(_check("Node type valid", "pass", f"{node_type} is available"))
             else:
-                checks.append(_check("Node type valid", "fail", f"{node_type} not found in workspace"))
+                checks.append(
+                    _check("Node type valid", "fail", f"{node_type} not found in workspace")
+                )
         except Exception as exc:
             checks.append(_check("Node type valid", "warn", f"Could not verify: {str(exc)[:80]}"))
 
@@ -233,13 +268,16 @@ async def validate_cluster(body: dict) -> dict:
     else:
         try:
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
             resp = w.clusters.spark_versions()
             valid_keys = {sv.key for sv in (resp.versions or [])}
             if dbr_version in valid_keys:
                 checks.append(_check("DBR version valid", "pass", f"{dbr_version} is available"))
             else:
-                checks.append(_check("DBR version valid", "fail", f"{dbr_version} not found in workspace"))
+                checks.append(
+                    _check("DBR version valid", "fail", f"{dbr_version} not found in workspace")
+                )
         except Exception as exc:
             checks.append(_check("DBR version valid", "warn", f"Could not verify: {str(exc)[:80]}"))
 
@@ -253,18 +291,21 @@ async def validate_cluster(body: dict) -> dict:
 # Status helpers
 # ---------------------------------------------------------------------------
 
+
 async def status_uc(settings: dict) -> dict:
     """Probe UC catalogs matching the user's pattern."""
     result: dict = {"catalogs": []}
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         pattern = settings.get("uc", {}).get("catalog_pattern", "iot_{name}")
         prefix = pattern.split("{")[0] if "{" in pattern else pattern
         for cat in w.catalogs.list():
             if cat.name and cat.name.startswith(prefix):
                 schemas = [
-                    s.name for s in w.schemas.list(catalog_name=cat.name)
+                    s.name
+                    for s in w.schemas.list(catalog_name=cat.name)
                     if s.name and s.name != "information_schema" and s.name != "default"
                 ]
                 result["catalogs"].append({"name": cat.name, "schemas": schemas})
@@ -299,6 +340,7 @@ async def status_lakebase(settings: dict) -> dict:
 
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         parent = f"projects/{project_id}/branches/{branch_id}"
 
@@ -308,7 +350,9 @@ async def status_lakebase(settings: dict) -> dict:
             endpoints = list(w.postgres.list_endpoints(parent=parent))
             if endpoints:
                 ep = w.postgres.get_endpoint(name=endpoints[0].name)
-                result["endpoint_host"] = ep.status.hosts.host if ep.status and ep.status.hosts else None
+                result["endpoint_host"] = (
+                    ep.status.hosts.host if ep.status and ep.status.hosts else None
+                )
         except Exception:
             pass
 
@@ -324,12 +368,17 @@ async def status_lakebase(settings: dict) -> dict:
         try:
             if result["endpoint_host"]:
                 import asyncpg
+
                 pg_user = w.current_user.me().user_name
                 cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
                 database = lb.get("database", "databricks_postgres")
                 conn = await asyncpg.connect(
-                    host=result["endpoint_host"], database=database,
-                    user=pg_user, password=cred.token, port=5432, ssl="require",
+                    host=result["endpoint_host"],
+                    database=database,
+                    user=pg_user,
+                    password=cred.token,
+                    port=5432,
+                    ssl="require",
                 )
                 try:
                     rows = await conn.fetch(
@@ -354,6 +403,7 @@ async def status_secrets(settings: dict) -> dict:
         return result
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         secret_list = list(w.secrets.list_secrets(scope=scope_name))
         result["scope_exists"] = True
@@ -370,16 +420,19 @@ async def status_warehouse() -> dict:
     result: dict = {"warehouses": []}
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         for wh in w.warehouses.list():
-            result["warehouses"].append({
-                "id": wh.id,
-                "name": wh.name,
-                "cluster_size": wh.cluster_size,
-                "state": str(wh.state.value) if wh.state else "UNKNOWN",
-                "serverless": bool(wh.enable_serverless_compute),
-                "auto_stop_mins": wh.auto_stop_mins or 0,
-            })
+            result["warehouses"].append(
+                {
+                    "id": wh.id,
+                    "name": wh.name,
+                    "cluster_size": wh.cluster_size,
+                    "state": str(wh.state.value) if wh.state else "UNKNOWN",
+                    "serverless": bool(wh.enable_serverless_compute),
+                    "auto_stop_mins": wh.auto_stop_mins or 0,
+                }
+            )
     except Exception as exc:
         result["error"] = str(exc)[:200]
     return result

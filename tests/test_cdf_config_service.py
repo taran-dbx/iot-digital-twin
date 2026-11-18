@@ -16,8 +16,7 @@ class NotFoundError(RuntimeError):
 def test_database_parent_uses_api_resource_id_c7212() -> None:
     """The API resource id is hyphenated, unlike the SQL database name [C7212][defect]."""
     assert cdf.database_parent("pharmaceutical", project_id="iot-pipelines") == (
-        "projects/iot-pipelines/branches/pharmaceutical/"
-        "databases/databricks-postgres"
+        "projects/iot-pipelines/branches/pharmaceutical/databases/databricks-postgres"
     )
 
 
@@ -103,12 +102,7 @@ def test_delete_is_idempotent_c7204() -> None:
     ws = MagicMock()
     ws.api_client.do.side_effect = NotFoundError("missing")
 
-    assert (
-        cdf.delete_cdf_config(
-            "projects/p/branches/b/databases/d", "lakets_cdf", ws=ws
-        )
-        is False
-    )
+    assert cdf.delete_cdf_config("projects/p/branches/b/databases/d", "lakets_cdf", ws=ws) is False
 
 
 def test_create_waits_for_long_running_operation_c7208(monkeypatch) -> None:
@@ -156,9 +150,7 @@ def test_delete_waits_when_done_false_is_omitted_c7210(monkeypatch) -> None:
     ]
     monkeypatch.setattr(cdf.time, "sleep", lambda _seconds: None)
 
-    deleted = cdf.delete_cdf_config(
-        "projects/p/branches/b/databases/d", "lakets_cdf", ws=ws
-    )
+    deleted = cdf.delete_cdf_config("projects/p/branches/b/databases/d", "lakets_cdf", ws=ws)
 
     assert deleted is True
     assert ws.api_client.do.call_args_list[1].args == (

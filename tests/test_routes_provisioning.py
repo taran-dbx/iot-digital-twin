@@ -35,6 +35,7 @@ def _state_no_existing_catalog() -> AppState:
     Forces ``provision_pipeline_catalog`` past its idempotent early-return so
     catalog creation (and the subsequent workspace binding) actually runs.
     """
+
     async def _fetchrow(query: str, *args, **kwargs):
         # The route issues two distinct fetchrow queries: the pipeline
         # resources lookup (idempotency guard) and the user_settings lookup.
@@ -175,9 +176,7 @@ class TestZerobusServicePrincipalGrants:
     """
 
     @pytest.mark.asyncio
-    async def test_grants_use_lowercase_securable_type_and_app_id(
-        self, monkeypatch
-    ) -> None:
+    async def test_grants_use_lowercase_securable_type_and_app_id(self, monkeypatch) -> None:
         from databricks.sdk.service.catalog import Privilege
 
         monkeypatch.setenv("ZEROBUS_CLIENT_ID", ZEROBUS_APP_ID)

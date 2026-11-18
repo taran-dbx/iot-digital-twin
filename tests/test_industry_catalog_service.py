@@ -57,9 +57,7 @@ class TestNames:
         assert ics.industry_table("pharmaceutical", "zerobus") == (
             f"{CATALOG}.{SCHEMA}.pharmaceutical_zerobus"
         )
-        assert ics.industry_table("Oil & Gas", "metrics") == (
-            f"{CATALOG}.{SCHEMA}.oil_gas_metrics"
-        )
+        assert ics.industry_table("Oil & Gas", "metrics") == (f"{CATALOG}.{SCHEMA}.oil_gas_metrics")
 
     def test_industry_table_rejects_unknown_kind(self) -> None:
         with pytest.raises(ValueError):
@@ -134,10 +132,15 @@ class TestProvisionCatalog:
         async def _rec(_db, **kw):
             recorded.append(kw)
 
-        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})), \
-                patch.object(ics, "record_resource", side_effect=_rec):
+        with (
+            patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})),
+            patch.object(ics, "record_resource", side_effect=_rec),
+        ):
             await ics.provision_industry_catalog(
-                "pharmaceutical", ws=ws, db=MagicMock(), setup_id="s1",
+                "pharmaceutical",
+                ws=ws,
+                db=MagicMock(),
+                setup_id="s1",
             )
         types = [r["resource_type"] for r in recorded]
         assert "uc_schema" in types
@@ -181,11 +184,16 @@ class TestGrants:
         async def _rec(_db, **kw):
             recorded.append(kw)
 
-        with patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})), \
-                patch.object(ics, "record_resource", side_effect=_rec):
+        with (
+            patch.object(ics, "execute_dbsql", new=AsyncMock(return_value={})),
+            patch.object(ics, "record_resource", side_effect=_rec),
+        ):
             await ics.grant_app_sp(
-                "pharmaceutical", ws=ws, principal="app-123",
-                db=MagicMock(), setup_id="s1",
+                "pharmaceutical",
+                ws=ws,
+                principal="app-123",
+                db=MagicMock(),
+                setup_id="s1",
             )
         assert recorded and all(r["resource_type"] == "grant" for r in recorded)
 
@@ -221,9 +229,7 @@ class TestGrants:
             res = await ics.grant_app_sp("pharmaceutical", ws=ws, principal="app-sp-id")
 
         # Catalog-level grant → skipped (not failed)
-        catalog_result = next(
-            r for r in res["results"] if "USE CATALOG" in r["resource"]
-        )
+        catalog_result = next(r for r in res["results"] if "USE CATALOG" in r["resource"])
         assert catalog_result["status"] == "skipped", (
             f"Expected 'skipped', got {catalog_result['status']!r}: {catalog_result}"
         )
@@ -233,9 +239,7 @@ class TestGrants:
         schema_results = [r for r in res["results"] if "USE CATALOG" not in r["resource"]]
         assert schema_results, "No schema-level grant results recorded"
         for r in schema_results:
-            assert r["status"] != "failed", (
-                f"Schema-level grant unexpectedly failed: {r}"
-            )
+            assert r["status"] != "failed", f"Schema-level grant unexpectedly failed: {r}"
 
     def test_resolve_app_principal_prefers_client_id(self, monkeypatch) -> None:
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "cid-123")

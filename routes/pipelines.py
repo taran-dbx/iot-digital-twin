@@ -36,18 +36,22 @@ from services.source_registry import check_source_available, claim_source, relea
 try:
     from services.provisioning_service import provision_lakebase_role  # type: ignore
 except ImportError:  # pragma: no cover — transitional fallback
+
     async def provision_lakebase_role(*_args: Any, **_kwargs: Any) -> list[dict]:  # type: ignore[no-redef]
         raise RuntimeError(
             "provision_lakebase_role is not yet available in services.provisioning_service"
         )
 
+
 try:
     from services.lakets_service import install_lakets_if_missing  # type: ignore
 except ImportError:  # pragma: no cover — transitional fallback
+
     async def install_lakets_if_missing(*_args: Any, **_kwargs: Any) -> dict:  # type: ignore[no-redef]
         raise RuntimeError(
             "install_lakets_if_missing is not yet available in services.lakets_service"
         )
+
 
 # App-permission grant (CAN_USE) for the streaming SP — fixes the SP's 401
 # when it authenticates back to the deployed app.
@@ -60,10 +64,12 @@ from services.app_permissions import _app_name, grant_app_can_use  # noqa: E402
 try:
     from services.lakets_deploy_service import deploy_lakets_ops_jobs  # type: ignore
 except ImportError:  # pragma: no cover — transitional fallback
+
     def deploy_lakets_ops_jobs(*_args: Any, **_kwargs: Any) -> list[dict]:  # type: ignore[no-redef]
         raise RuntimeError(
             "deploy_lakets_ops_jobs is not yet available in services.lakets_deploy_service"
         )
+
 
 logger = logging.getLogger("iot_digital_twin.routes.pipelines")
 router = APIRouter()
@@ -102,10 +108,13 @@ async def create_pipeline(
 
     dup = await state.db.fetchrow(
         "SELECT id FROM pipelines WHERE user_email = $1 AND LOWER(name) = LOWER($2) AND status != 'deleted'",
-        user_email, name,
+        user_email,
+        name,
     )
     if dup:
-        return JSONResponse(status_code=409, content={"error": f"A pipeline named '{name}' already exists"})
+        return JSONResponse(
+            status_code=409, content={"error": f"A pipeline named '{name}' already exists"}
+        )
 
     source_type = body.get("source_type")
     source_config = body.get("source_config")
@@ -199,12 +208,14 @@ async def get_pipeline(
     # scoped to their own rows.
     if app_permissions.is_admin(request):
         row = await state.db.fetchrow(
-            "SELECT * FROM pipelines WHERE id = $1::uuid", pipeline_id,
+            "SELECT * FROM pipelines WHERE id = $1::uuid",
+            pipeline_id,
         )
     else:
         row = await state.db.fetchrow(
             "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-            pipeline_id, user_email,
+            pipeline_id,
+            user_email,
         )
     if not row:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
@@ -231,12 +242,14 @@ async def update_pipeline(
     caller_is_admin = app_permissions.is_admin(request)
     if caller_is_admin:
         existing = await state.db.fetchrow(
-            "SELECT id, user_email FROM pipelines WHERE id = $1::uuid", pipeline_id,
+            "SELECT id, user_email FROM pipelines WHERE id = $1::uuid",
+            pipeline_id,
         )
     else:
         existing = await state.db.fetchrow(
             "SELECT id, user_email FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-            pipeline_id, user_email,
+            pipeline_id,
+            user_email,
         )
     if not existing:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
@@ -248,14 +261,24 @@ async def update_pipeline(
         new_name = body["name"].strip()
         dup = await state.db.fetchrow(
             "SELECT id FROM pipelines WHERE user_email = $1 AND LOWER(name) = LOWER($2) AND id != $3::uuid AND status != 'deleted'",
-            owner_email, new_name, pipeline_id,
+            owner_email,
+            new_name,
+            pipeline_id,
         )
         if dup:
-            return JSONResponse(status_code=409, content={"error": f"A pipeline named '{new_name}' already exists"})
+            return JSONResponse(
+                status_code=409, content={"error": f"A pipeline named '{new_name}' already exists"}
+            )
 
     allowed = {
-        "name", "status", "industry", "sensor_config",
-        "source_type", "source_config", "sink_config", "resources",
+        "name",
+        "status",
+        "industry",
+        "sensor_config",
+        "source_type",
+        "source_config",
+        "sink_config",
+        "resources",
     }
     merge_jsonb = {"source_config", "sink_config", "resources"}
     sets: list[str] = ["updated_at = NOW()"]
@@ -290,7 +313,8 @@ async def delete_pipeline(
 
     row = await state.db.fetchrow(
         "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-        pipeline_id, user_email,
+        pipeline_id,
+        user_email,
     )
     if not row:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
@@ -339,9 +363,7 @@ async def delete_pipeline(
                 or not isinstance(full_name, str)
                 or len(full_name.split(".")) != 3
             ):
-                log.append(
-                    f"Skipped UC table {full_name!r} — ownership is not proven"
-                )
+                log.append(f"Skipped UC table {full_name!r} — ownership is not proven")
                 continue
             targets.append(full_name)
         return targets
@@ -390,12 +412,12 @@ async def delete_pipeline(
                 except Exception as exc:
                     entry["status"] = "failed"
                     entry["error"] = str(exc)
-                    cleanup_errors.append(
-                        f"UC table delete failed for {full_name}: {exc}"
-                    )
+                    cleanup_errors.append(f"UC table delete failed for {full_name}: {exc}")
                     logger.warning(
                         "UC table drop failed for %s (pipeline %s): %s",
-                        full_name, pipeline_id, exc,
+                        full_name,
+                        pipeline_id,
+                        exc,
                     )
                 log.append(entry)
         except Exception as exc:
@@ -466,12 +488,17 @@ async def reset_pipeline(
 
     row = await state.db.fetchrow(
         "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2 AND status != 'deleted'",
-        pipeline_id, user_email,
+        pipeline_id,
+        user_email,
     )
     if not row:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
 
-    resources = json.loads(row["resources"]) if isinstance(row["resources"], str) else (row["resources"] or {})
+    resources = (
+        json.loads(row["resources"])
+        if isinstance(row["resources"], str)
+        else (row["resources"] or {})
+    )
     cleanup_log: list[str] = []
 
     # Stop job and cluster in background
@@ -479,6 +506,7 @@ async def reset_pipeline(
         log: list[str] = []
         try:
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
 
             job_id = resources.get("job_id")
@@ -505,7 +533,15 @@ async def reset_pipeline(
         cleanup_log.append("Cleanup timed out after 15s")
 
     # Clear job/cluster/notebook from resources, keep catalog/secrets/tables
-    keep_keys = {"uc_catalog", "uc_schema", "secret_scope", "checkpoint_volume", "catalog_schemas", "lakebase_table", "job_id"}
+    keep_keys = {
+        "uc_catalog",
+        "uc_schema",
+        "secret_scope",
+        "checkpoint_volume",
+        "catalog_schemas",
+        "lakebase_table",
+        "job_id",
+    }
     cleaned_resources = {k: v for k, v in resources.items() if k in keep_keys}
 
     updated = await state.db.fetchrow(
@@ -513,7 +549,8 @@ async def reset_pipeline(
            SET status = 'step2_complete', resources = $2::jsonb, updated_at = NOW()
            WHERE id = $1::uuid
            RETURNING *""",
-        pipeline_id, json.dumps(cleaned_resources),
+        pipeline_id,
+        json.dumps(cleaned_resources),
     )
 
     # Stop any in-memory producer
@@ -551,7 +588,9 @@ async def _heal_industry_lakebase(industry: str) -> "dict[str, Any] | JSONRespon
         w = WorkspaceClient()
         sp_client_id = w.current_user.me().user_name
     except Exception as exc:
-        logger.warning("heal_lakebase(industry=%s): failed to resolve SP client id: %s", industry, exc)
+        logger.warning(
+            "heal_lakebase(industry=%s): failed to resolve SP client id: %s", industry, exc
+        )
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to resolve service principal: {exc}"},
@@ -595,11 +634,13 @@ async def _heal_industry_lakebase(industry: str) -> "dict[str, Any] | JSONRespon
         grant_step["error"] = str(exc)
     steps.append(grant_step)
 
-    steps.append({
-        "step": "restart_job",
-        "status": "skipped",
-        "reason": "Industry-first pipelines have no legacy job_id to restart",
-    })
+    steps.append(
+        {
+            "step": "restart_job",
+            "status": "skipped",
+            "reason": "Industry-first pipelines have no legacy job_id to restart",
+        }
+    )
 
     return {
         "industry": industry,
@@ -637,7 +678,8 @@ async def heal_lakebase(
 
     row = await state.db.fetchrow(
         "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2 AND status != 'deleted'",
-        pipeline_id, user_email,
+        pipeline_id,
+        user_email,
     )
     if not row:
         if industry:
@@ -657,7 +699,8 @@ async def heal_lakebase(
     lb_database = source_config.get("lb_database")
 
     missing = [
-        name for name, val in (
+        name
+        for name, val in (
             ("lb_project_id", lb_project_id),
             ("lb_branch_id", lb_branch_id),
             ("lb_database", lb_database),
@@ -675,9 +718,7 @@ async def heal_lakebase(
             },
         )
 
-    endpoint_name = (
-        f"projects/{lb_project_id}/branches/{lb_branch_id}/endpoints/primary"
-    )
+    endpoint_name = f"projects/{lb_project_id}/branches/{lb_branch_id}/endpoints/primary"
 
     # Resolve SP client ID via WorkspaceClient().current_user.me().user_name.
     # When running as a deployed Databricks App, this is the SP's UUID.
@@ -706,11 +747,13 @@ async def heal_lakebase(
         steps.append({"step": "provision_role", "results": provision_results})
     except Exception as exc:
         logger.exception("heal_lakebase: provision_lakebase_role failed for %s", pipeline_id)
-        steps.append({
-            "step": "provision_role",
-            "error": str(exc),
-            "results": [],
-        })
+        steps.append(
+            {
+                "step": "provision_role",
+                "error": str(exc),
+                "results": [],
+            }
+        )
 
     # Step 6: install LakeTS (idempotent)
     try:
@@ -721,11 +764,13 @@ async def heal_lakebase(
         steps.append({"step": "install_lakets", "result": lakets_result})
     except Exception as exc:
         logger.exception("heal_lakebase: install_lakets_if_missing failed for %s", pipeline_id)
-        steps.append({
-            "step": "install_lakets",
-            "error": str(exc),
-            "result": None,
-        })
+        steps.append(
+            {
+                "step": "install_lakets",
+                "error": str(exc),
+                "result": None,
+            }
+        )
 
     # Step 6b: grant the streaming SP CAN_USE on the app so its OAuth token is
     # accepted when it calls back into the app (otherwise: 401). Non-fatal.
@@ -789,7 +834,9 @@ async def heal_lakebase(
             except Exception as cancel_exc:
                 logger.warning(
                     "heal_lakebase: failed to cancel run %s for job %s: %s",
-                    run_id, job_id, cancel_exc,
+                    run_id,
+                    job_id,
+                    cancel_exc,
                 )
         triggered = w.jobs.run_now(job_id=job_id)
         maybe_run_id = getattr(triggered, "run_id", None)
@@ -828,7 +875,8 @@ async def clone_pipeline(
 
     source = await state.db.fetchrow(
         "SELECT * FROM pipelines WHERE id = $1::uuid AND user_email = $2 AND status != 'deleted'",
-        pipeline_id, user_email,
+        pipeline_id,
+        user_email,
     )
     if not source:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
@@ -844,10 +892,13 @@ async def clone_pipeline(
 
     dup = await state.db.fetchrow(
         "SELECT id FROM pipelines WHERE user_email = $1 AND LOWER(name) = LOWER($2) AND status != 'deleted'",
-        user_email, new_name,
+        user_email,
+        new_name,
     )
     if dup:
-        return JSONResponse(status_code=409, content={"error": f"A pipeline named '{new_name}' already exists"})
+        return JSONResponse(
+            status_code=409, content={"error": f"A pipeline named '{new_name}' already exists"}
+        )
 
     # Copy config fields, reset resources and status
     sensor_config = source["sensor_config"] if source["sensor_config"] else "[]"
@@ -903,9 +954,7 @@ async def get_lakebase_health(
         "inserts_per_sec_recent": 0.0,
     }
 
-    if industry and not await _is_industry_deployment(
-        state, pipeline_id, industry, "realtime"
-    ):
+    if industry and not await _is_industry_deployment(state, pipeline_id, industry, "realtime"):
         return JSONResponse(
             status_code=404,
             content={"error": "Realtime industry deployment not found"},
@@ -987,27 +1036,35 @@ async def pipeline_history(
 
     row = await state.db.fetchrow(
         "SELECT resources FROM pipelines WHERE id = $1::uuid AND user_email = $2",
-        pipeline_id, user_email,
+        pipeline_id,
+        user_email,
     )
     if not row:
         return JSONResponse(status_code=404, content={"error": "Pipeline not found"})
 
-    resources = row["resources"] if isinstance(row["resources"], dict) else json.loads(row["resources"] or "{}")
+    resources = (
+        row["resources"]
+        if isinstance(row["resources"], dict)
+        else json.loads(row["resources"] or "{}")
+    )
     catalog = resources.get("uc_catalog")
     if not catalog:
         return JSONResponse(status_code=400, content={"error": "Pipeline has no UC catalog"})
 
     import re
+
     if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", catalog):
         return JSONResponse(status_code=400, content={"error": "Invalid catalog name"})
     table = f"{catalog}.raw.iot_sensor_data"
 
     try:
         import httpx
+
         host = os.getenv("DATABRICKS_HOST", "")
         token = os.getenv("DATABRICKS_TOKEN", "")
         if not token:
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
             token = w.config.token
 
@@ -1032,7 +1089,11 @@ async def pipeline_history(
                     "SELECT settings FROM user_settings WHERE user_email = $1", user_email
                 )
                 if settings_row:
-                    user_settings = json.loads(settings_row["settings"]) if isinstance(settings_row["settings"], str) else settings_row["settings"]
+                    user_settings = (
+                        json.loads(settings_row["settings"])
+                        if isinstance(settings_row["settings"], str)
+                        else settings_row["settings"]
+                    )
                     saved_wh = user_settings.get("warehouse", {}).get("warehouse_id", "")
                     if saved_wh:
                         warehouse_id = saved_wh
@@ -1053,7 +1114,9 @@ async def pipeline_history(
             data = resp.json()
 
         result = data.get("result", {})
-        columns = [c["name"] for c in result.get("manifest", {}).get("schema", {}).get("columns", [])]
+        columns = [
+            c["name"] for c in result.get("manifest", {}).get("schema", {}).get("columns", [])
+        ]
         rows_data = []
         for chunk in result.get("data_array", []):
             rows_data.append(dict(zip(columns, chunk)))

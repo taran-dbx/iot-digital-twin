@@ -23,8 +23,7 @@ from pathlib import Path
 import pytest
 
 PRODUCER_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client" / "src" / "lib" / "data-producer-notebook.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "data-producer-notebook.ts"
 )
 
 pytestmark = pytest.mark.skipif(
@@ -114,7 +113,7 @@ class TestGenerationSemantics:
         section = _producer_section()
         assert "from scenario_engine import ScenarioEngine" in section
         assert "wrap_records" in section
-        assert 'electric_power' in section
+        assert "electric_power" in section
         assert "emitting unwrapped simulator ticks" not in section
         assert "scenario_engine is not importable" not in section
 
@@ -122,9 +121,9 @@ class TestGenerationSemantics:
         """[C7314][defect] Zerobus producers alias energy, wrap records, and fail loud on missing engine."""
         text = PRODUCER_TS.read_text()
         assert "function generateZerobusProducer" in text
-        assert "SIMULATOR_INDUSTRY = \"electric_power\" if INDUSTRY == \"energy\" else INDUSTRY" in text
+        assert 'SIMULATOR_INDUSTRY = "electric_power" if INDUSTRY == "energy" else INDUSTRY' in text
         assert "wrap_records(records)" in text
-        assert 'Simulator(industries=[SIMULATOR_INDUSTRY]' in text
+        assert "Simulator(industries=[SIMULATOR_INDUSTRY]" in text
         assert "emitting unwrapped simulator ticks" not in text
 
     def test_does_not_create_topic(self) -> None:
@@ -167,10 +166,7 @@ class TestDeployedIndustryProducer:
         section = _deployed_iam_kafka_cell()
         assert "class UCServiceCredentialProvider(CredentialProvider)" in section
         assert "return provider.get_credentials()" in section
-        assert (
-            "MSKAuthTokenProvider.generate_auth_token_from_credentials_provider("
-            in section
-        )
+        assert "MSKAuthTokenProvider.generate_auth_token_from_credentials_provider(" in section
         assert "get_frozen_credentials()" not in section
         assert 'os.environ["AWS_ACCESS_KEY_ID"]' not in section
 

@@ -49,13 +49,17 @@ class TestIntelligenceRoutes:
         monkeypatch.setenv("UC_CATALOG", "test_catalog")
         monkeypatch.setenv("UC_SCHEMA", "test_schema")
         client, _ = intel_client
-        with patch("routes.intelligence.app_permissions.is_admin", return_value=True), patch(
-            "routes.intelligence.intelligence_catalog_service.provision_reference_tables",
-            new=AsyncMock(return_value={"tables": {"assets": "c.s.intelligence_assets"}}),
-        ) as provision, patch(
-            "routes.intelligence.intelligence_catalog_service.sync_reference_data",
-            new=AsyncMock(return_value={"rows": {"assets": 4}}),
-        ) as sync:
+        with (
+            patch("routes.intelligence.app_permissions.is_admin", return_value=True),
+            patch(
+                "routes.intelligence.intelligence_catalog_service.provision_reference_tables",
+                new=AsyncMock(return_value={"tables": {"assets": "c.s.intelligence_assets"}}),
+            ) as provision,
+            patch(
+                "routes.intelligence.intelligence_catalog_service.sync_reference_data",
+                new=AsyncMock(return_value={"rows": {"assets": 4}}),
+            ) as sync,
+        ):
             resp = await client.post("/api/admin/intelligence/sync")
         assert resp.status_code == 200
         body = resp.json()

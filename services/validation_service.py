@@ -63,9 +63,7 @@ _KAFKA_MODES: frozenset[str] = frozenset({"realtime", "microbatch"})
 # Interactive-cluster states that mean the harness cannot run further steps.
 # Autoterminate (90 min idle) lands here while a mid-run step can still look
 # ``running`` to the UI poller — halt instead of walking Lakebase-only steps.
-_DEAD_CLUSTER_STATES: frozenset[str] = frozenset(
-    {"TERMINATED", "ERROR", "TERMINATING"}
-)
+_DEAD_CLUSTER_STATES: frozenset[str] = frozenset({"TERMINATED", "ERROR", "TERMINATING"})
 
 
 def _missing_start_inputs(setup: dict) -> list[str]:
@@ -80,9 +78,10 @@ def _missing_start_inputs(setup: dict) -> list[str]:
     missing: list[str] = []
     if not enabled:
         missing.append("enabled_modes")
-    if any(m in _KAFKA_MODES for m in enabled) and not str(
-        setup.get("bootstrap_servers") or ""
-    ).strip():
+    if (
+        any(m in _KAFKA_MODES for m in enabled)
+        and not str(setup.get("bootstrap_servers") or "").strip()
+    ):
         missing.append("bootstrap_servers")
     if not setup.get("warehouse_id"):
         missing.append("warehouse_id")
@@ -190,15 +189,11 @@ def _should_halt_for_dead_cluster(
         return False
     if sm.is_gate_open(state):
         return False
-    rec = ((state.get("steps") or {}).get(key) or {})
+    rec = (state.get("steps") or {}).get(key) or {}
     status = rec.get("status")
     if status == sm.WAITING_ADMIN:
         return False
-    if (
-        preserve_failed
-        and status == sm.FAILED
-        and str(rec.get("error") or "").strip()
-    ):
+    if preserve_failed and status == sm.FAILED and str(rec.get("error") or "").strip():
         return False
     return True
 
@@ -258,8 +253,7 @@ async def _halt_if_cluster_dead(
 
 def _apply_result(state: dict, key: str, result: StepResult) -> dict:
     """Return a new state with ``key`` set to ``result`` and any data merged."""
-    state = sm.set_step(state, key, result.status, error=result.error,
-                        updated_at=_now_iso())
+    state = sm.set_step(state, key, result.status, error=result.error, updated_at=_now_iso())
     data = result.data or {}
     if data:
         state = copy.deepcopy(state)
@@ -292,6 +286,7 @@ async def run_machine(
     """
     if executors is None:
         from services import validation_steps
+
         executors = validation_steps.DEFAULT_EXECUTORS
 
     state = setup.get("validation_state")
@@ -308,9 +303,7 @@ async def run_machine(
         if _should_halt_for_dead_cluster(state, cluster_state, key):
             error = cluster_gone_error(str(cluster_state))
             logger.warning("validation step %s failed: %s", key, error)
-            state = _apply_result(
-                state, key, StepResult(sm.FAILED, error=error)
-            )
+            state = _apply_result(state, key, StepResult(sm.FAILED, error=error))
             await _persist(db, setup_id, state)
             break
 
@@ -325,8 +318,13 @@ async def run_machine(
             result = StepResult(sm.PASSED)
         else:
             ctx = StepContext(
-                db=db, setup=setup, state=state, key=key, step=bare,
-                mode=sm.mode_of(key), ws=ws,
+                db=db,
+                setup=setup,
+                state=state,
+                key=key,
+                step=bare,
+                mode=sm.mode_of(key),
+                ws=ws,
             )
             try:
                 result = await executor(ctx)
@@ -537,9 +535,7 @@ async def get_state(db: Any, industry: str, *, ws: Any | None = None) -> dict | 
     # Settle a stuck in-progress run when the interactive cluster is gone so
     # the health-page poller stops treating ``running`` + TERMINATED as live.
     cluster_state = await _lookup_cluster_state(state.get("cluster_id"), ws=ws)
-    state = await _halt_if_cluster_dead(
-        db, setup["id"], state, cluster_state=cluster_state
-    )
+    state = await _halt_if_cluster_dead(db, setup["id"], state, cluster_state=cluster_state)
     return await _enrich_state(state, ws=ws, cluster_state=cluster_state)
 
 

@@ -77,22 +77,15 @@ def delta_table_fqn(
     schema: str | None = None,
 ) -> str:
     """Return the configured one-schema Unity Catalog destination."""
-    resolved_catalog = (
-        industry_catalog_service.uc_catalog_name() if catalog is None else catalog
-    )
-    resolved_schema = (
-        industry_catalog_service.uc_schema_name() if schema is None else schema
-    )
+    resolved_catalog = industry_catalog_service.uc_catalog_name() if catalog is None else catalog
+    resolved_schema = industry_catalog_service.uc_schema_name() if schema is None else schema
     for label, namespace in (
         ("catalog", resolved_catalog),
         ("schema", resolved_schema),
     ):
         if not isinstance(namespace, str) or not namespace.strip() or "." in namespace:
             raise ValueError(f"CDF {label} must be a non-empty UC identifier")
-    return (
-        f"{resolved_catalog.strip()}.{resolved_schema.strip()}."
-        f"{delta_table_name(industry)}"
-    )
+    return f"{resolved_catalog.strip()}.{resolved_schema.strip()}.{delta_table_name(industry)}"
 
 
 async def wait_for_exact_shadow_streaming(
@@ -136,9 +129,7 @@ async def _record_cdf_once(
     schema = industry_catalog_service.uc_schema_name()
     metadata = {
         "parent": parent,
-        "cdf_config_id": config.get(
-            "cdf_config_id", cdf_config_service.DEFAULT_POSTGRES_SCHEMA
-        ),
+        "cdf_config_id": config.get("cdf_config_id", cdf_config_service.DEFAULT_POSTGRES_SCHEMA),
         "catalog": catalog,
         "schema": schema,
         "postgres_schema": CDF_SHADOW_SCHEMA,
@@ -197,13 +188,9 @@ async def reconcile_realtime_cdf(
     except ValueError as exc:
         raise RealtimeCdfError(str(exc)) from exc
 
-    deployment = await deployment_repo.get_deployment_by_mode(
-        db, setup_id, "realtime"
-    )
+    deployment = await deployment_repo.get_deployment_by_mode(db, setup_id, "realtime")
     if deployment is None:
-        raise RealtimeCdfError(
-            f"realtime deployment for pipeline_setup {setup_id!r} not found"
-        )
+        raise RealtimeCdfError(f"realtime deployment for pipeline_setup {setup_id!r} not found")
 
     shadow = shadow_table_name(industry)
     branch = industry
@@ -212,9 +199,7 @@ async def reconcile_realtime_cdf(
     try:
         catalog = industry_catalog_service.uc_catalog_name()
         schema = industry_catalog_service.uc_schema_name()
-        destination = delta_table_fqn(
-            industry, catalog=catalog, schema=schema
-        )
+        destination = delta_table_fqn(industry, catalog=catalog, schema=schema)
         project = get_pipelines_project()
         migration_conn = await pipelines_project_service.get_write_conn(
             branch, ws=ws, project_id=project
@@ -282,9 +267,7 @@ async def reconcile_realtime_cdf(
         raise
     except Exception as exc:
         await _mark_failed(db, deployment)
-        raise RealtimeCdfError(
-            f"realtime CDF reconciliation failed for {industry}: {exc}"
-        ) from exc
+        raise RealtimeCdfError(f"realtime CDF reconciliation failed for {industry}: {exc}") from exc
     finally:
         await _close_conn(migration_conn, "migration")
         await _close_conn(poll_conn, "poll")
@@ -302,13 +285,8 @@ async def _close_conn(conn: Any | None, purpose: str) -> None:
 async def _mark_failed(db: Any, deployment: dict) -> None:
     try:
         fields: dict[str, Any] = {"cdf_enabled": False}
-        if (
-            not deployment.get("job_id")
-            and deployment.get("status") in {"pending", "deploying"}
-        ):
+        if not deployment.get("job_id") and deployment.get("status") in {"pending", "deploying"}:
             fields["status"] = "failed"
-        await deployment_repo.update_deployment(
-            db, deployment["id"], **fields
-        )
+        await deployment_repo.update_deployment(db, deployment["id"], **fields)
     except Exception:
         logger.warning("Could not persist failed CDF status", exc_info=True)

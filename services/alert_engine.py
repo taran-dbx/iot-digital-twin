@@ -92,9 +92,7 @@ class AlertRecord:
             "threshold": self.threshold,
             "opened_at": self.opened_at.isoformat() if self.opened_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "acknowledged_at": (
-                self.acknowledged_at.isoformat() if self.acknowledged_at else None
-            ),
+            "acknowledged_at": (self.acknowledged_at.isoformat() if self.acknowledged_at else None),
             "acknowledged_by": self.acknowledged_by,
             "cleared_at": self.cleared_at.isoformat() if self.cleared_at else None,
             "metadata": dict(self.metadata),
@@ -143,9 +141,7 @@ def _is_violation(operator: str, value: float, threshold: float) -> bool:
     return False
 
 
-def _in_clear_band(
-    operator: str, value: float, threshold: float, hysteresis: float
-) -> bool:
+def _in_clear_band(operator: str, value: float, threshold: float, hysteresis: float) -> bool:
     band = float(hysteresis or 0.0)
     if operator == "gt" or operator == "gte":
         return value <= threshold - band
@@ -424,9 +420,7 @@ class AlertEngine:
             return None
         return self._store(_row_to_alert(row))
 
-    async def _lookup_fingerprint(
-        self, fingerprint: str, db: Any | None
-    ) -> AlertRecord | None:
+    async def _lookup_fingerprint(self, fingerprint: str, db: Any | None) -> AlertRecord | None:
         existing = self._by_fingerprint.get(fingerprint)
         if existing is not None:
             return existing
@@ -569,9 +563,7 @@ class AlertEngine:
                 if existing is not None:
                     alert = replace(alert, id=existing.id)
                 self._store(alert)
-                transition = AlertTransition(
-                    event_type=EVENT_OPENED, alert=alert, extra=extra
-                )
+                transition = AlertTransition(event_type=EVENT_OPENED, alert=alert, extra=extra)
                 applied = await self._persist_transition(transition, db)
                 if not applied:
                     return None
@@ -588,9 +580,7 @@ class AlertEngine:
                     sensor_ids=list(sensor_ids or existing.sensor_ids),
                 )
                 self._store(alert)
-                transition = AlertTransition(
-                    event_type=EVENT_UPDATED, alert=alert, extra=extra
-                )
+                transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
                 applied = await self._persist_transition(transition, db)
                 if not applied:
                     return None
@@ -671,9 +661,7 @@ class AlertEngine:
             forced_sensor_ids=[sensor_id],
         )
 
-    async def _persist_transition(
-        self, transition: AlertTransition, db: Any | None
-    ) -> bool:
+    async def _persist_transition(self, transition: AlertTransition, db: Any | None) -> bool:
         if db is None:
             return True
         alert = transition.alert
@@ -781,8 +769,7 @@ class AlertEngine:
                 id=persisted_id,
                 status=canonical_status,
                 version=int(row.get("version") or alert.version or 0),
-                acknowledged_at=_as_datetime(row.get("acknowledged_at"))
-                or alert.acknowledged_at,
+                acknowledged_at=_as_datetime(row.get("acknowledged_at")) or alert.acknowledged_at,
                 acknowledged_by=row.get("acknowledged_by", alert.acknowledged_by),
                 cleared_at=_as_datetime(row.get("cleared_at")) or alert.cleared_at,
                 updated_at=_as_datetime(row.get("updated_at")) or alert.updated_at,
@@ -817,9 +804,7 @@ async def evaluate_and_emit(
         first = readings[0] if readings else {}
         if isinstance(first, Mapping):
             resolved_industry = first.get("industry")
-    resolved_industry = _catalog_industry(
-        str(resolved_industry) if resolved_industry else None
-    )
+    resolved_industry = _catalog_industry(str(resolved_industry) if resolved_industry else None)
     rules = _rules_for(resolved_industry)
     db = None
     if getattr(state, "app_backend_available", False):
@@ -832,8 +817,7 @@ async def evaluate_and_emit(
         db=db,
     )
     payloads = [
-        build_lifecycle_payload(item.event_type, item.alert, item.extra)
-        for item in transitions
+        build_lifecycle_payload(item.event_type, item.alert, item.extra) for item in transitions
     ]
     enqueue_alert_events(state, payloads)
     if transitions:

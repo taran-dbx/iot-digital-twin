@@ -65,7 +65,10 @@ class TestProvisionSchemaAndTables:
             await ics.provision_industry_catalog("pharmaceutical", ws=ws)
         all_sql = "\n".join(c.args[0] for c in exec_mock.call_args_list)
         assert "CREATE SCHEMA IF NOT EXISTS `taran-interop`.rtm_lakets_zb" in all_sql
-        assert "CREATE TABLE IF NOT EXISTS `taran-interop`.rtm_lakets_zb.pharmaceutical_zerobus" in all_sql
+        assert (
+            "CREATE TABLE IF NOT EXISTS `taran-interop`.rtm_lakets_zb.pharmaceutical_zerobus"
+            in all_sql
+        )
 
     @pytest.mark.asyncio
     async def test_creates_schema_if_not_exists_never_catalog(self) -> None:
@@ -102,8 +105,7 @@ class TestProvisionSchemaAndTables:
         with patch.object(ics, "execute_dbsql", new=exec_mock):
             await ics.provision_industry_catalog("pharmaceutical", ws=ws)
         metrics_ddl = next(
-            c.args[0] for c in exec_mock.call_args_list
-            if "pharmaceutical_metrics" in c.args[0]
+            c.args[0] for c in exec_mock.call_args_list if "pharmaceutical_metrics" in c.args[0]
         )
         assert "mode STRING" in metrics_ddl
         assert "LOCATION" not in metrics_ddl.upper()
@@ -144,17 +146,33 @@ class TestOrchestratorWritesUcSecret:
         monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "runtime-oauth-secret")
         ws = _make_ws()
         put_mock = AsyncMock(return_value={"status": "created"})
-        with patch.object(ips.cat, "preflight_checks", return_value=[]), \
-             patch.object(ips.cat, "provision_industry_catalog",
-                          new=AsyncMock(return_value={
-                              "catalog": CATALOG, "schema": SCHEMA, "results": [],
-                              "tables": {}, "metrics_table": f"{CATALOG}.{SCHEMA}.x_metrics",
-                          })), \
-             patch.object(ips.cat, "grant_app_sp",
-                          new=AsyncMock(return_value={"catalog": CATALOG, "results": []})), \
-             patch.object(ips.uc_secrets, "put_secret", new=put_mock):
+        with (
+            patch.object(ips.cat, "preflight_checks", return_value=[]),
+            patch.object(
+                ips.cat,
+                "provision_industry_catalog",
+                new=AsyncMock(
+                    return_value={
+                        "catalog": CATALOG,
+                        "schema": SCHEMA,
+                        "results": [],
+                        "tables": {},
+                        "metrics_table": f"{CATALOG}.{SCHEMA}.x_metrics",
+                    }
+                ),
+            ),
+            patch.object(
+                ips.cat,
+                "grant_app_sp",
+                new=AsyncMock(return_value={"catalog": CATALOG, "results": []}),
+            ),
+            patch.object(ips.uc_secrets, "put_secret", new=put_mock),
+        ):
             summary = await ips.provision_industry(
-                "pharmaceutical", None, ws=ws, enable_realtime=False,
+                "pharmaceutical",
+                None,
+                ws=ws,
+                enable_realtime=False,
             )
         put_mock.assert_awaited_once()
         kwargs = put_mock.await_args.kwargs

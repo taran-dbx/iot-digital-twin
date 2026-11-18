@@ -74,8 +74,8 @@ HEALTH_UNKNOWN = "unknown"
 CHECK_PASS = "pass"
 CHECK_FAIL = "fail"
 CHECK_SKIP = "skip"
-TIER_API = "api"   # runs from the app backend, no interactive cluster
-TIER_E2E = "e2e"   # opt-in interactive harness (spins the cluster)
+TIER_API = "api"  # runs from the app backend, no interactive cluster
+TIER_E2E = "e2e"  # opt-in interactive harness (spins the cluster)
 
 # ``pipeline_deployment.status`` values that (together with a ``job_id``) mean the
 # mode's job was actually created in the workspace.
@@ -205,7 +205,11 @@ def build_mode_view(
     ``tasks`` carries the per-task live states for the admin pipeline view.
     """
     _running, degraded, _starting, restartable, detail = _runtime(job_state)
-    tasks = list(job_state.get("tasks")) if isinstance(job_state, Mapping) and job_state.get("tasks") else []
+    tasks = (
+        list(job_state.get("tasks"))
+        if isinstance(job_state, Mapping) and job_state.get("tasks")
+        else []
+    )
     deployed = is_deployed(deployment)
     status = mode_status(deployment, job_state, flowing)
     deploy_health = mode_health(setup, deployment, mode)
@@ -294,9 +298,7 @@ def build_pipeline_view(
         dep = dep_by_mode.get(mode)
         job_id = dep.get("job_id") if dep else None
         job_state = job_running.get(str(job_id)) if job_id else None
-        mode_views.append(
-            build_mode_view(setup, dep, mode, job_state, bool(flowing.get(mode)))
-        )
+        mode_views.append(build_mode_view(setup, dep, mode, job_state, bool(flowing.get(mode))))
 
     startable = any(m["startable"] for m in mode_views)
     validation_passed = bool(mode_views) and all(

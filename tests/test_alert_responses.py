@@ -69,7 +69,8 @@ class FakeResponseDb:
                 (
                     r
                     for r in self.rows
-                    if (r["alert_id"], r["episode_opened_at"], r["action"]) == (alert_id, episode, action)
+                    if (r["alert_id"], r["episode_opened_at"], r["action"])
+                    == (alert_id, episode, action)
                 ),
                 None,
             )
@@ -77,7 +78,9 @@ class FakeResponseDb:
 
     async def fetch(self, sql: str, *args):
         alert_id, episode = args
-        return [r for r in self.rows if r["alert_id"] == alert_id and r["episode_opened_at"] == episode]
+        return [
+            r for r in self.rows if r["alert_id"] == alert_id and r["episode_opened_at"] == episode
+        ]
 
 
 @pytest_asyncio.fixture()
@@ -97,7 +100,9 @@ async def cell() -> AsyncGenerator[tuple[AsyncClient, AppState, Clock, asyncio.Q
 
 
 def _instant_spindle_rule() -> AlertRule:
-    rule = next(r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp")
+    rule = next(
+        r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp"
+    )
     return replace(rule, duration_s=0.0)
 
 
@@ -145,9 +150,13 @@ class TestAlertResponses:
         """[C7421][regression] Repeating a decision returns the original record without a second broadcast."""
         client, state, _clock, queue = cell
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
-        first = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"})
+        first = await client.post(
+            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"}
+        )
         _drain(queue)
-        again = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"})
+        again = await client.post(
+            f"/api/alerts/{alert_id}/responses", json={"action": "send_to_inspect"}
+        )
         assert again.json()["created"] is False
         assert again.json()["response"]["id"] == first.json()["response"]["id"]
         assert _drain(queue) == []
@@ -172,7 +181,9 @@ class TestAlertResponses:
         """[C7423][regression] A maintenance request references Spindle 3's last catalog service."""
         client, state, _clock, _queue = cell
         alert_id = (await _spindle_reading(state, 66.3))[0].alert.id
-        resp = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "request_maintenance"})
+        resp = await client.post(
+            f"/api/alerts/{alert_id}/responses", json={"action": "request_maintenance"}
+        )
         reference = resp.json()["response"]["reference"]
         assert reference["station"] == "MILL"
         assert reference["asset"] == "CNC-1"
@@ -186,10 +197,14 @@ class TestAlertResponses:
         _drain(queue)
         bad = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "stop_mill"})
         assert bad.status_code == 422
-        missing = await client.post("/api/alerts/does-not-exist/responses", json={"action": "hold_batch"})
+        missing = await client.post(
+            "/api/alerts/does-not-exist/responses", json={"action": "hold_batch"}
+        )
         assert missing.status_code == 404
         with patch("routes.alerts.app_permissions.is_admin", return_value=False):
-            denied = await client.post(f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"})
+            denied = await client.post(
+                f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"}
+            )
         assert denied.status_code == 403
         assert response_store_for(state)._memory == {}
         assert _drain(queue) == []

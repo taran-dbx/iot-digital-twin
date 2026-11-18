@@ -55,6 +55,7 @@ CHECKPOINT_VOLUME = "stream_checkpoints"
 # --- Env-resolved workspace values -----------------------------------------
 # Read at call time (not import time) so tests can monkeypatch freely.
 
+
 def _storage_base() -> str:
     """S3 base URI for external metrics tables (UC_STORAGE_BASE env var).
 
@@ -72,17 +73,18 @@ def _external_location_name() -> str:
     """
     return os.getenv("UC_EXTERNAL_LOCATION", "")
 
+
 # Ledger teardown_order. Higher = considered earlier during teardown. Catalog
 # and schema rows are inventory only: per-pipeline deletion always preserves
 # those shared namespace containers.
-TEARDOWN_ORDER_SP = 1              # shared — never torn down per-industry
-TEARDOWN_ORDER_SECRET_SCOPE = 2    # shared — never torn down per-industry
-TEARDOWN_ORDER_SECRET = 3          # shared — never torn down per-industry
+TEARDOWN_ORDER_SP = 1  # shared — never torn down per-industry
+TEARDOWN_ORDER_SECRET_SCOPE = 2  # shared — never torn down per-industry
+TEARDOWN_ORDER_SECRET = 3  # shared — never torn down per-industry
 TEARDOWN_ORDER_CATALOG = 10
 TEARDOWN_ORDER_SCHEMA = 15
 TEARDOWN_ORDER_VOLUME = 18
 TEARDOWN_ORDER_METRICS_TABLE = 20
-TEARDOWN_ORDER_GRANT = 45          # revoke first (harmless once objects dropped)
+TEARDOWN_ORDER_GRANT = 45  # revoke first (harmless once objects dropped)
 
 _CATALOG_SAFE_RE = re.compile(r"[^a-z0-9_]+")
 
@@ -221,42 +223,52 @@ def preflight_checks(*, ws: Any | None = None, warehouse_id: str | None = None) 
     if ext_loc:
         try:
             ws.external_locations.get(name=ext_loc)
-            checks.append({
-                "check": f"External location '{ext_loc}'",
-                "status": "pass",
-                "detail": "present",
-            })
+            checks.append(
+                {
+                    "check": f"External location '{ext_loc}'",
+                    "status": "pass",
+                    "detail": "present",
+                }
+            )
         except Exception as exc:
-            checks.append({
-                "check": f"External location '{ext_loc}'",
-                "status": "fail",
-                "detail": (
-                    f"Not found ({str(exc)[:120]}). CREATE CATALOG needs an explicit "
-                    f"MANAGED LOCATION under {storage_base}; the external "
-                    f"location '{ext_loc}' must exist and be writable."
-                ),
-            })
+            checks.append(
+                {
+                    "check": f"External location '{ext_loc}'",
+                    "status": "fail",
+                    "detail": (
+                        f"Not found ({str(exc)[:120]}). CREATE CATALOG needs an explicit "
+                        f"MANAGED LOCATION under {storage_base}; the external "
+                        f"location '{ext_loc}' must exist and be writable."
+                    ),
+                }
+            )
     else:
-        checks.append({
-            "check": "External location",
-            "status": "pass",
-            "detail": "UC_EXTERNAL_LOCATION not configured — using metastore-managed storage",
-        })
+        checks.append(
+            {
+                "check": "External location",
+                "status": "pass",
+                "detail": "UC_EXTERNAL_LOCATION not configured — using metastore-managed storage",
+            }
+        )
 
     # 2. A SQL warehouse must be available for external-table DDL + grants.
     try:
         wh = resolve_warehouse_id(ws, warehouse_id)
-        checks.append({
-            "check": "SQL warehouse",
-            "status": "pass",
-            "detail": f"using warehouse {wh}",
-        })
+        checks.append(
+            {
+                "check": "SQL warehouse",
+                "status": "pass",
+                "detail": f"using warehouse {wh}",
+            }
+        )
     except Exception as exc:
-        checks.append({
-            "check": "SQL warehouse",
-            "status": "fail",
-            "detail": str(exc)[:160],
-        })
+        checks.append(
+            {
+                "check": "SQL warehouse",
+                "status": "fail",
+                "detail": str(exc)[:160],
+            }
+        )
 
     return checks
 
@@ -321,22 +333,31 @@ async def provision_industry_catalog(
     # 1. Schema — the catalog pre-exists (owned by another SP), so only ever
     #    create the schema.  Managed tables need no external storage.
     res = await _run_sql(f"CREATE SCHEMA IF NOT EXISTS {sql_schema_fqn}", wh)
-    results.append({
-        "resource": f"Schema '{schema_fqn}'",
-        "status": "created" if res["status"] == "ok" else res["status"],
-        **({"error": res["error"]} if res.get("error") else {}),
-    })
+    results.append(
+        {
+            "resource": f"Schema '{schema_fqn}'",
+            "status": "created" if res["status"] == "ok" else res["status"],
+            **({"error": res["error"]} if res.get("error") else {}),
+        }
+    )
     if res["status"] != "failed":
         await _record(
-            db, setup_id, deployment_id,
-            resource_type="uc_schema", identifier=schema_fqn,
-            parent_ref=catalog, teardown_order=TEARDOWN_ORDER_SCHEMA,
+            db,
+            setup_id,
+            deployment_id,
+            resource_type="uc_schema",
+            identifier=schema_fqn,
+            parent_ref=catalog,
+            teardown_order=TEARDOWN_ORDER_SCHEMA,
         )
     else:
         # Schema is the root dependency for the tables — abort if it failed.
         return {
-            "catalog": catalog, "schema": schema, "results": results,
-            "tables": tables, "metrics_table": None,
+            "catalog": catalog,
+            "schema": schema,
+            "results": results,
+            "tables": tables,
+            "metrics_table": None,
         }
 
     # 2. Managed, industry-prefixed Delta tables (no LOCATION).
@@ -349,17 +370,23 @@ async def provision_industry_catalog(
             else delta_table_ddl(sql_fqn_table)
         )
         res = await _run_sql(ddl, wh)
-        results.append({
-            "resource": f"Table '{fqn}'",
-            "status": "created" if res["status"] == "ok" else res["status"],
-            **({"error": res["error"]} if res.get("error") else {}),
-        })
+        results.append(
+            {
+                "resource": f"Table '{fqn}'",
+                "status": "created" if res["status"] == "ok" else res["status"],
+                **({"error": res["error"]} if res.get("error") else {}),
+            }
+        )
         if res["status"] != "failed":
             tables[kind] = fqn
             await _record(
-                db, setup_id, deployment_id,
-                resource_type="uc_table", identifier=fqn,
-                parent_ref=schema_fqn, teardown_order=TEARDOWN_ORDER_METRICS_TABLE,
+                db,
+                setup_id,
+                deployment_id,
+                resource_type="uc_table",
+                identifier=fqn,
+                parent_ref=schema_fqn,
+                teardown_order=TEARDOWN_ORDER_METRICS_TABLE,
                 metadata={"managed": True, "kind": kind},
             )
 
@@ -394,7 +421,10 @@ def resolve_app_principal(ws: Any) -> str | None:
 
 
 def _app_sp_grant_statements(
-    catalog: str, schema: str, industry: str, principal: str,
+    catalog: str,
+    schema: str,
+    industry: str,
+    principal: str,
 ) -> list[tuple[str, str]]:
     """Return ``(label, sql)`` GRANT statements for the SINGLE app SP.
 
@@ -445,9 +475,16 @@ async def grant_app_sp(
     principal = principal or resolve_app_principal(ws)
     if not principal:
         return {
-            "catalog": catalog, "schema": schema, "principal": None,
-            "results": [{"resource": "app SP grant", "status": "skipped",
-                         "error": "app SP principal unresolved"}],
+            "catalog": catalog,
+            "schema": schema,
+            "principal": None,
+            "results": [
+                {
+                    "resource": "app SP grant",
+                    "status": "skipped",
+                    "error": "app SP principal unresolved",
+                }
+            ],
         }
     wh = resolve_warehouse_id(ws, warehouse_id)
     results: list[dict] = []
@@ -466,15 +503,19 @@ async def grant_app_sp(
                 "status": "skipped",
                 "reason": "catalog-level grant is applied out-of-band by the deployer",
             }
-        results.append({
-            "resource": f"GRANT {label} → {principal}",
-            "status": res["status"],
-            **({"error": res["error"]} if res.get("error") else {}),
-            **({"reason": res["reason"]} if res.get("reason") else {}),
-        })
+        results.append(
+            {
+                "resource": f"GRANT {label} → {principal}",
+                "status": res["status"],
+                **({"error": res["error"]} if res.get("error") else {}),
+                **({"reason": res["reason"]} if res.get("reason") else {}),
+            }
+        )
         if res["status"] != "failed":
             await _record(
-                db, setup_id, deployment_id,
+                db,
+                setup_id,
+                deployment_id,
                 resource_type="grant",
                 identifier=f"{schema_fqn}:{label}:{principal}",
                 parent_ref=schema_fqn,
@@ -508,11 +549,18 @@ async def ensure_secret_scope(
         if _is_already_exists(exc):
             status = "already_exists"
         else:
-            return {"resource": f"Secret scope '{scope}'", "status": "failed", "error": str(exc)[:200]}
+            return {
+                "resource": f"Secret scope '{scope}'",
+                "status": "failed",
+                "error": str(exc)[:200],
+            }
 
     await _record(
-        db, setup_id, None,
-        resource_type="secret_scope", identifier=scope,
+        db,
+        setup_id,
+        None,
+        resource_type="secret_scope",
+        identifier=scope,
         teardown_order=TEARDOWN_ORDER_SECRET_SCOPE,
         metadata={"shared": True},
     )

@@ -183,7 +183,8 @@ def grant_app_can_use(w: Any, app_name: str, sp_application_id: str) -> None:
     if not app_name or not sp_application_id:
         logger.warning(
             "grant_app_can_use: missing app_name=%r or sp_application_id=%r — skipping",
-            app_name, sp_application_id,
+            app_name,
+            sp_application_id,
         )
         return
 
@@ -204,10 +205,13 @@ def grant_app_can_use(w: Any, app_name: str, sp_application_id: str) -> None:
         )
         logger.info(
             "Granted CAN_USE on app '%s' to service principal '%s'",
-            app_name, sp_application_id,
+            app_name,
+            sp_application_id,
         )
     except Exception as exc:
         logger.warning(
             "Failed to grant CAN_USE on app '%s' to SP '%s' (non-fatal): %s",
-            app_name, sp_application_id, exc,
+            app_name,
+            sp_application_id,
+            exc,
         )

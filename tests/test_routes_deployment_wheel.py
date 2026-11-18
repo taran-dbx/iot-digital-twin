@@ -23,9 +23,7 @@ def _build_app() -> FastAPI:
 
 class TestUploadWheel:
     @pytest.mark.asyncio
-    async def test_upload_sends_augmented_bytes_c7315_regression(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_upload_sends_augmented_bytes_c7315_regression(self, tmp_path: Path) -> None:
         """[C7315][regression] Wheel upload posts augmented bytes, same workspace filename."""
         app = _build_app()
         transport = ASGITransport(app=app)

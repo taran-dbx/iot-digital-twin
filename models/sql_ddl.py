@@ -12,9 +12,7 @@ from __future__ import annotations
 from models.sensor_schema import pg_chronotable_ddl
 
 # LakeTS — probe installed version.  Returns NULL/empty if the toolkit is absent.
-LAKETS_VERSION_CHECK_SQL = (
-    "SELECT version FROM lakets._version ORDER BY installed_at DESC LIMIT 1"
-)
+LAKETS_VERSION_CHECK_SQL = "SELECT version FROM lakets._version ORDER BY installed_at DESC LIMIT 1"
 
 # Derived from the SSOT — now includes min_value/max_value/nominal_value/metadata
 # (previously dropped → silent data loss).

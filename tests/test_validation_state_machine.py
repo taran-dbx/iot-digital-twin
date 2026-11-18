@@ -59,7 +59,7 @@ def test_build_sequence_zerobus_only_has_no_common_steps():
     # The zerobus lane and terminal steps must still be present.
     assert "zerobus:create_table" in seq
     assert "zerobus:cleanup" in seq
-    assert list(sm.TERMINAL_STEPS) == seq[-len(sm.TERMINAL_STEPS):]
+    assert list(sm.TERMINAL_STEPS) == seq[-len(sm.TERMINAL_STEPS) :]
 
 
 def test_build_sequence_realtime_and_zerobus_includes_common_steps():
@@ -156,9 +156,14 @@ def test_next_runnable_returns_failed_step():
 
 def test_next_runnable_blocks_on_waiting_admin():
     state = sm.initial_state(["realtime"])
-    for k in ("provision_cluster", "source_connectivity", "topics_created",
-              "schema_conformance", "realtime:partitions_precreate",
-              "realtime:write_test"):
+    for k in (
+        "provision_cluster",
+        "source_connectivity",
+        "topics_created",
+        "schema_conformance",
+        "realtime:partitions_precreate",
+        "realtime:write_test",
+    ):
         state = sm.set_step(state, k, sm.PASSED)
     state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
     # Parked — nothing auto-runs until the admin releases cdf_manual.
@@ -176,9 +181,14 @@ def test_next_runnable_parked_lane_does_not_block_sibling_lane():
     # Per-mode design: a realtime lane parked at cdf_manual must NOT block the
     # independent micro-batch lane — the driver advances to it.
     state = sm.initial_state(["realtime", "microbatch"])
-    for k in ("provision_cluster", "source_connectivity", "topics_created",
-              "schema_conformance", "realtime:partitions_precreate",
-              "realtime:write_test"):
+    for k in (
+        "provision_cluster",
+        "source_connectivity",
+        "topics_created",
+        "schema_conformance",
+        "realtime:partitions_precreate",
+        "realtime:write_test",
+    ):
         state = sm.set_step(state, k, sm.PASSED)
     state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
     # Realtime parks, but micro-batch's first lane step is now runnable.
@@ -193,7 +203,8 @@ def test_next_runnable_defers_terminal_while_a_lane_is_parked():
             continue
         # Downstream realtime steps stay pending (depend on the parked step).
         if sm.mode_of(k) == "realtime" and k not in (
-            "realtime:partitions_precreate", "realtime:write_test"
+            "realtime:partitions_precreate",
+            "realtime:write_test",
         ):
             continue
         state = sm.set_step(state, k, sm.PASSED)
@@ -429,9 +440,14 @@ def test_current_step_surfaces_running_and_waiting_admin():
     state = sm.set_step(state, "provision_cluster", sm.RUNNING)
     assert sm.current_step(state) == "provision_cluster"
     # Park the realtime cdf_manual step with everything before it green.
-    for k in ["provision_cluster", "source_connectivity", "topics_created",
-              "schema_conformance", "realtime:partitions_precreate",
-              "realtime:write_test"]:
+    for k in [
+        "provision_cluster",
+        "source_connectivity",
+        "topics_created",
+        "schema_conformance",
+        "realtime:partitions_precreate",
+        "realtime:write_test",
+    ]:
         state = sm.set_step(state, k, sm.PASSED)
     state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
     # next_runnable_step returns None (park is not runnable) but current_step
@@ -460,8 +476,7 @@ def test_derive_phase_provisioning_from_cluster_state_only():
     # Cluster still coming up mid-lane (e.g. RESIZING) → provisioning phase even
     # though the current step is not provision_cluster.
     state = sm.initial_state(["microbatch"])
-    for k in ["provision_cluster", "source_connectivity", "topics_created",
-              "schema_conformance"]:
+    for k in ["provision_cluster", "source_connectivity", "topics_created", "schema_conformance"]:
         state = sm.set_step(state, k, sm.PASSED)
     state = sm.set_step(state, "microbatch:write_test", sm.RUNNING)
     assert sm.derive_phase(state, cluster_state="RESTARTING") == sm.PHASE_PROVISIONING
@@ -469,8 +484,7 @@ def test_derive_phase_provisioning_from_cluster_state_only():
 
 def test_derive_phase_validating_when_cluster_running():
     state = sm.initial_state(["microbatch"])
-    for k in ["provision_cluster", "source_connectivity", "topics_created",
-              "schema_conformance"]:
+    for k in ["provision_cluster", "source_connectivity", "topics_created", "schema_conformance"]:
         state = sm.set_step(state, k, sm.PASSED)
     state = sm.set_step(state, "microbatch:write_test", sm.RUNNING)
     assert sm.derive_phase(state, cluster_state="RUNNING") == sm.PHASE_VALIDATING
@@ -478,9 +492,14 @@ def test_derive_phase_validating_when_cluster_running():
 
 def test_derive_phase_waiting_admin():
     state = sm.initial_state(["realtime"])
-    for k in ["provision_cluster", "source_connectivity", "topics_created",
-              "schema_conformance", "realtime:partitions_precreate",
-              "realtime:write_test"]:
+    for k in [
+        "provision_cluster",
+        "source_connectivity",
+        "topics_created",
+        "schema_conformance",
+        "realtime:partitions_precreate",
+        "realtime:write_test",
+    ]:
         state = sm.set_step(state, k, sm.PASSED)
     state = sm.set_step(state, "realtime:cdf_manual", sm.WAITING_ADMIN)
     assert sm.derive_phase(state, cluster_state="RUNNING") == sm.PHASE_WAITING_ADMIN

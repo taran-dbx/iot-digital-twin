@@ -44,15 +44,11 @@ async def post_setup_pipeline_lakebase(
     create_new_project = bool(body.get("create_new_project"))
     lb_project_id = (body.get("lb_project_id") or "").strip()
     if not lb_project_id:
-        return JSONResponse(
-            status_code=400, content={"error": "lb_project_id is required"}
-        )
+        return JSONResponse(status_code=400, content={"error": "lb_project_id is required"})
 
     rollups = body.get("rollups") or []
     if not isinstance(rollups, list):
-        return JSONResponse(
-            status_code=400, content={"error": "rollups must be a list"}
-        )
+        return JSONResponse(status_code=400, content={"error": "rollups must be a list"})
     for rollup in rollups:
         if not isinstance(rollup, dict) or not rollup.get("name") or not rollup.get("bucket"):
             return JSONResponse(

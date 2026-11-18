@@ -78,9 +78,7 @@ async def get_resource(db: DBExecutor, resource_id: Any) -> dict | None:
     return _to_dict(row)
 
 
-async def update_resource(
-    db: DBExecutor, resource_id: Any, **fields: Any
-) -> dict | None:
+async def update_resource(db: DBExecutor, resource_id: Any, **fields: Any) -> dict | None:
     """Refresh mutable binding metadata on an existing ledger row."""
     if not fields:
         return await get_resource(db, resource_id)
@@ -98,32 +96,26 @@ async def update_resource(
 async def list_resources(db: DBExecutor, setup_id: Any) -> list[dict]:
     """Return all ledger rows for a setup in ASCENDING teardown_order."""
     rows = await db.fetch(
-        f"SELECT * FROM {TABLE} WHERE setup_id = $1 "
-        "ORDER BY teardown_order ASC, created_at ASC",
+        f"SELECT * FROM {TABLE} WHERE setup_id = $1 ORDER BY teardown_order ASC, created_at ASC",
         setup_id,
     )
     return [_to_dict(r) for r in rows]
 
 
-async def resources_in_teardown_order(
-    db: DBExecutor, setup_id: Any
-) -> list[dict]:
+async def resources_in_teardown_order(db: DBExecutor, setup_id: Any) -> list[dict]:
     """Return ledger rows for a setup in DESCENDING teardown_order.
 
     This is the order the teardown orchestrator deletes resources in (reverse
     dependency order).
     """
     rows = await db.fetch(
-        f"SELECT * FROM {TABLE} WHERE setup_id = $1 "
-        "ORDER BY teardown_order DESC, created_at DESC",
+        f"SELECT * FROM {TABLE} WHERE setup_id = $1 ORDER BY teardown_order DESC, created_at DESC",
         setup_id,
     )
     return [_to_dict(r) for r in rows]
 
 
-async def mark_resource_status(
-    db: DBExecutor, resource_id: Any, status: str
-) -> dict | None:
+async def mark_resource_status(db: DBExecutor, resource_id: Any, status: str) -> dict | None:
     """Set the ``status`` on a ledger row (e.g. 'deleted') and return it."""
     row = await db.fetchrow(
         f"UPDATE {TABLE} SET status = $1 WHERE id = $2 RETURNING *",
