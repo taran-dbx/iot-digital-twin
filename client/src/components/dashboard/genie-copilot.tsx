@@ -1,7 +1,15 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { PanelRight, Send } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { GenieComposer, GenieDrawer } from "@/components/dashboard/genie-drawer";
+
+import { GeniePipelineCopilot } from "@/components/dashboard/genie-pipeline-copilot";
 import { api } from "@/lib/api";
+import {
+  GENIE_POLL_INTERVAL_MS,
+  classifyStatus,
+  isPending,
+  statusLabel,
+} from "@/lib/genie-messages";
 import type {
   AlertRecord,
   GenieAllowlistStatus,
@@ -26,62 +34,18 @@ interface GenieCopilotProps {
   alert: AlertRecord | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Pipeline identity (setup id, or the dashboard's pipeline/deployment id)
+   * for the per-pipeline Genie space. Only manufacturing uses it today.
+   */
+  setupId?: string | null;
 }
 
-function classifyStatus(status: string | undefined): GenieMessageStatus {
-  switch (status) {
-    case "IN_PROGRESS":
-    case "EXECUTING_QUERY":
-    case "COMPLETED":
-    case "FAILED":
-    case "CANCELLED":
-    case "UNKNOWN":
-      return status;
-    case undefined:
-    case "":
-      return "UNKNOWN";
-    default: {
-      return "UNKNOWN";
-    }
-  }
-}
+/** Industries whose dashboards talk to a per-pipeline Genie space. */
+const PER_PIPELINE_GENIE_INDUSTRIES: ReadonlySet<string> = new Set(["manufacturing"]);
 
-function isPending(status: GenieMessageStatus): boolean {
-  switch (status) {
-    case "IN_PROGRESS":
-    case "EXECUTING_QUERY":
-      return true;
-    case "COMPLETED":
-    case "FAILED":
-    case "CANCELLED":
-    case "UNKNOWN":
-      return false;
-    default: {
-      const exhaustive: never = status;
-      return exhaustive;
-    }
-  }
-}
-
-function statusLabel(status: GenieMessageStatus): string {
-  switch (status) {
-    case "IN_PROGRESS":
-      return "Working";
-    case "EXECUTING_QUERY":
-      return "Querying data";
-    case "COMPLETED":
-      return "Complete";
-    case "FAILED":
-      return "Failed";
-    case "CANCELLED":
-      return "Cancelled";
-    case "UNKNOWN":
-      return "Unknown";
-    default: {
-      const exhaustive: never = status;
-      return exhaustive;
-    }
-  }
+export function usesPipelineGenie(industry: string, setupId: string | null | undefined): setupId is string {
+  return PER_PIPELINE_GENIE_INDUSTRIES.has(industry) && Boolean(setupId);
 }
 
 function operatorFacingReason(raw: string): string {
@@ -136,14 +100,22 @@ function defaultComponentId(assets: IndustryAssets | null, assetId?: string): st
   return undefined;
 }
 
-export function GenieCopilot({
+export function GenieCopilot({ setupId, ...props }: GenieCopilotProps) {
+  if (usesPipelineGenie(props.industry, setupId)) {
+    return <GeniePipelineCopilot key={`${setupId}:${props.mode}`} {...props} setupId={setupId} />;
+  }
+  return <StaticGenieCopilot {...props} />;
+}
+
+/** Workspace-wide (static GENIE_SPACE_ID) copilot — unchanged behaviour. */
+function StaticGenieCopilot({
   industry,
   mode,
   assets,
   alert,
   open,
   onOpenChange,
-}: GenieCopilotProps) {
+}: Omit<GenieCopilotProps, "setupId">) {
   const [config, setConfig] = useState<GenieStatusResponse | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -298,7 +270,7 @@ export function GenieCopilot({
         });
     };
     tick();
-    const handle = window.setInterval(tick, 1500);
+    const handle = window.setInterval(tick, GENIE_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(handle);
@@ -313,140 +285,85 @@ export function GenieCopilot({
     }
   }, [alert, open]);
 
-  function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    void send(question);
-  }
-
   const loading = config == null && configError == null;
   const pending = pendingMessageId != null;
+  const statusText = loading
+    ? "Checking…"
+    : disabled
+      ? disabledStatusLabel(
+          config?.table_allowlist?.status,
+          Boolean(config?.reason?.includes("GENIE_SPACE_ID")),
+        )
+      : pending
+        ? statusLabel(pollStatus)
+        : "Ready";
+
+  const notices = (
+    <>
+      {loading && (
+        <p className="genie-drawer__hint" aria-busy="true">
+          Loading Genie configuration…
+        </p>
+      )}
+      {(disabled || configError) && (
+        <p className="genie-drawer__disabled" data-testid="genie-disabled" role="status">
+          {disabledReason(config, configError)}
+        </p>
+      )}
+      {error && (
+        <p className="genie-drawer__error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="genie-drawer__prompts">
+        {prompts.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className="btn sm"
+            disabled={disabled || busy}
+            onClick={() => void send(item.question)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
 
   return (
-    <aside
-      className={`genie-drawer${open ? " is-open" : ""}`}
-      data-testid="genie-copilot"
-      aria-label="Genie investigation"
+    <GenieDrawer
+      open={open}
+      onOpenChange={onOpenChange}
+      subtitle={`${industry} · ${mode}${assetId ? ` · ${assetId}` : ""}`}
+      statusText={statusText}
+      notices={notices}
+      composer={
+        <GenieComposer
+          value={question}
+          onChange={setQuestion}
+          onSubmit={(text) => void send(text)}
+          disabled={disabled || busy}
+        />
+      }
     >
-      <button
-        type="button"
-        className="genie-drawer__toggle"
-        data-testid="genie-copilot-toggle"
-        aria-expanded={open}
-        onClick={() => onOpenChange(!open)}
-      >
-        <PanelRight size={16} aria-hidden="true" />
-        <span>Investigate</span>
-      </button>
-      <div
-        className="genie-drawer__panel"
-        data-testid="genie-copilot-drawer"
-        hidden={!open}
-        aria-hidden={!open}
-      >
-        <header className="genie-drawer__head">
-          <div>
-            <h2>Genie investigation</h2>
-            <p title={`${industry} · ${mode}${assetId ? ` · ${assetId}` : ""}`}>
-              {industry} · {mode}
-              {assetId ? ` · ${assetId}` : ""}
-            </p>
-          </div>
-          <span
-            className="genie-drawer__status"
-            data-testid="genie-status"
-            aria-live="polite"
-          >
-            {loading
-              ? "Checking…"
-              : disabled
-                ? disabledStatusLabel(
-                    config?.table_allowlist?.status,
-                    Boolean(config?.reason?.includes("GENIE_SPACE_ID")),
-                  )
-                : pending
-                  ? statusLabel(pollStatus)
-                  : "Ready"}
-          </span>
-        </header>
-
-        {loading && (
-          <p className="genie-drawer__hint" aria-busy="true">
-            Loading Genie configuration…
-          </p>
-        )}
-        {(disabled || configError) && (
-          <p className="genie-drawer__disabled" data-testid="genie-disabled" role="status">
-            {disabledReason(config, configError)}
-          </p>
-        )}
-        {error && (
-          <p className="genie-drawer__error" role="alert">
-            {error}
-          </p>
-        )}
-
-        <div className="genie-drawer__prompts">
-          {prompts.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className="btn sm"
-              disabled={disabled || busy}
-              onClick={() => void send(item.question)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
-        <div
-          className="genie-drawer__transcript"
-          data-testid="genie-copilot-transcript"
-          aria-live="polite"
-        >
-          {transcript.length === 0 ? (
-            <p className="genie-drawer__hint">
-              Ask about this asset, mode, or alert. Genie can explain and recommend; it cannot change alerts.
-            </p>
-          ) : (
-            transcript.map((entry) => (
-              <article key={entry.id} className={`genie-msg genie-msg--${entry.role}`}>
-                <span>{entry.role === "user" ? "You" : "Genie"}</span>
-                <p>{entry.text}</p>
-              </article>
-            ))
-          )}
-          {pending && (
-            <p className="genie-drawer__hint" aria-busy="true">
-              {statusLabel(pollStatus)}…
-            </p>
-          )}
-        </div>
-
-        <form className="genie-drawer__composer" onSubmit={onSubmit}>
-          <label className="sr-only" htmlFor="genie-question">
-            Investigation question
-          </label>
-          <textarea
-            id="genie-question"
-            data-testid="genie-copilot-input"
-            rows={3}
-            value={question}
-            disabled={disabled || busy}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Investigate this twin…"
-          />
-          <button
-            type="submit"
-            className="btn primary sm"
-            data-testid="genie-copilot-send"
-            disabled={disabled || busy || !question.trim()}
-          >
-            <Send size={14} aria-hidden="true" />
-            Send
-          </button>
-        </form>
-      </div>
-    </aside>
+      {transcript.length === 0 ? (
+        <p className="genie-drawer__hint">
+          Ask about this asset, mode, or alert. Genie can explain and recommend; it cannot change alerts.
+        </p>
+      ) : (
+        transcript.map((entry) => (
+          <article key={entry.id} className={`genie-msg genie-msg--${entry.role}`}>
+            <span>{entry.role === "user" ? "You" : "Genie"}</span>
+            <p>{entry.text}</p>
+          </article>
+        ))
+      )}
+      {pending && (
+        <p className="genie-drawer__hint" aria-busy="true">
+          {statusLabel(pollStatus)}…
+        </p>
+      )}
+    </GenieDrawer>
   );
 }

@@ -422,6 +422,51 @@ export interface GenieMessageResponse {
   error: string | null;
 }
 
+/** Per-pipeline Genie (`/api/genie/pipelines/{setup_id}/{mode}/status`). */
+export interface GeniePipelineStatus {
+  available: boolean;
+  space_id: string | null;
+  reason?: string;
+}
+
+export interface GeniePipelineStarters {
+  questions: string[];
+}
+
+export interface GeniePipelineAskRequest {
+  question: string;
+}
+
+export interface GenieAttachmentQuery {
+  sql: string;
+  description?: string | null;
+}
+
+/** Normalised per-pipeline Genie attachment (text, query, and/or suggestions). */
+export interface GeniePipelineAttachment {
+  attachment_id: string;
+  text?: string | null;
+  query?: GenieAttachmentQuery | null;
+  suggested_questions?: string[] | null;
+}
+
+/** Same envelope as {@link GenieMessageResponse}, with typed attachments. */
+export interface GeniePipelineMessageResponse
+  extends Omit<GenieMessageResponse, "attachments"> {
+  attachments: GeniePipelineAttachment[];
+}
+
+export interface GenieResultColumn {
+  name: string;
+  type: string;
+}
+
+export interface GenieQueryResult {
+  columns: GenieResultColumn[];
+  rows: unknown[][];
+  truncated: boolean;
+}
+
 export interface GenieAskRequest {
   industry: string;
   mode: string;

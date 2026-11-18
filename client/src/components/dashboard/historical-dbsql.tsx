@@ -16,7 +16,7 @@ import type { PipelineMode } from "@/lib/industries-api";
 
 const DBSQL = "#a855f7";
 
-const TOOLTIP_STYLE = {
+export const TOOLTIP_STYLE = {
   backgroundColor: "hsl(var(--card) / 0.9)",
   backdropFilter: "blur(12px)",
   border: "1px solid hsl(var(--border) / 0.5)",
@@ -24,7 +24,7 @@ const TOOLTIP_STYLE = {
   fontSize: 11,
 } as const;
 
-const SERIES_COLORS = ["#a855f7", "#3b82f6", "#3fb950", "#f59e0b", "#ec4899", "#22d3ee"];
+export const SERIES_COLORS = ["#a855f7", "#3b82f6", "#3fb950", "#f59e0b", "#ec4899", "#22d3ee"];
 const MIXED_SCALE_RATIO = 8;
 
 export function formatAxisTick(value: number): string {

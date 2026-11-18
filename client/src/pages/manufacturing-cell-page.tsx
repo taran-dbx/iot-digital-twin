@@ -79,6 +79,7 @@ export function ManufacturingCellPage({
   powered,
   isAdmin,
   pipelineId,
+  setupId,
   refreshSec,
   onRefreshSec,
   nonce,
@@ -100,6 +101,8 @@ export function ManufacturingCellPage({
   powered: boolean;
   isAdmin: boolean;
   pipelineId: string;
+  /** Pipeline setup id for the per-pipeline Genie space; falls back to pipelineId. */
+  setupId?: string | null;
   refreshSec: number;
   onRefreshSec: (sec: number) => void;
   nonce: number;
@@ -225,6 +228,7 @@ export function ManufacturingCellPage({
         <GenieCopilot
           industry={industry.id}
           mode={mode}
+          setupId={setupId ?? pipelineId}
           assets={assets}
           alert={explainAlert}
           open={genieOpen}

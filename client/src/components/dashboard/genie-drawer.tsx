@@ -1,0 +1,124 @@
+/**
+ * Shared chrome for the Genie investigation drawer: right-side panel with a
+ * toggle, header + status pill, scrollable transcript, and composer. Both the
+ * workspace-wide and per-pipeline copilots render inside this shell so their
+ * selectors (`genie-copilot*`) and layout stay identical.
+ */
+import type { FormEvent, ReactNode } from "react";
+import { PanelRight, Send } from "lucide-react";
+
+interface GenieDrawerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  subtitle: string;
+  statusText: string;
+  /** Banners (loading / disabled / error) and prompt chips above the transcript. */
+  notices: ReactNode;
+  /** Transcript content. */
+  children: ReactNode;
+  composer: ReactNode;
+}
+
+export function GenieDrawer({
+  open,
+  onOpenChange,
+  subtitle,
+  statusText,
+  notices,
+  children,
+  composer,
+}: GenieDrawerProps) {
+  return (
+    <aside
+      className={`genie-drawer${open ? " is-open" : ""}`}
+      data-testid="genie-copilot"
+      aria-label="Genie investigation"
+    >
+      <button
+        type="button"
+        className="genie-drawer__toggle"
+        data-testid="genie-copilot-toggle"
+        aria-expanded={open}
+        onClick={() => onOpenChange(!open)}
+      >
+        <PanelRight size={16} aria-hidden="true" />
+        <span>Investigate</span>
+      </button>
+      <div
+        className="genie-drawer__panel"
+        data-testid="genie-copilot-drawer"
+        hidden={!open}
+        aria-hidden={!open}
+      >
+        <header className="genie-drawer__head">
+          <div>
+            <h2>Genie investigation</h2>
+            <p title={subtitle}>{subtitle}</p>
+          </div>
+          <span className="genie-drawer__status" data-testid="genie-status" aria-live="polite">
+            {statusText}
+          </span>
+        </header>
+
+        {notices}
+
+        <div
+          className="genie-drawer__transcript"
+          data-testid="genie-copilot-transcript"
+          aria-live="polite"
+        >
+          {children}
+        </div>
+
+        {composer}
+      </div>
+    </aside>
+  );
+}
+
+interface GenieComposerProps {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  disabled: boolean;
+  placeholder?: string;
+}
+
+export function GenieComposer({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  placeholder = "Investigate this twin…",
+}: GenieComposerProps) {
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    onSubmit(value);
+  }
+
+  return (
+    <form className="genie-drawer__composer" onSubmit={handleSubmit}>
+      <label className="sr-only" htmlFor="genie-question">
+        Investigation question
+      </label>
+      <textarea
+        id="genie-question"
+        data-testid="genie-copilot-input"
+        rows={3}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+      <button
+        type="submit"
+        className="btn primary sm"
+        data-testid="genie-copilot-send"
+        disabled={disabled || !value.trim()}
+      >
+        <Send size={14} aria-hidden="true" />
+        Send
+      </button>
+    </form>
+  );
+}

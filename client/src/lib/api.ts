@@ -9,6 +9,11 @@ import type {
   GenieAskRequest,
   GenieConversationIds,
   GenieMessageResponse,
+  GeniePipelineAskRequest,
+  GeniePipelineMessageResponse,
+  GeniePipelineStarters,
+  GeniePipelineStatus,
+  GenieQueryResult,
   GenieStatusResponse,
   LakebaseProvisionParams,
   NodeTypesResponse,
@@ -618,4 +623,57 @@ export const api = {
     request<GenieMessageResponse>(
       `/genie/conversations/${conversationId}/messages/${messageId}`,
     ),
+
+  // ── Per-pipeline Genie (one space per setup × mode) ──────────────────────
+  getPipelineGenieStatus: (setupId: string, mode: PipelineMode) =>
+    request<GeniePipelineStatus>(`${pipelineGenieBase(setupId, mode)}/status`),
+
+  getPipelineGenieStarters: (setupId: string, mode: PipelineMode) =>
+    request<GeniePipelineStarters>(`${pipelineGenieBase(setupId, mode)}/starters`),
+
+  startPipelineGenieConversation: (
+    setupId: string,
+    mode: PipelineMode,
+    body: GeniePipelineAskRequest,
+  ) =>
+    request<GenieConversationIds>(`${pipelineGenieBase(setupId, mode)}/conversations`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  addPipelineGenieMessage: (
+    setupId: string,
+    mode: PipelineMode,
+    conversationId: string,
+    body: GeniePipelineAskRequest,
+  ) =>
+    request<GenieConversationIds>(
+      `${pipelineGenieBase(setupId, mode)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  getPipelineGenieMessage: (
+    setupId: string,
+    mode: PipelineMode,
+    conversationId: string,
+    messageId: string,
+  ) =>
+    request<GeniePipelineMessageResponse>(
+      `${pipelineGenieBase(setupId, mode)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    ),
+
+  getPipelineGenieAttachmentResult: (
+    setupId: string,
+    mode: PipelineMode,
+    conversationId: string,
+    messageId: string,
+    attachmentId: string,
+  ) =>
+    request<GenieQueryResult>(
+      `${pipelineGenieBase(setupId, mode)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/result`,
+    ),
 };
+
+function pipelineGenieBase(setupId: string, mode: PipelineMode): string {
+  return `/genie/pipelines/${encodeURIComponent(setupId)}/${encodeURIComponent(mode)}`;
+}
