@@ -1,33 +1,57 @@
-.venv/
-__pycache__/
-client/
-screenshots/
-# Exclude ONLY the top-level notebooks/ (legacy sss_rtm_job.py) — the leading
-# slash anchors the pattern so databricks/vendor/lakets.sql (the only file the
-# app reads from databricks/ at runtime) is still synced.
-/notebooks/
-.gitignore
-capture_screenshots.py
+# Files excluded from `databricks sync` (the deployed app bundle).
+# NEVER exclude what the running app needs: static/dist/ (SPA bundle),
+# lib/*.whl (simulator wheel, installed via requirements.txt and read at
+# runtime) and databricks/vendor/lakets.sql.
+
+# ── VCS / local tooling ───────────────────────────────────────────────────
 .git/
 .claude/
+.claude-terminal
+.cursor/
+.superpowers/
+.isaac/
+.agents/
+.polly/
+.vscode/
+.idea/
+skills-lock.json
 .DS_Store
-node_modules/
-.databricks/
-.databricks-resources.json
+
+# ── Python / Node build + caches ──────────────────────────────────────────
+.venv/
+__pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
 .coverage
-.vscode/
-.idea/
-.superpowers/
-.claude-terminal
+coverage.xml
+htmlcov/
+node_modules/
 
-# Dev-only assets — the deployed app only serves static/dist and reads
-# databricks/vendor/lakets.sql + the wheels at runtime. Keep these in git but
-# out of the deployed bundle to slim it.
-docs/
+# ── Databricks local state ────────────────────────────────────────────────
+.databricks/
+.databricks-resources.json
+
+# ── Frontend sources (only the built static/dist is served) ───────────────
+client/
+
+# ── Tests / QA output ─────────────────────────────────────────────────────
+tests/
+qa/
 qa-reports/
+test-results/
+playwright-report/
+blob-report/
+*.log
+
+# ── Dev-only assets ───────────────────────────────────────────────────────
+# Keep these in git but out of the deployed bundle to slim it.
+# Anchored so only a top-level notebooks/ scratch dir is excluded;
+# databricks/vendor/lakets.sql is still synced.
+/notebooks/
+capture_screenshots.py
+screenshots/
+docs/
 mockups/
 design-ref/
 scripts/
