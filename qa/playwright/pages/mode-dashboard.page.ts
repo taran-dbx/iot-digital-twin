@@ -25,6 +25,12 @@ export class ModeDashboardPage {
     await expect(this.heading).toBeVisible();
   }
 
+  /** Manufacturing cell page (requires a deployed realtime mode in the catalog). */
+  async openManufacturingCell() {
+    await this.page.goto("/i/manufacturing/realtime/dashboard");
+    await expect(this.genieToggle).toBeVisible();
+  }
+
   async ensureGenieOpen() {
     await expect(this.genieToggle).toBeVisible();
     await expect(this.genieToggle).toHaveAttribute("aria-expanded", /true|false/);
