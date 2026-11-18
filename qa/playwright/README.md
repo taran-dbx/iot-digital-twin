@@ -21,5 +21,20 @@ Reports are written to `qa-reports/`:
 - `playwright-report/` — HTML report
 - `playwright-artifacts/` — screenshots, traces, and videos
 
-The project-scoped Playwright browser connector lives in `.cursor/mcp.json`.
-Reload Cursor after changing that file so its browser tools are rediscovered.
+Optional local setup: to drive the browser from an editor's MCP client (e.g.
+Cursor), add a Playwright MCP server to your local, untracked `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["--yes", "@playwright/mcp@0.0.81"]
+    }
+  }
+}
+```
+
+`.cursor/` is gitignored, so this config stays per-developer. Reload the editor
+after changing it so its browser tools are rediscovered. The test suite itself
+does not depend on it.
