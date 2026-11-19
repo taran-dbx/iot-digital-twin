@@ -35,6 +35,7 @@ Additive only — this module does not touch ``app.yaml`` / ``core/lakebase.py``
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -814,12 +815,7 @@ async def deploy_pipeline(
 
 
 # --- Per-pipeline Genie space (best-effort, manufacturing only) --------------
-async def _genie_warehouse(db: DBExecutor, setup: dict) -> str:
-    """Setup-pinned warehouse first, else the app-global DBSQL resolution."""
-    from iot_twin.services.dbsql_service import resolve_warehouse_id
-
-    pinned = str(setup.get("warehouse_id") or "").strip()
-    return pinned or await resolve_warehouse_id(db, True, "")
+GENIE_SPACE_TIMEOUT_S = 60.0
 
 
 def _with_warning(result: dict, message: str) -> dict:
@@ -846,15 +842,25 @@ async def _attach_genie_space(
     if not genie_space_service.supports_industry(industry):
         return result
     try:
-        warehouse_id = await _genie_warehouse(db, setup)
-        space = await genie_space_service.ensure_pipeline_space(
-            db,
-            setup_id=setup_id,
-            deployment_id=deployment_id,
-            industry=str(industry),
-            mode=mode,
-            warehouse_id=warehouse_id,
-            w=w,
+        warehouse_id = await genie_space_service.genie_warehouse(db, setup)
+        space = await asyncio.wait_for(
+            genie_space_service.ensure_pipeline_space(
+                db,
+                setup_id=setup_id,
+                deployment_id=deployment_id,
+                industry=str(industry),
+                mode=mode,
+                warehouse_id=warehouse_id,
+                w=w,
+            ),
+            timeout=GENIE_SPACE_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning("Genie space provisioning timed out for setup %s mode %s", setup_id, mode)
+        return _with_warning(
+            result,
+            f"Genie space provisioning timed out after {GENIE_SPACE_TIMEOUT_S:g}s; "
+            "redeploy to retry",
         )
     except Exception as exc:
         logger.warning(

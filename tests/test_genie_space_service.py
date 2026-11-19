@@ -95,7 +95,7 @@ class TestBuildSerializedSpace:
         tel = next(
             t
             for t in space["data_sources"]["tables"]
-            if t["identifier"] == "cat.sch.manufacturing_realtime"
+            if t["identifier"] == gss.telemetry_table("manufacturing", "realtime")
         )
         names = [c["column_name"] for c in tel["column_configs"]]
         assert names == sorted(names)
@@ -114,7 +114,7 @@ class TestBuildSerializedSpace:
         assert "availability" in body and "oee" in body
         assert "anomaly" in body and "min_value" in body and "max_value" in body
         assert "nominal_value" in body
-        assert "manufacturing_realtime" in body
+        assert "lb__shadow_manufacturing_sensor_readings_history" in body
 
     def test_example_sqls_shape_sorted_and_mode_scoped(self) -> None:
         space = self._space("zerobus")
@@ -138,7 +138,7 @@ class TestBuildSerializedSpace:
             assert [i["id"] for i in items] == sorted(i["id"] for i in items)
             for item in items:
                 assert item["sql"] and isinstance(item["sql"], list)
-                assert "manufacturing_realtime." in item["sql"][0]
+                assert "lb__shadow_manufacturing_sensor_readings_history." in item["sql"][0]
 
     def test_sample_questions_match_starters(self) -> None:
         space = self._space("microbatch")

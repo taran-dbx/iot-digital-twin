@@ -33,6 +33,7 @@ from typing import Any
 from databricks.sdk.errors import NotFound
 
 from iot_twin.services import resource_ledger
+from iot_twin.services.cdf_reconciliation_service import delta_table_fqn
 from iot_twin.services.db.app_repo_common import DBExecutor
 from iot_twin.services.genie.genie_space_content import (
     column_configs,
@@ -41,6 +42,7 @@ from iot_twin.services.genie.genie_space_content import (
     starter_questions,
     text_instructions,
 )
+from iot_twin.services.genie_service import invalidate_allowlist_cache
 from iot_twin.services.industry.industry_catalog_service import industry_table
 from iot_twin.services.intelligence_catalog_service import reference_tables
 
@@ -55,6 +57,7 @@ GENIE_INDUSTRY = "manufacturing"
 PIPELINE_MODES: tuple[str, ...] = ("realtime", "microbatch", "zerobus")
 MAX_RESULT_ROWS = 500
 SERIALIZED_VERSION = 2
+INTELLIGENCE_SYNC_HINT = "run intelligence sync (POST /api/admin/intelligence/sync) then redeploy"
 
 __all__ = [
     "GenieSpaceError",
@@ -91,11 +94,24 @@ def _require_mode(mode: str) -> str:
     return mode
 
 
+def telemetry_table(industry: str, mode: str) -> str:
+    """FQN of the UC table that actually holds ``mode``'s sensor readings.
+
+    The realtime (RTM) stream writes Lakebase; Lakehouse Sync mirrors it into
+    the CDF shadow history table, so ``{industry}_realtime`` stays empty.
+    Micro-batch and zerobus write ``{industry}_{mode}`` directly.
+    """
+    _require_mode(mode)
+    if mode == "realtime":
+        return delta_table_fqn(industry)
+    return industry_table(industry, mode)
+
+
 def expected_tables(industry: str, mode: str) -> tuple[str, ...]:
     """Return the sorted FQN set a pipeline space must contain — no more, no less."""
     _require_mode(mode)
     tables = {
-        industry_table(industry, mode),
+        telemetry_table(industry, mode),
         industry_table(industry, "metrics"),
         *reference_tables().values(),
     }
@@ -128,12 +144,14 @@ def space_description(mode: str) -> str:
 # serialized_space builder
 # ---------------------------------------------------------------------------
 def _table_entries(industry: str, mode: str) -> list[dict[str, Any]]:
-    telemetry = industry_table(industry, mode)
+    telemetry = telemetry_table(industry, mode)
     entries = []
     for fqn in expected_tables(industry, mode):
         entry: dict[str, Any] = {"identifier": fqn}
         if fqn == telemetry:
-            entry["column_configs"] = sorted(column_configs(), key=lambda c: c["column_name"])
+            entry["column_configs"] = sorted(
+                column_configs(cdc=mode == "realtime"), key=lambda c: c["column_name"]
+            )
         entries.append(entry)
     return sorted(entries, key=lambda e: e["identifier"])
 
@@ -148,20 +166,20 @@ def _sample_questions(mode: str) -> list[dict[str, Any]]:
 
 
 def _instructions(industry: str, mode: str) -> dict[str, Any]:
-    telemetry = industry_table(industry, mode)
+    telemetry = telemetry_table(industry, mode)
     metrics = industry_table(industry, "metrics")
     refs = reference_tables()
     snippets = sql_snippets(telemetry)
     return {
         "text_instructions": _with_ids(
-            "text", mode, [{"content": text_instructions(telemetry, metrics, mode)}]
+            "text", mode, [{"content": text_instructions(telemetry, metrics, mode, industry)}]
         ),
         "example_question_sqls": _with_ids(
             "example",
             mode,
             [
                 {"question": [question], "sql": [sql]}
-                for question, sql in example_sqls(telemetry, metrics, refs, mode)
+                for question, sql in example_sqls(telemetry, metrics, refs, mode, industry)
             ],
         ),
         "sql_snippets": {
@@ -275,6 +293,36 @@ async def _record_space(
     )
 
 
+async def genie_warehouse(db: DBExecutor, setup: dict) -> str:
+    """Setup-pinned warehouse first, else the app-global DBSQL resolution."""
+    from iot_twin.services.dbsql_service import resolve_warehouse_id
+
+    pinned = str(setup.get("warehouse_id") or "").strip()
+    return pinned or await resolve_warehouse_id(db, True, "")
+
+
+def _table_exists(w: Any, fqn: str) -> bool | None:
+    """True/False from UC; None when existence cannot be determined."""
+    try:
+        response = w.tables.exists(fqn)
+    except Exception as exc:
+        logger.info("Could not check table %s before Genie create: %s", fqn, exc)
+        return None
+    value = getattr(response, "table_exists", None)
+    return None if value is None else bool(value)
+
+
+async def _require_intelligence_tables(w: Any) -> None:
+    """Fail with a sync hint when intelligence_* tables are known to be missing."""
+    names = sorted(reference_tables().values())
+    found = await asyncio.to_thread(lambda: [(n, _table_exists(w, n)) for n in names])
+    missing = [name for name, exists in found if exists is False]
+    if missing:
+        raise GenieSpaceError(
+            f"intelligence tables missing: {', '.join(missing)}; {INTELLIGENCE_SYNC_HINT}"
+        )
+
+
 def _validate_inputs(industry: str, mode: str, warehouse_id: str | None) -> None:
     if not supports_industry(industry):
         raise GenieSpaceError(f"per-pipeline Genie spaces are not supported for {industry!r}")
@@ -308,10 +356,12 @@ async def ensure_pipeline_space(
     existing = await find_pipeline_space(db, setup_id, mode)
     if existing is not None:
         space_id = str(existing["identifier"])
+        invalidate_allowlist_cache(space_id)
         if await _update_space(client, space_id, kwargs):
             return {"space_id": space_id, "action": "updated", "tables": tables}
         await resource_ledger.mark_resource_status(db, existing.get("id"), "deleted")
 
+    await _require_intelligence_tables(client)
     space_id = await _create_space(client, kwargs)
     await _record_space(
         db,
