@@ -55,6 +55,7 @@ deploy/                  workspaces/*.profile.example + variable-overrides.json.
 databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
 docs/                    architecture, deployment and API documentation
+ops/                     operator tooling: the pipeline health-check notebook
 ```
 
 ## Quick start
@@ -146,6 +147,7 @@ run locally through `pre-commit`.
 | [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites, troubleshooting |
 | [docs/genie.md](docs/genie.md) | Shared copilot space, per-pipeline Genie spaces, permissions, API |
 | [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
+| [ops/README.md](ops/README.md) | Pipeline health-check notebook (read-only, inline report) |
 | [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |
