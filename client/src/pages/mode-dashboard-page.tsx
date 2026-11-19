@@ -935,6 +935,7 @@ export function ModeDashboardPage() {
         powered={powered}
         isAdmin={isAdmin}
         pipelineId={pipeline.id}
+        setupId={catalogMode?.setupId ?? null}
         refreshSec={refreshSec}
         onRefreshSec={setRefreshSec}
         nonce={lakebaseNonce}
@@ -1123,6 +1124,8 @@ export function ModeDashboardPage() {
       <GenieCopilot
         industry={industry.id}
         mode={mode}
+        setupId={catalogMode?.setupId ?? pipelineId}
+        isAdmin={isAdmin}
         assets={domainAssets}
         alert={explainAlert}
         open={genieOpen}
