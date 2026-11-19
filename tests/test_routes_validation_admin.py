@@ -14,9 +14,10 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from services import app_permissions, validation_service
-from services.validation_service import ValidationError
+from iot_twin.core.state import AppState
+from iot_twin.services import app_permissions
+from iot_twin.services.validation import validation_service
+from iot_twin.services.validation.validation_service import ValidationError
 
 pytestmark = pytest.mark.asyncio
 
@@ -29,7 +30,7 @@ _STATE = {
 def _build_app(state: AppState):
     from fastapi import FastAPI
 
-    from routes.validation_admin import router
+    from iot_twin.routes.validation_admin import router
 
     app = FastAPI()
     app.state.app_state = state
@@ -114,7 +115,7 @@ async def test_start_400_when_setup_incomplete(client):
     # clean 4xx with a helpful message — never a 500 — so the health-page e2e
     # button can be pressed safely on a draft pipeline.
     c, monkeypatch = client
-    from services.validation_service import IncompleteSetupError
+    from iot_twin.services.validation.validation_service import IncompleteSetupError
 
     monkeypatch.setattr(
         validation_service,
@@ -144,7 +145,7 @@ async def test_state_returns_persisted(client):
 async def test_state_404_when_no_setup(client):
     c, monkeypatch = client
     monkeypatch.setattr(validation_service, "get_state", AsyncMock(return_value=None))
-    from services import pipeline_setup_repo
+    from iot_twin.services.pipelines import pipeline_setup_repo
 
     monkeypatch.setattr(pipeline_setup_repo, "get_setup_by_industry", AsyncMock(return_value=None))
     resp = await c.get("/api/admin/industries/ghost/validate/state")

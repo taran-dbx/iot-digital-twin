@@ -5,7 +5,7 @@ The delete-pipeline path used to register ONLY a ``job`` deleter, so every other
 metrics table + its S3 objects, secrets, SP, grants) was marked ``skipped`` and
 then FK-cascade-removed — silently orphaning the real cloud resource.
 
-``services.resource_deleters.make_all_deleters`` builds a deleter for every
+``iot_twin.services.resource_deleters.make_all_deleters`` builds a deleter for every
 ``resource_type`` the provisioning services record, so nothing is silently
 skipped.  These tests mock the WorkspaceClient / DBSQL / boto3 / Lakebase so no
 live resource is touched.
@@ -18,17 +18,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from databricks.sdk.errors import NotFound
 
-from services import resource_deleters
-from services.resource_deleters import make_all_deleters
-from services.resource_ledger import RESOURCE_TYPES
-from services.teardown_service import SkipResource
+from iot_twin.services import resource_deleters
+from iot_twin.services.resource_deleters import make_all_deleters
+from iot_twin.services.resource_ledger import RESOURCE_TYPES
+from iot_twin.services.teardown_service import SkipResource
 
 pytestmark = pytest.mark.asyncio
 
 
 # Every resource_type actually written to the ledger across the provisioning
 # services (confirmed by call-site audit).  ``lakebase_project`` is recorded by
-# pipelines_project_service but is not in RESOURCE_TYPES, so it is listed here.
+# pipeline_project_service but is not in RESOURCE_TYPES, so it is listed here.
 RECORDED_TYPES = {
     "service_principal",
     "secret_scope",

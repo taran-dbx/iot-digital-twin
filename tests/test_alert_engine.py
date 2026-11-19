@@ -7,9 +7,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from core.state import AppState
-from domain.catalog import AlertRule, list_alert_rules
-from services.alert_engine import AlertEngine, AlertRecord, evaluate_and_emit, fingerprint_for
+from iot_twin.core.state import AppState
+from iot_twin.domain.catalog import AlertRule, list_alert_rules
+from iot_twin.services.alerts.alert_engine import (
+    AlertEngine,
+    AlertRecord,
+    evaluate_and_emit,
+    fingerprint_for,
+)
 
 pytestmark = pytest.mark.asyncio
 

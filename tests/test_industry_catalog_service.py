@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services import industry_catalog_service as ics
+from iot_twin.services.industry import industry_catalog_service as ics
 
 CATALOG = "example_eu_catalog"
 SCHEMA = "rtm_lakets_zb"

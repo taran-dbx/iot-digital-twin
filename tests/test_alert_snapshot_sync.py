@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from core.state import AppState
-from services import alert_snapshot_sync as snapshot_sync
-from services import intelligence_catalog_service as ics
-from services.alert_engine import AlertEngine, evaluate_and_emit
+from iot_twin.core.state import AppState
+from iot_twin.services import intelligence_catalog_service as ics
+from iot_twin.services.alerts import alert_snapshot_sync as snapshot_sync
+from iot_twin.services.alerts.alert_engine import AlertEngine, evaluate_and_emit
 
 CATALOG = "test_catalog"
 SCHEMA = "test_schema"

@@ -10,8 +10,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes import deployment as deployment_routes
+from iot_twin.core.state import AppState
+from iot_twin.routes import deployment as deployment_routes
 
 
 def _build_app() -> FastAPI:

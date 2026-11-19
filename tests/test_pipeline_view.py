@@ -1,4 +1,4 @@
-"""Unit tests for services/pipeline_view.py — the admin pipeline contract derivation.
+"""Unit tests for services/pipelines/pipeline_view.py — the admin pipeline contract derivation.
 
 Pure logic, no I/O: the Jobs-API result is passed in as a ``job_running`` map so
 these tests fully cover the status / health / startability rules with no mocks.
@@ -6,8 +6,8 @@ these tests fully cover the status / health / startability rules with no mocks.
 
 from __future__ import annotations
 
-from services import pipeline_view as pv
-from services import validation_state_machine as sm
+from iot_twin.services.pipelines import pipeline_view as pv
+from iot_twin.services.validation import validation_state_machine as sm
 
 
 # --- helpers -----------------------------------------------------------------

@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from models import sensor_schema as ss
+from iot_twin.models import sensor_schema as ss
 
 NOTEBOOK_TS = (
     Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "notebook-template.ts"

@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = REPO_ROOT / "static" / "dist"
-APP_PY = REPO_ROOT / "app.py"
+APP_PY = REPO_ROOT / "src" / "iot_twin" / "app.py"
 INDEX_HTML = DIST_ROOT / "index.html"
 OBSERVABILITY_JS = DIST_ROOT / "lakets-observability.js"
 OBSERVABILITY_CSS = DIST_ROOT / "lakets-observability.css"

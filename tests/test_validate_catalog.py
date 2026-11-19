@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.dbsql_service import validate_catalog
+from iot_twin.services.dbsql_service import validate_catalog
 
 
 class TestValidateCatalog:

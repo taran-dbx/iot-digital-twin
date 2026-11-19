@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from services import validation_state_machine as sm
+from iot_twin.services.validation import validation_state_machine as sm
 
 
 # ---------------------------------------------------------------------------

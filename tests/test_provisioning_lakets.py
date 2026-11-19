@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services import provisioning_service
+from iot_twin.services import provisioning_service
 
 
 def _stub_conn() -> MagicMock:

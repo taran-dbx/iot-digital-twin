@@ -22,9 +22,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import app as app_module
-import services.deployment_service as ds
-import services.industry_service as isvc
+import iot_twin.app as app_module
+import iot_twin.services.deployment.deployment_service as ds
+import iot_twin.services.industry.industry_service as isvc
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT = ROOT / "client"

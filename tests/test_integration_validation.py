@@ -18,7 +18,7 @@ import os
 
 import pytest
 
-from services import validation_state_machine as sm
+from iot_twin.services.validation import validation_state_machine as sm
 
 _ENABLED = os.getenv("IOT_VALIDATION_INTEGRATION") == "1"
 _INDUSTRY = os.getenv("IOT_VALIDATION_INDUSTRY", "pharmaceutical")
@@ -35,7 +35,8 @@ async def test_provision_cluster_live(app_backend_conn):
     """Provision the verified validation cluster and confirm it reaches RUNNING."""
     from databricks.sdk import WorkspaceClient
 
-    from services import pipeline_setup_repo, validation_service, validation_steps
+    from iot_twin.services.pipelines import pipeline_setup_repo
+    from iot_twin.services.validation import validation_service, validation_steps
 
     profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
     ws = WorkspaceClient(profile=profile)
@@ -82,7 +83,7 @@ def test_verified_cluster_config_is_locked(monkeypatch):
     monkeypatch.setenv("UC_SERVICE_CREDENTIAL", expected_cred)
     import importlib
 
-    import services.validation_config as _vc
+    import iot_twin.services.validation.validation_config as _vc
 
     importlib.reload(_vc)
 

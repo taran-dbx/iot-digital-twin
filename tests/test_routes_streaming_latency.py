@@ -14,14 +14,14 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 _UC_CATALOG = "example_eu_catalog"
 _UC_SCHEMA = "rtm_lakets_zb"
 
 
 def _build_app(state: AppState) -> FastAPI:
-    from routes.streaming_latency import router
+    from iot_twin.routes.streaming_latency import router
 
     app = FastAPI()
     app.state.app_state = state
@@ -87,8 +87,11 @@ class TestStreamingLatency:
         ]
         exec_mock = AsyncMock(return_value=_dbsql_result(rows))
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -174,8 +177,11 @@ class TestStreamingLatency:
         ]
         exec_mock = AsyncMock(return_value=_dbsql_result(rows))
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -197,8 +203,11 @@ class TestStreamingLatency:
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(return_value=_dbsql_result([]))
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -230,8 +239,11 @@ class TestStreamingLatency:
             )
         )
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -253,8 +265,11 @@ class TestStreamingLatency:
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(side_effect=Exception("connection reset by peer"))
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -300,7 +315,9 @@ class TestStreamingLatency:
         app = _build_app(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
+            ),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -341,8 +358,11 @@ class TestZerobusLatency:
         )
         exec_mock = AsyncMock(side_effect=[summary, errors])
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -374,8 +394,11 @@ class TestZerobusLatency:
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(side_effect=[_dbsql_result([]), _dbsql_result([])])
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -403,8 +426,11 @@ class TestZerobusLatency:
             )
         )
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -440,8 +466,11 @@ class TestZerobusLatency:
         )
         exec_mock = AsyncMock(side_effect=[summary, _dbsql_result([])])
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id",
+                AsyncMock(return_value="wh-1"),
+            ),
+            patch("iot_twin.routes.streaming_latency.execute_dbsql", exec_mock),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -476,7 +505,9 @@ class TestZerobusLatency:
         app = _build_app(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")),
+            patch(
+                "iot_twin.routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
+            ),
             patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:

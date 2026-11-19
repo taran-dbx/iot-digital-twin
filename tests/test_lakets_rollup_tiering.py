@@ -1,4 +1,4 @@
-"""Tests for services.lakets_service.create_rollup (RollUp creation).
+"""Tests for iot_twin.services.lakets.lakets_service.create_rollup (RollUp creation).
 
 The asyncpg pool is mocked with an ``AsyncMock``; we assert that
 ``create_rollup`` calls ``lakets.create_rollup`` with the mapped arguments and
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from services import lakets_service
+from iot_twin.services.lakets import lakets_service
 
 
 def _pool(*, existing: bool = False) -> AsyncMock:

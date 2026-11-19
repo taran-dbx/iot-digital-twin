@@ -1,4 +1,4 @@
-"""Tests for services.pipeline_service — row conversion and resource tracking."""
+"""Tests for iot_twin.services.pipelines.pipeline_service — row conversion and resource tracking."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.pipeline_service import pipeline_row_to_dict, track_resource
+from iot_twin.services.pipelines.pipeline_service import pipeline_row_to_dict, track_resource
 
 
 class TestPipelineRowToDict:

@@ -15,8 +15,10 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from models import app_schema
-from services import deployment_repo, pipeline_setup_repo, resource_ledger
+from iot_twin.models import app_schema
+from iot_twin.services import resource_ledger
+from iot_twin.services.deployment import deployment_repo
+from iot_twin.services.pipelines import pipeline_setup_repo
 
 pytestmark = pytest.mark.asyncio
 

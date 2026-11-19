@@ -15,14 +15,14 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from domain.catalog import AlertRule, list_alert_rules
-from models import app_schema
-from routes.alerts import router as alerts_router
-from routes.production import router as production_router
-from services.alert_engine import AlertEngine
-from services.alert_history import alert_episodes
-from services.production_control import ProductionControl
+from iot_twin.core.state import AppState
+from iot_twin.domain.catalog import AlertRule, list_alert_rules
+from iot_twin.models import app_schema
+from iot_twin.routes.alerts import router as alerts_router
+from iot_twin.routes.production import router as production_router
+from iot_twin.services.alerts.alert_engine import AlertEngine
+from iot_twin.services.alerts.alert_history import alert_episodes
+from iot_twin.services.production_control import ProductionControl
 
 SPINDLE = {
     "sensor_id": "mfg-sns-cnc_1_spindle_temp",
@@ -130,8 +130,8 @@ async def cell() -> AsyncGenerator[
     app.include_router(production_router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with (
-            patch("routes.production.app_permissions.is_admin", return_value=True),
-            patch("routes.alerts.app_permissions.is_admin", return_value=True),
+            patch("iot_twin.routes.production.app_permissions.is_admin", return_value=True),
+            patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True),
         ):
             yield client, state, workspace, queue, clock
 
@@ -234,7 +234,7 @@ class TestProductionControl:
             "/api/industries/pharmaceutical/production", json={"state": "stopped"}
         )
         assert missing.status_code == 404
-        with patch("routes.production.app_permissions.is_admin", return_value=False):
+        with patch("iot_twin.routes.production.app_permissions.is_admin", return_value=False):
             denied = await client.post(
                 "/api/industries/manufacturing/production", json={"state": "stopped"}
             )

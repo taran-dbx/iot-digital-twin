@@ -11,11 +11,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 
 def _build_app_with_state(state: AppState) -> FastAPI:
-    from routes.sensor_data import router as sensor_router
+    from iot_twin.routes.sensor_data import router as sensor_router
 
     app = FastAPI()
     app.state.app_state = state
@@ -60,7 +60,9 @@ def _mock_pipeline_lakebase(db: MagicMock) -> MagicMock:
 def _patch_pipeline_lakebase(db: MagicMock | None):
     """Patch ``get_pipeline_lakebase`` to return a handle wrapping ``db`` (or None)."""
     handle = _mock_pipeline_lakebase(db) if db is not None else None
-    return patch("routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=handle))
+    return patch(
+        "iot_twin.routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=handle)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ class TestLaketsGapfill:
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         with (
-            patch("routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
+            patch("iot_twin.routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
             _patch_pipeline_lakebase(db),
         ):
             async with AsyncClient(
@@ -494,10 +496,10 @@ class TestLakebasePerf:
         transport = ASGITransport(app=app)
         with (
             patch(
-                "routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)
+                "iot_twin.routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)
             ) as mock_industry,
             patch(
-                "routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=None)
+                "iot_twin.routes.sensor_data.get_pipeline_lakebase", AsyncMock(return_value=None)
             ) as mock_pipeline,
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -514,7 +516,7 @@ class TestLakebasePerf:
     @pytest.mark.asyncio
     async def test_legacy_pipeline_id_with_industry_uses_legacy_model(self) -> None:
         """Industry query + legacy pipelines id authorizes via the legacy model."""
-        from routes.sensor_data import _authorize_mode_pipeline
+        from iot_twin.routes.sensor_data import _authorize_mode_pipeline
 
         state = _state_with_db(_mock_db())
         state.db.fetchrow = AsyncMock(
@@ -537,7 +539,7 @@ class TestLakebasePerf:
     @pytest.mark.asyncio
     async def test_deployment_id_with_industry_uses_deployment_model(self) -> None:
         """Industry-first deployment ids authorize via pipeline_deployment."""
-        from routes.sensor_data import _authorize_mode_pipeline
+        from iot_twin.routes.sensor_data import _authorize_mode_pipeline
 
         state = _state_with_db(_mock_db())
         state.app_backend_db.fetchrow = AsyncMock(return_value={"exists": 1})
@@ -565,7 +567,7 @@ class TestLakebasePerf:
 
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch("routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)):
+        with patch("iot_twin.routes.sensor_data.get_industry_lakebase", AsyncMock(return_value=lb)):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/pipelines/pipe-1/lakebase-perf?minutes=5&industry=pharmaceutical"
@@ -590,7 +592,7 @@ class TestLakebasePerf:
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         with (
-            patch("routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
+            patch("iot_twin.routes.sensor_data._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
             _patch_pipeline_lakebase(db),
         ):
             async with AsyncClient(
@@ -647,15 +649,15 @@ def _patch_zerobus_deps(
     """
     patches = [
         patch(
-            "routes.sensor_data.get_pipeline_catalog",
+            "iot_twin.routes.sensor_data.get_pipeline_catalog",
             AsyncMock(return_value=catalog),
         ),
         patch(
-            "routes.sensor_data.resolve_warehouse_id",
+            "iot_twin.routes.sensor_data.resolve_warehouse_id",
             AsyncMock(return_value=warehouse_id),
         ),
         patch(
-            "routes.sensor_data._resolve_zerobus_target",
+            "iot_twin.routes.sensor_data._resolve_zerobus_target",
             AsyncMock(
                 return_value=(source_config or {}).get("zerobus", {}).get("table_name")
                 or f"{catalog}.raw.iot_sensor_data"
@@ -692,14 +694,18 @@ class TestZerobusMetrics:
         target = "catalog.schema.pharmaceutical_zerobus"
 
         with (
-            patch("routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)),
             patch(
-                "routes.sensor_data.industry_catalog_service.industry_table",
+                "iot_twin.routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.industry_catalog_service.industry_table",
                 MagicMock(return_value=target),
             ),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data.execute_dbsql",
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.execute_dbsql",
                 AsyncMock(return_value={"columns": [], "data": [], "row_count": 0}),
             ),
         ):
@@ -719,7 +725,9 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value=None)):
+        with patch(
+            "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value=None)
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
 
@@ -773,13 +781,17 @@ class TestZerobusMetrics:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.raw.iot_sensor_data"),
             ),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
@@ -862,13 +874,17 @@ class TestZerobusMetrics:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)),
             patch(
-                "routes.sensor_data.industry_catalog_service.industry_table",
+                "iot_twin.routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.industry_catalog_service.industry_table",
                 MagicMock(return_value=target),
             ),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
@@ -903,13 +919,17 @@ class TestZerobusMetrics:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.raw.iot_sensor_data"),
             ),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
@@ -943,13 +963,17 @@ class TestZerobusMetrics:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)),
             patch(
-                "routes.sensor_data.industry_catalog_service.industry_table",
+                "iot_twin.routes.sensor_data._is_industry_deployment", AsyncMock(return_value=True)
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.industry_catalog_service.industry_table",
                 MagicMock(return_value="catalog.schema.pharmaceutical_zerobus"),
             ),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
@@ -995,13 +1019,17 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.raw.iot_sensor_data"),
             ),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
@@ -1029,13 +1057,17 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.custom_schema.my_zerobus_table"),
             ),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=30")
@@ -1060,13 +1092,17 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.raw.iot_sensor_data"),
             ),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
@@ -1098,13 +1134,17 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="wh-1")
+            ),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.raw.iot_sensor_data"),
             ),
-            patch("routes.sensor_data.execute_dbsql", exec_mock),
+            patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/pipelines/pipe-1/zerobus-metrics?minutes=60")
@@ -1124,10 +1164,12 @@ class TestZerobusMetrics:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
         with (
-            patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")),
-            patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="")),
             patch(
-                "routes.sensor_data._resolve_zerobus_target",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value="cat1")
+            ),
+            patch("iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value="")),
+            patch(
+                "iot_twin.routes.sensor_data._resolve_zerobus_target",
                 AsyncMock(return_value="cat1.raw.iot_sensor_data"),
             ),
         ):
@@ -1211,15 +1253,15 @@ class TestStreamingMetrics:
 
         with (
             patch(
-                "services.industry_catalog_service.industry_table",
+                "iot_twin.services.industry.industry_catalog_service.industry_table",
                 MagicMock(return_value=logical_table),
             ),
             patch(
-                "routes.sensor_data.resolve_warehouse_id",
+                "iot_twin.routes.sensor_data.resolve_warehouse_id",
                 AsyncMock(return_value="wh-1"),
             ),
             patch(
-                "routes.sensor_data.execute_dbsql",
+                "iot_twin.routes.sensor_data.execute_dbsql",
                 exec_mock,
             ),
         ):
@@ -1262,10 +1304,12 @@ def _patch_dbsql_timeseries_deps(
         else AsyncMock(return_value=exec_result or {"columns": [], "data": [], "row_count": 0})
     )
     return [
-        patch("routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value=catalog)),
-        patch("routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value=warehouse_id)),
-        patch("routes.sensor_data.execute_dbsql", exec_mock),
-        patch("services.app_permissions.is_admin", return_value=is_admin),
+        patch("iot_twin.routes.sensor_data.get_pipeline_catalog", AsyncMock(return_value=catalog)),
+        patch(
+            "iot_twin.routes.sensor_data.resolve_warehouse_id", AsyncMock(return_value=warehouse_id)
+        ),
+        patch("iot_twin.routes.sensor_data.execute_dbsql", exec_mock),
+        patch("iot_twin.services.app_permissions.is_admin", return_value=is_admin),
         patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
     ], exec_mock
 

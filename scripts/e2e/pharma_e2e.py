@@ -3,11 +3,11 @@
 Drives the *integrated service code* (not ad-hoc reimplementations) for one
 throwaway industry (``pharmaceutical``) on ``example-us-east``:
 
-  setup      -> services.pipeline_setup_repo.create_setup
-  provision  -> services.industry_provisioning_service.provision_industry
-  validate   -> services.validation_service (real interactive cluster + steps)
-  deploy     -> services.deployment_service.deploy_pipeline
-  teardown   -> services.teardown_service + the admin delete path wiring
+  setup      -> iot_twin.services.pipelines.pipeline_setup_repo.create_setup
+  provision  -> iot_twin.services.industry.industry_provisioning_service.provision_industry
+  validate   -> iot_twin.services.validation.validation_service (real interactive cluster + steps)
+  deploy     -> iot_twin.services.deployment.deployment_service.deploy_pipeline
+  teardown   -> iot_twin.services.teardown_service + the admin delete path wiring
 
 Run one stage at a time so long-running Databricks work (cluster spin-up, job
 runs) can be observed:
@@ -62,8 +62,8 @@ def _pp(label, obj):
 
 
 async def _db():
-    from models import app_schema
-    from services.app_backend_db import build_app_backend_manager
+    from iot_twin.models import app_schema
+    from iot_twin.services.db.app_backend_db import build_app_backend_manager
 
     db = build_app_backend_manager()
     await db.initialize()
@@ -75,7 +75,7 @@ async def _db():
 # Stage: setup
 # ---------------------------------------------------------------------------
 async def stage_setup():
-    from services import pipeline_setup_repo
+    from iot_twin.services.pipelines import pipeline_setup_repo
 
     db = await _db()
     try:
@@ -112,7 +112,8 @@ async def stage_setup():
 # Stage: provision
 # ---------------------------------------------------------------------------
 async def stage_provision():
-    from services import industry_provisioning_service, resource_ledger
+    from iot_twin.services import resource_ledger
+    from iot_twin.services.industry import industry_provisioning_service
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -152,8 +153,8 @@ async def stage_provision():
 async def stage_verify_provision():
     from databricks.sdk import WorkspaceClient
 
-    from services import pipelines_project_service as pps
-    from services.dbsql_service import execute_dbsql
+    from iot_twin.services.dbsql_service import execute_dbsql
+    from iot_twin.services.pipelines import pipeline_project_service as pps
 
     w = WorkspaceClient()
     out: dict = {}
@@ -232,8 +233,9 @@ async def _has_lakets(conn) -> bool:
 async def stage_validate_mb():
     from databricks.sdk import WorkspaceClient
 
-    from services import pipeline_setup_repo, validation_service
-    from services import validation_state_machine as sm
+    from iot_twin.services.pipelines import pipeline_setup_repo
+    from iot_twin.services.validation import validation_service
+    from iot_twin.services.validation import validation_state_machine as sm
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -249,7 +251,7 @@ async def stage_validate_mb():
         # second ~5-min spin-up); ensure the required libraries are installed on
         # it via the same helper provision_cluster now uses.
         if st.get("mb_cluster_id"):
-            from services import validation_steps as vs
+            from iot_twin.services.validation import validation_steps as vs
 
             await vs._install_cluster_libraries(
                 w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES
@@ -281,8 +283,9 @@ async def stage_validate_mb():
 async def stage_validate_rt():
     from databricks.sdk import WorkspaceClient
 
-    from services import pipeline_setup_repo, validation_service
-    from services import validation_state_machine as sm
+    from iot_twin.services.pipelines import pipeline_setup_repo
+    from iot_twin.services.validation import validation_service
+    from iot_twin.services.validation import validation_state_machine as sm
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -293,7 +296,7 @@ async def stage_validate_rt():
         state = sm.initial_state(["realtime"])
         # Reuse the already-running validation cluster if we have one.
         if st.get("mb_cluster_id"):
-            from services import validation_steps as vs
+            from iot_twin.services.validation import validation_steps as vs
 
             await vs._install_cluster_libraries(
                 w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES
@@ -338,7 +341,7 @@ async def stage_probe_landing():
     """
     from databricks.sdk import WorkspaceClient
 
-    from services import pipelines_project_service as pps
+    from iot_twin.services.pipelines import pipeline_project_service as pps
 
     w = WorkspaceClient()
     out: dict = {}
@@ -347,7 +350,7 @@ async def stage_probe_landing():
     try:
         wconn = await pps.get_write_conn("pharmaceutical", ws=w)
         # Insert a few sensor rows at 'now' (inside the pre-created window).
-        from models.sensor_schema import insert_columns
+        from iot_twin.models.sensor_schema import insert_columns
 
         cols = insert_columns()
         placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
@@ -454,7 +457,7 @@ while True:
 
 
 def _microbatch_consumer_notebook(topic: str, delta_table: str, checkpoint: str) -> str:
-    from models.sensor_schema import kafka_parse_schema
+    from iot_twin.models.sensor_schema import kafka_parse_schema
 
     schema_src = kafka_parse_schema()
     return f"""
@@ -500,10 +503,12 @@ q.awaitTermination()
 
 
 async def stage_deploy_mb():
-    from services import deployment_service, pipeline_setup_repo, validation_service
-    from services import industry_catalog_service as cat
-    from services import validation_state_machine as sm
-    from services.dbsql_service import execute_dbsql
+    from iot_twin.services.dbsql_service import execute_dbsql
+    from iot_twin.services.deployment import deployment_service
+    from iot_twin.services.industry import industry_catalog_service as cat
+    from iot_twin.services.pipelines import pipeline_setup_repo
+    from iot_twin.services.validation import validation_service
+    from iot_twin.services.validation import validation_state_machine as sm
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -552,8 +557,8 @@ async def stage_deploy_mb():
 
 
 async def stage_deploy_status():
-    from services import deployment_service
-    from services.dbsql_service import execute_dbsql
+    from iot_twin.services.dbsql_service import execute_dbsql
+    from iot_twin.services.deployment import deployment_service
 
     st = _load_state()
     job_id = st.get("mb_job_id")
@@ -572,7 +577,8 @@ async def stage_deploy_status():
 # ---------------------------------------------------------------------------
 async def stage_teardown():
     """Run teardown exactly as the admin DELETE path wires it, then report."""
-    from services import pipeline_setup_repo, resource_ledger, teardown_service
+    from iot_twin.services import resource_ledger, teardown_service
+    from iot_twin.services.pipelines import pipeline_setup_repo
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -592,7 +598,7 @@ async def stage_teardown():
         setup = await pipeline_setup_repo.get_setup(db, setup_id)
         deleters = None
         try:
-            from services import resource_deleters
+            from iot_twin.services import resource_deleters
 
             deleters = resource_deleters.make_all_deleters(
                 warehouse_id=setup.get("warehouse_id"),
@@ -639,7 +645,7 @@ async def stage_cleanup_cloud():
     """
     from databricks.sdk import WorkspaceClient
 
-    from services.dbsql_service import execute_dbsql
+    from iot_twin.services.dbsql_service import execute_dbsql
 
     w = WorkspaceClient()
     out: dict = {}
@@ -670,7 +676,7 @@ async def stage_cleanup_cloud():
 async def stage_verify_gone():
     from databricks.sdk import WorkspaceClient
 
-    from services import pipeline_setup_repo
+    from iot_twin.services.pipelines import pipeline_setup_repo
 
     w = WorkspaceClient()
     out: dict = {}

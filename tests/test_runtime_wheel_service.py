@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from services import runtime_wheel_service as rws
+from iot_twin.services import runtime_wheel_service as rws
 
 
 def _sha256_record(data: bytes) -> str:

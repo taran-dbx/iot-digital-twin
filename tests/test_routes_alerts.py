@@ -10,10 +10,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from domain.catalog import list_alert_rules
-from routes.alerts import router as alerts_router
-from services.alert_engine import AlertEngine, engine_for
+from iot_twin.core.state import AppState
+from iot_twin.domain.catalog import list_alert_rules
+from iot_twin.routes.alerts import router as alerts_router
+from iot_twin.services.alerts.alert_engine import AlertEngine, engine_for
 
 
 def _build_app(state: AppState) -> FastAPI:
@@ -58,7 +58,7 @@ class TestAlertRoutes:
             for item in list_alert_rules("manufacturing")
             if item.rule_id == "mfg-alert-spindle-temp"
         )
-        with patch("routes.alerts.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True):
             resp = await client.post(
                 "/api/alerts/evaluate",
                 json={
@@ -86,7 +86,7 @@ class TestAlertRoutes:
         assert detail.status_code == 200
         assert detail.json()["status"] == "open"
 
-        with patch("routes.alerts.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True):
             ack = await client.post(f"/api/alerts/{alert_id}/acknowledge")
         assert ack.status_code == 200
         assert ack.json()["type"] == "alert_acknowledged"
@@ -108,7 +108,7 @@ class TestAlertRoutes:
     ) -> None:
         """[C7408][defect] Empty evaluate payload is a no-op success."""
         client, _ = alerts_client
-        with patch("routes.alerts.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True):
             resp = await client.post("/api/alerts/evaluate", json={"readings": []})
         assert resp.status_code == 200
         assert resp.json()["transitions"] == []
@@ -154,7 +154,7 @@ class TestAlertRoutes:
     ) -> None:
         """[C7408][defect] Non-admin callers cannot acknowledge alerts."""
         client, _ = alerts_client
-        with patch("routes.alerts.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True):
             opened = await client.post(
                 "/api/alerts/evaluate",
                 json={
@@ -169,7 +169,7 @@ class TestAlertRoutes:
                 },
             )
         alert_id = opened.json()["transitions"][0]["alert_id"]
-        with patch("routes.alerts.app_permissions.is_admin", return_value=False):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=False):
             resp = await client.post(f"/api/alerts/{alert_id}/acknowledge")
         assert resp.status_code == 403
 
@@ -179,7 +179,7 @@ class TestAlertRoutes:
     ) -> None:
         """[C7408][defect] Non-admin callers cannot mutate alerts via evaluate."""
         client, _ = alerts_client
-        with patch("routes.alerts.app_permissions.is_admin", return_value=False):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=False):
             resp = await client.post(
                 "/api/alerts/evaluate",
                 json={
@@ -201,7 +201,7 @@ class TestAlertRoutes:
     ) -> None:
         """[C7408][regression] Admins can evaluate readings and open alerts."""
         client, _ = alerts_client
-        with patch("routes.alerts.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True):
             resp = await client.post(
                 "/api/alerts/evaluate",
                 json={

@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -20,7 +20,7 @@ def _build_alerts_app(state: AppState):
     """Create a minimal FastAPI app that includes the websocket router."""
     from fastapi import FastAPI
 
-    from routes.websocket import router as ws_router
+    from iot_twin.routes.websocket import router as ws_router
 
     app = FastAPI()
     app.state.app_state = state
@@ -254,7 +254,7 @@ class TestSssAlertsIngest:
         """[C7410][regression] SSS lifecycle transitions dirty the alert snapshot."""
         from httpx import ASGITransport, AsyncClient
 
-        from services.alert_snapshot_sync import AlertSnapshotSynchronizer
+        from iot_twin.services.alerts.alert_snapshot_sync import AlertSnapshotSynchronizer
 
         state = AppState()
         syncer = AlertSnapshotSynchronizer(state)

@@ -1,11 +1,11 @@
-"""Tests for core.state — AppState dataclass and get_app_state dependency."""
+"""Tests for iot_twin.core.state — AppState dataclass and get_app_state dependency."""
 
 from __future__ import annotations
 
 import asyncio
 from unittest.mock import MagicMock
 
-from core.state import AppState, get_app_state
+from iot_twin.core.state import AppState, get_app_state
 
 
 class TestAppStateDefaults:
@@ -83,7 +83,7 @@ class TestAppStateSources:
         assert "sss" in state.sources
 
     def test_each_source_is_source_metrics(self) -> None:
-        from models.source_metrics import SourceMetrics
+        from iot_twin.models.source_metrics import SourceMetrics
 
         state = AppState()
         for src in state.sources.values():

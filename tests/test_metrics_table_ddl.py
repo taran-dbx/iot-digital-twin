@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from models import metrics_schema as ms
+from iot_twin.models import metrics_schema as ms
 
 # ---------------------------------------------------------------------------
 # TypeScript source guards

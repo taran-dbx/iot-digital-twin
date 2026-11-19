@@ -1,4 +1,4 @@
-"""Tests for models.source_metrics — SourceMetrics rolling metrics."""
+"""Tests for iot_twin.models.source_metrics — SourceMetrics rolling metrics."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from models.source_metrics import SourceMetrics, create_default_sources
+from iot_twin.models.source_metrics import SourceMetrics, create_default_sources
 
 
 class TestSourceMetricsInit:

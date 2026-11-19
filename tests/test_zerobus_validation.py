@@ -1,6 +1,6 @@
 """Tests for ``services/zerobus_validation.py`` (a REAL Zerobus producer for
 the pipeline validation flow, replacing the no-op stubs in
-``services/validation_snippets.py``/``services/validation_steps.py``).
+``services/validation/validation_snippets.py``/``services/validation/validation_steps.py``).
 
 ``zerobus_produce_snippet`` is a pure string builder (content tests, mirroring
 ``tests/test_validation_snippets.py``'s style) — no cluster / network needed.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import ast
 from unittest.mock import MagicMock, patch
 
-from services import zerobus_validation as zbv
+from iot_twin.services import zerobus_validation as zbv
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ def test_snippet_carries_ok_fail_sentinels():
 
 
 def test_snippet_record_uses_delta_column_names_not_record_field_names():
-    """The Delta table (models.sensor_schema.delta_table_ddl) uses column
+    """The Delta table (iot_twin.models.sensor_schema.delta_table_ddl) uses column
     names — 'event_time', not the raw SensorRecord field 'timestamp' that
     zerobus_record_keys()/ZerobusSink emit. Sending the wrong key silently
     drops the column (see module docstring point 1)."""

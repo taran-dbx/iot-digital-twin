@@ -29,10 +29,10 @@ if str(_ROOT) not in sys.path:
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-
-from core.state import AppState
-from routes.provisioning import router as provisioning_router
 from scripts._profile import require_profile
+
+from iot_twin.core.state import AppState
+from iot_twin.routes.provisioning import router as provisioning_router
 
 PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
@@ -40,7 +40,7 @@ DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
 TABLE = os.getenv("PG_TABLE", "sensor_readings")
 LAKETS_SQL_PATH = os.getenv(
     "LAKETS_SQL_PATH",
-    str(_ROOT / "databricks" / "vendor" / "lakets.sql"),
+    str(_ROOT / "src" / "iot_twin" / "resources" / "lakets.sql"),
 )
 
 

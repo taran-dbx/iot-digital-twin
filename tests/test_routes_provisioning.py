@@ -16,13 +16,13 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 WORKSPACE_ID = 1234567890123456
 
 
 def _build_app() -> FastAPI:
-    from routes.provisioning import router as provisioning_router
+    from iot_twin.routes.provisioning import router as provisioning_router
 
     app = FastAPI()
     app.include_router(provisioning_router)

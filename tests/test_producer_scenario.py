@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from domain.catalog import list_alert_rules
+from iot_twin.domain.catalog import list_alert_rules
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT = ROOT / "client"

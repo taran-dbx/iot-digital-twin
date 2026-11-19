@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from models import app_schema
+from iot_twin.models import app_schema
 
 pytestmark = pytest.mark.asyncio
 

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from domain.catalog import CURATED_DOMAIN_INDUSTRIES
-from services import genie_service as gs
-from services.industry_templates import MODES
+from iot_twin.domain.catalog import CURATED_DOMAIN_INDUSTRIES
+from iot_twin.services import genie_service as gs
+from iot_twin.services.industry.industry_templates import MODES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,7 +27,7 @@ class _Wait:
 
 def test_source_never_blocks_on_wait_c7501_smoke() -> None:
     """[C7501][smoke] Genie service never uses *_and_wait or Wait.result."""
-    src = (ROOT / "services" / "genie_service.py").read_text(encoding="utf-8")
+    src = (ROOT / "src" / "iot_twin" / "services" / "genie_service.py").read_text(encoding="utf-8")
     assert "_and_wait" not in src
     assert ".result(" not in src
 

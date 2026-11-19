@@ -1,7 +1,7 @@
 """Tests for the wizard-driven Lakebase-table provisioning route.
 
 Verifies that ``sink_config.tiering`` persisted on the pipelines row flows
-through to ``services.provisioning_service.provision_lakebase_table`` when a
+through to ``iot_twin.services.provisioning_service.provision_lakebase_table`` when a
 pipeline is deployed via ``/api/provision/lakebase-table``.
 
 These tests cover:
@@ -13,7 +13,7 @@ These tests cover:
   - sse_metrics are echoed back in the response so the client can confirm
     what was persisted
 
-Only newly introduced helpers in ``routes.provisioning`` and the top of the
+Only newly introduced helpers in ``iot_twin.routes.provisioning`` and the top of the
 ``provision_lakebase_table`` route are exercised; the underlying service
 function is mocked.
 """
@@ -26,8 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.state import AppState
-from routes import provisioning as prov_route
+from iot_twin.core.state import AppState
+from iot_twin.routes import provisioning as prov_route
 
 
 # ---------------------------------------------------------------------------

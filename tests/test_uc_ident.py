@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from services.uc_ident import sql_fqn, sql_ident
+from iot_twin.services.uc_ident import sql_fqn, sql_ident
 
 
 class TestSqlIdent:

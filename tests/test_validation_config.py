@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from services import validation_config as vc
+from iot_twin.services.validation import validation_config as vc
 
 
 # --- Worker sizing (M1) ----------------------------------------------------

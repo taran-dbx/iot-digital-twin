@@ -12,7 +12,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from scripts._profile import require_profile
-from services.provisioning_service import provision_lakebase_project_and_branch
+
+from iot_twin.services.provisioning_service import provision_lakebase_project_and_branch
 
 
 async def main() -> int:

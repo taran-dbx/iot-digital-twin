@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from domain.catalog import CURATED_DOMAIN_INDUSTRIES
-from scenario_engine import CadenceClock, ScenarioEngine, cadence_due
+from iot_twin.domain.catalog import CURATED_DOMAIN_INDUSTRIES
+from iot_twin.scenario_engine import CadenceClock, ScenarioEngine, cadence_due
 
 
 def _record(**overrides) -> SimpleNamespace:

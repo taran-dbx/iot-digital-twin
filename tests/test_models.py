@@ -1,9 +1,9 @@
-"""Tests for models.producer_state and models.sql_ddl."""
+"""Tests for iot_twin.models.producer_state and iot_twin.models.sql_ddl."""
 
 from __future__ import annotations
 
-from models import sql_ddl
-from models.producer_state import new_producer_state, source_label
+from iot_twin.models import sql_ddl
+from iot_twin.models.producer_state import new_producer_state, source_label
 
 
 class TestNewProducerState:

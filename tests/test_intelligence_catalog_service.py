@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services import intelligence_catalog_service as ics
+from iot_twin.services import intelligence_catalog_service as ics
 
 CATALOG = "test_catalog"
 SCHEMA = "test_schema"

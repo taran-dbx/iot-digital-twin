@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services import industry_setup_service as iss
+from iot_twin.services.industry import industry_setup_service as iss
 
 
 @pytest.fixture(autouse=True)

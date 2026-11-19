@@ -28,8 +28,8 @@ def _uc_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UC_SCHEMA", UC_SCHEMA)
     # Force re-import so env vars are picked up by module-level cached reads.
     for mod_name in (
-        "services.industry_catalog_service",
-        "services.pipeline_freshness",
+        "iot_twin.services.industry.industry_catalog_service",
+        "iot_twin.services.pipelines.pipeline_freshness",
     ):
         if mod_name in __import__("sys").modules:
             importlib.reload(__import__("sys").modules[mod_name])
@@ -40,31 +40,31 @@ def _uc_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 class TestIndustryTableResolution:
     def test_zerobus_cold_table_resolves_to_prefixed_one_schema(self) -> None:
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         fqn = industry_table("pharmaceutical", "zerobus")
         assert fqn == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_zerobus"
 
     def test_microbatch_cold_table_resolves_to_prefixed_one_schema(self) -> None:
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         fqn = industry_table("pharmaceutical", "microbatch")
         assert fqn == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_microbatch"
 
     def test_realtime_cold_table_resolves_to_prefixed_one_schema(self) -> None:
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         fqn = industry_table("energy", "realtime")
         assert fqn == f"{UC_CATALOG}.{UC_SCHEMA}.energy_realtime"
 
     def test_metrics_table_resolves_to_prefixed_one_schema(self) -> None:
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         fqn = industry_table("pharmaceutical", "metrics")
         assert fqn == f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
 
     def test_multi_word_industry_is_sanitised(self) -> None:
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         fqn = industry_table("Oil & Gas", "zerobus")
         assert fqn == f"{UC_CATALOG}.{UC_SCHEMA}.oil_gas_zerobus"
@@ -78,7 +78,7 @@ class TestFreshnessTableResolution:
     async def test_microbatch_freshness_queries_prefixed_table(self) -> None:
         """After Task 5 _dbsql_flowing must target {industry}_microbatch, not
         iot_{industry}.microbatch.sensor_data."""
-        from services import pipeline_freshness as pf
+        from iot_twin.services.pipelines import pipeline_freshness as pf
 
         pf.clear_cache()
         seen: dict = {}
@@ -97,7 +97,7 @@ class TestFreshnessTableResolution:
     async def test_zerobus_freshness_queries_prefixed_table(self) -> None:
         """After Task 5 _dbsql_flowing must target {industry}_zerobus, not
         iot_{industry}.zerobus.iot_sensor_data."""
-        from services import pipeline_freshness as pf
+        from iot_twin.services.pipelines import pipeline_freshness as pf
 
         pf.clear_cache()
         seen: dict = {}
@@ -114,7 +114,7 @@ class TestFreshnessTableResolution:
     @pytest.mark.asyncio
     async def test_freshness_error_is_not_flowing(self) -> None:
         """Errors during the probe are always treated as not-flowing (defensive)."""
-        from services import pipeline_freshness as pf
+        from iot_twin.services.pipelines import pipeline_freshness as pf
 
         pf.clear_cache()
 
@@ -132,7 +132,7 @@ class TestMetricsTableResolution:
     def test_metrics_fqn_is_prefixed_one_schema(self) -> None:
         """The managed metrics table lives in the shared catalog/schema, NOT in
         per-industry iot_<industry>.metrics.streaming_metrics_<mode>."""
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         expected = f"{UC_CATALOG}.{UC_SCHEMA}.pharmaceutical_metrics"
         assert industry_table("pharmaceutical", "metrics") == expected
@@ -140,14 +140,14 @@ class TestMetricsTableResolution:
     def test_metrics_table_is_same_for_all_modes(self) -> None:
         """A SINGLE {industry}_metrics table holds all modes — distinguished by
         the ``mode`` column, not by separate tables per mode."""
-        from services.industry_catalog_service import industry_table
+        from iot_twin.services.industry.industry_catalog_service import industry_table
 
         # All modes map to the same {industry}_metrics table.
         assert industry_table("energy", "metrics") == f"{UC_CATALOG}.{UC_SCHEMA}.energy_metrics"
 
     def test_mode_column_present_in_managed_metrics_ddl(self) -> None:
         """The managed metrics DDL includes a leading ``mode`` column."""
-        from models.metrics_schema import METRICS_MODE_COLUMN, metrics_managed_columns
+        from iot_twin.models.metrics_schema import METRICS_MODE_COLUMN, metrics_managed_columns
 
         cols = metrics_managed_columns()
         assert cols[0].column == METRICS_MODE_COLUMN
@@ -167,7 +167,9 @@ class TestMetricsTableResolution:
         import sys
         from pathlib import Path
 
-        route_path = Path(__file__).parent.parent / "routes" / "streaming_latency.py"
+        route_path = (
+            Path(__file__).parent.parent / "src" / "iot_twin" / "routes" / "streaming_latency.py"
+        )
         spec = importlib.util.spec_from_file_location("_test_streaming_latency", str(route_path))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         sys.modules["_test_streaming_latency"] = mod
@@ -210,7 +212,7 @@ class TestMetricsTableResolution:
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
 
-        from core.state import AppState
+        from iot_twin.core.state import AppState
 
         state = AppState()
         state.db = None
@@ -260,7 +262,7 @@ class TestStreamingMetricsModeValidation:
         import sys
         from pathlib import Path
 
-        route_path = Path(__file__).parent.parent / "routes" / "sensor_data.py"
+        route_path = Path(__file__).parent.parent / "src" / "iot_twin" / "routes" / "sensor_data.py"
         spec = importlib.util.spec_from_file_location("_test_sensor_data", str(route_path))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         sys.modules["_test_sensor_data"] = mod
@@ -289,7 +291,7 @@ class TestStreamingMetricsModeValidation:
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
 
-        from core.state import AppState
+        from iot_twin.core.state import AppState
 
         state = AppState()
         state.db = None
@@ -323,7 +325,7 @@ class TestStreamingMetricsModeValidation:
         import sys
         from pathlib import Path
 
-        route_path = Path(__file__).parent.parent / "routes" / "sensor_data.py"
+        route_path = Path(__file__).parent.parent / "src" / "iot_twin" / "routes" / "sensor_data.py"
         spec = importlib.util.spec_from_file_location("_test_sensor_data2", str(route_path))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         sys.modules["_test_sensor_data2"] = mod
@@ -352,7 +354,7 @@ class TestStreamingMetricsModeValidation:
         from fastapi import FastAPI
         from httpx import ASGITransport, AsyncClient
 
-        from core.state import AppState
+        from iot_twin.core.state import AppState
 
         state = AppState()
         state.db = None

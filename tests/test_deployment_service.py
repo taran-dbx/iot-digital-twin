@@ -1,4 +1,4 @@
-"""Tests for services.deployment_service (Phase 5b — per-mode deploy).
+"""Tests for iot_twin.services.deployment.deployment_service (Phase 5b — per-mode deploy).
 
 Covers the validation hard-gate, worker sizing (M1), per-mode job-spec
 construction (DBR / access-mode / spark-conf / libs / tasks / Photon-autoscale-
@@ -16,8 +16,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
-from services import deployment_service as ds
-from services.production_control import PRODUCTION_CONTROL_TOKEN
+from iot_twin.services.deployment import deployment_service as ds
+from iot_twin.services.production_control import PRODUCTION_CONTROL_TOKEN
 
 
 # ---------------------------------------------------------------------------

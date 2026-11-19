@@ -10,8 +10,8 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes.intelligence import router as intelligence_router
+from iot_twin.core.state import AppState
+from iot_twin.routes.intelligence import router as intelligence_router
 
 
 def _build_app(state: AppState) -> FastAPI:
@@ -37,7 +37,7 @@ class TestIntelligenceRoutes:
     ) -> None:
         """[C7504][smoke] Sync is admin-gated."""
         client, _ = intel_client
-        with patch("routes.intelligence.app_permissions.is_admin", return_value=False):
+        with patch("iot_twin.routes.intelligence.app_permissions.is_admin", return_value=False):
             resp = await client.post("/api/admin/intelligence/sync")
         assert resp.status_code == 403
 
@@ -50,13 +50,13 @@ class TestIntelligenceRoutes:
         monkeypatch.setenv("UC_SCHEMA", "test_schema")
         client, _ = intel_client
         with (
-            patch("routes.intelligence.app_permissions.is_admin", return_value=True),
+            patch("iot_twin.routes.intelligence.app_permissions.is_admin", return_value=True),
             patch(
-                "routes.intelligence.intelligence_catalog_service.provision_reference_tables",
+                "iot_twin.routes.intelligence.intelligence_catalog_service.provision_reference_tables",
                 new=AsyncMock(return_value={"tables": {"assets": "c.s.intelligence_assets"}}),
             ) as provision,
             patch(
-                "routes.intelligence.intelligence_catalog_service.sync_reference_data",
+                "iot_twin.routes.intelligence.intelligence_catalog_service.sync_reference_data",
                 new=AsyncMock(return_value={"rows": {"assets": 4}}),
             ) as sync,
         ):
@@ -78,7 +78,7 @@ class TestIntelligenceRoutes:
         monkeypatch.setenv("UC_CATALOG", "test_catalog")
         monkeypatch.setenv("UC_SCHEMA", "test_schema")
         client, _ = intel_client
-        with patch("routes.intelligence.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.intelligence.app_permissions.is_admin", return_value=True):
             resp = await client.get("/api/admin/intelligence/status")
         assert resp.status_code == 200
         body = resp.json()
@@ -94,7 +94,7 @@ class TestIntelligenceRoutes:
         monkeypatch.delenv("UC_CATALOG", raising=False)
         monkeypatch.delenv("UC_SCHEMA", raising=False)
         client, _ = intel_client
-        with patch("routes.intelligence.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.intelligence.app_permissions.is_admin", return_value=True):
             resp = await client.get("/api/admin/intelligence/status")
         assert resp.status_code == 200
         contract = resp.json()["contract"]

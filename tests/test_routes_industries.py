@@ -8,11 +8,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 
 def _build_app_with_state(state: AppState) -> FastAPI:
-    from routes.industries import router as industries_router
+    from iot_twin.routes.industries import router as industries_router
 
     app = FastAPI()
     app.state.app_state = state
@@ -41,10 +41,12 @@ class TestIndustriesCatalog:
         fake_catalog = [{"id": "pharmaceutical", "modes": []}]
         with (
             patch(
-                "routes.industries.industry_service.get_catalog",
+                "iot_twin.routes.industries.industry_service.get_catalog",
                 AsyncMock(return_value=fake_catalog),
             ),
-            patch("routes.industries.app_permissions.is_admin", MagicMock(return_value=False)),
+            patch(
+                "iot_twin.routes.industries.app_permissions.is_admin", MagicMock(return_value=False)
+            ),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/industries/catalog")
@@ -61,8 +63,13 @@ class TestIndustriesCatalog:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.industries.industry_service.get_catalog", AsyncMock(return_value=[])),
-            patch("routes.industries.app_permissions.is_admin", MagicMock(return_value=True)),
+            patch(
+                "iot_twin.routes.industries.industry_service.get_catalog",
+                AsyncMock(return_value=[]),
+            ),
+            patch(
+                "iot_twin.routes.industries.app_permissions.is_admin", MagicMock(return_value=True)
+            ),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/industries/catalog")
@@ -81,7 +88,9 @@ class TestStartIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.industries.industry_service.start_mode", AsyncMock()) as start_mock:
+        with patch(
+            "iot_twin.routes.industries.industry_service.start_mode", AsyncMock()
+        ) as start_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/banking/modes/realtime/start")
 
@@ -95,7 +104,9 @@ class TestStartIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.industries.industry_service.start_mode", AsyncMock()) as start_mock:
+        with patch(
+            "iot_twin.routes.industries.industry_service.start_mode", AsyncMock()
+        ) as start_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/pharmaceutical/modes/nightly/start")
 
@@ -111,7 +122,7 @@ class TestStartIndustryMode:
 
         fake_result = {"pipeline": "iot-pharmaceutical-realtime", "status": "starting"}
         start_mock = AsyncMock(return_value=fake_result)
-        with patch("routes.industries.industry_service.start_mode", start_mock):
+        with patch("iot_twin.routes.industries.industry_service.start_mode", start_mock):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/pharmaceutical/modes/realtime/start")
 
@@ -130,7 +141,9 @@ class TestStopIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.industries.industry_service.stop_mode", AsyncMock()) as stop_mock:
+        with patch(
+            "iot_twin.routes.industries.industry_service.stop_mode", AsyncMock()
+        ) as stop_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/banking/modes/realtime/stop")
 
@@ -143,7 +156,9 @@ class TestStopIndustryMode:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.industries.industry_service.stop_mode", AsyncMock()) as stop_mock:
+        with patch(
+            "iot_twin.routes.industries.industry_service.stop_mode", AsyncMock()
+        ) as stop_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/pharmaceutical/modes/nightly/stop")
 
@@ -158,7 +173,7 @@ class TestStopIndustryMode:
 
         fake_result = {"pipeline": "iot-manufacturing-microbatch", "status": "idle"}
         stop_mock = AsyncMock(return_value=fake_result)
-        with patch("routes.industries.industry_service.stop_mode", stop_mock):
+        with patch("iot_twin.routes.industries.industry_service.stop_mode", stop_mock):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/industries/manufacturing/modes/microbatch/stop")
 
@@ -178,7 +193,7 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode", AsyncMock()
+            "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode", AsyncMock()
         ) as resolve_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
@@ -196,7 +211,7 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode", AsyncMock()
+            "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode", AsyncMock()
         ) as resolve_mock:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
@@ -214,7 +229,7 @@ class TestUpdateIndustryModeConfig:
         transport = ASGITransport(app=app)
 
         with patch(
-            "routes.industries.industry_service.resolve_pipeline_for_mode",
+            "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode",
             AsyncMock(return_value=None),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -235,11 +250,11 @@ class TestUpdateIndustryModeConfig:
         running_row = {"id": "pid-1", "status": "running"}
         with (
             patch(
-                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode",
                 AsyncMock(return_value=running_row),
             ),
             patch(
-                "routes.industries.industry_service.update_pipeline_config", AsyncMock()
+                "iot_twin.routes.industries.industry_service.update_pipeline_config", AsyncMock()
             ) as update_mock,
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -261,11 +276,11 @@ class TestUpdateIndustryModeConfig:
         starting_row = {"id": "pid-1", "status": "starting"}
         with (
             patch(
-                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode",
                 AsyncMock(return_value=starting_row),
             ),
             patch(
-                "routes.industries.industry_service.update_pipeline_config", AsyncMock()
+                "iot_twin.routes.industries.industry_service.update_pipeline_config", AsyncMock()
             ) as update_mock,
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -287,11 +302,11 @@ class TestUpdateIndustryModeConfig:
         merged = {"rate_hz": 10, "capture_metrics": False}
         with (
             patch(
-                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode",
                 AsyncMock(return_value=stopped_row),
             ),
             patch(
-                "routes.industries.industry_service.update_pipeline_config",
+                "iot_twin.routes.industries.industry_service.update_pipeline_config",
                 AsyncMock(return_value=merged),
             ) as update_mock,
         ):
@@ -318,11 +333,11 @@ class TestUpdateIndustryModeConfig:
         idle_row = {"id": "pid-1", "status": "idle"}
         with (
             patch(
-                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode",
                 AsyncMock(return_value=idle_row),
             ),
             patch(
-                "routes.industries.industry_service.update_pipeline_config",
+                "iot_twin.routes.industries.industry_service.update_pipeline_config",
                 AsyncMock(return_value={"rate_hz": 3}),
             ),
         ):
@@ -343,11 +358,11 @@ class TestUpdateIndustryModeConfig:
         stopped_row = {"id": "pid-2", "status": "stopped"}
         with (
             patch(
-                "routes.industries.industry_service.resolve_pipeline_for_mode",
+                "iot_twin.routes.industries.industry_service.resolve_pipeline_for_mode",
                 AsyncMock(return_value=stopped_row),
             ),
             patch(
-                "routes.industries.industry_service.update_pipeline_config",
+                "iot_twin.routes.industries.industry_service.update_pipeline_config",
                 AsyncMock(return_value={"rate_hz": 2}),
             ) as update_mock,
         ):

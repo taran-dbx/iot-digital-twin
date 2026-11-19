@@ -22,8 +22,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from routes.lakets import _open_lakebase_conn
-from services import lakets_service
+from iot_twin.routes.lakets import _open_lakebase_conn
+from iot_twin.services.lakets import lakets_service
 
 
 async def main() -> int:

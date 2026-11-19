@@ -9,7 +9,7 @@ delta-rs metrics listener, the specific CDF shadow table, https:// OIDC).
 
 from __future__ import annotations
 
-from services import validation_snippets as snip
+from iot_twin.services.validation import validation_snippets as snip
 
 
 def test_connectivity_probe_checks_both_and_egress():

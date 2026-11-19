@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.catalog import (
+from iot_twin.domain.catalog import (
     CURATED_DOMAIN_INDUSTRIES,
     get_domain,
     list_alert_rules,

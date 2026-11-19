@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services import validation_state_machine as sm
-from services import validation_steps as vsteps
-from services.validation_service import StepContext
+from iot_twin.services.validation import validation_state_machine as sm
+from iot_twin.services.validation import validation_steps as vsteps
+from iot_twin.services.validation.validation_service import StepContext
 
 UC_CATALOG = "example_eu_catalog"
 UC_SCHEMA = "rtm_lakets_zb"
