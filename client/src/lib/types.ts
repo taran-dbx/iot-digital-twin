@@ -440,6 +440,12 @@ export interface GeniePipelineStatus {
   reason?: string;
 }
 
+/** Response of the admin backfill; only `space_id` is relied on, other fields are tolerated. */
+export interface GeniePipelineProvisionResult {
+  space_id?: string | null;
+  [key: string]: unknown;
+}
+
 export interface GeniePipelineStarters {
   questions: string[];
 }

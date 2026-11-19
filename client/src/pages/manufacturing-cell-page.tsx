@@ -229,6 +229,7 @@ export function ManufacturingCellPage({
           industry={industry.id}
           mode={mode}
           setupId={setupId ?? pipelineId}
+          isAdmin={isAdmin}
           assets={assets}
           alert={explainAlert}
           open={genieOpen}

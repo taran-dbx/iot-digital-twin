@@ -29,6 +29,7 @@ interface GeniePipelineCopilotProps {
   alert: AlertRecord | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  isAdmin?: boolean;
 }
 
 function QuestionChips({
@@ -103,6 +104,7 @@ export function GeniePipelineCopilot({
   alert,
   open,
   onOpenChange,
+  isAdmin = false,
 }: GeniePipelineCopilotProps) {
   const genie = usePipelineGenie(setupId, mode);
   const [question, setQuestion] = useState("");
@@ -148,6 +150,25 @@ export function GeniePipelineCopilot({
             {spaceState === "unavailable" ? "Genie space unavailable" : "Genie space not provisioned yet"}
           </strong>
           {genie.status?.reason && <p>{genie.status.reason}</p>}
+          {spaceState === "not_provisioned" &&
+            (isAdmin ? (
+              <button
+                type="button"
+                className="btn sm"
+                data-testid="genie-create-space"
+                disabled={genie.provisioning}
+                onClick={() => void genie.provision()}
+              >
+                {genie.provisioning ? "Creating Genie space…" : "Create Genie space"}
+              </button>
+            ) : (
+              <p className="genie-drawer__hint">Ask an admin to create the Genie space for this pipeline.</p>
+            ))}
+          {genie.provisionError && (
+            <p className="genie-drawer__error" data-testid="genie-create-error" role="alert">
+              {genie.provisionError}
+            </p>
+          )}
         </div>
       )}
       {spaceState === "error" && (

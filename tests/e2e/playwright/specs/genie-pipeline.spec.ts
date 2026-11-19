@@ -1,5 +1,7 @@
 import { mockModeDashboardApis } from "../fixtures/dashboard-apis";
 import {
+  MANUFACTURING,
+  PHARMACEUTICAL,
   WRAPPED_PROMPT,
   mockPipelineGenie,
   setGeniePollHooks,
@@ -20,7 +22,7 @@ async function openCell(page: Page, options: PipelineGenieMockOptions = {}, hook
   await mockModeDashboardApis(page);
   const mock = await mockPipelineGenie(page, options);
   const dashboard = new ModeDashboardPage(page);
-  await dashboard.openManufacturingCell();
+  await dashboard.openIndustryDashboard((options.industry ?? MANUFACTURING).id);
   await dashboard.ensureGenieOpen();
   return { dashboard, mock };
 }
@@ -141,5 +143,79 @@ test.describe("[Windsor] Per-pipeline Genie on the manufacturing cell", () => {
     const error = dashboard.genieTranscript.getByTestId("genie-result-error");
     await expect(error).toContainText("warehouse unavailable");
     await expect(error.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+});
+
+test.describe("[Windsor] Per-pipeline Genie is available for every industry", () => {
+  test.describe.configure({ mode: "serial", timeout: 300_000 });
+
+  test("pharmaceutical dashboard uses its own pipeline space and backend starters [smoke]", async ({ page }) => {
+    const { dashboard, mock } = await openCell(page, { industry: PHARMACEUTICAL });
+    await expect(dashboard.genieStatus).toHaveText("Ready");
+
+    const starters = page.getByRole("group", { name: "Starter questions" });
+    await expect(starters.getByRole("button")).toHaveCount(PHARMACEUTICAL.starters.length);
+    await expect(starters.getByRole("button", { name: PHARMACEUTICAL.starters[0] })).toBeVisible();
+    await expect(starters).not.toContainText(MANUFACTURING.starters[0]);
+
+    await starters.getByRole("button", { name: PHARMACEUTICAL.starters[0] }).click();
+    await expect(dashboard.genieTranscript.getByTestId("genie-answer").first()).toContainText("climbed");
+    expect(mock.polledStatuses.slice(0, 3)).toEqual(["SUBMITTED", "ASKING_AI", "COMPLETED"]);
+  });
+
+  test("pharmaceutical: no space yet tells non-admins to ask an admin [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, {
+      industry: PHARMACEUTICAL,
+      available: false,
+      reason: "No Genie space is provisioned for this pipeline yet.",
+    });
+    await expect(dashboard.genieStatus).toHaveText("Not provisioned");
+    await expect(dashboard.genieDisabled).toContainText("Genie space not provisioned yet");
+    await expect(dashboard.genieDisabled).toContainText("Ask an admin");
+    await expect(page.getByTestId("genie-create-space")).toHaveCount(0);
+    await expect(dashboard.genieInput).toBeDisabled();
+  });
+
+  test("pharmaceutical: admin creates the missing space and chat unlocks [smoke]", async ({ page }) => {
+    const { dashboard, mock } = await openCell(page, {
+      industry: PHARMACEUTICAL,
+      available: false,
+      isAdmin: true,
+      reason: "No Genie space is provisioned for this pipeline yet.",
+    });
+    await expect(dashboard.genieDisabled).toContainText("Genie space not provisioned yet");
+    await page.getByTestId("genie-create-space").click();
+
+    await expect(dashboard.genieStatus).toHaveText("Ready");
+    expect(mock.provisionCalls).toEqual(["POST"]);
+    await expect(dashboard.genieDisabled).toHaveCount(0);
+    await expect(dashboard.genieInput).toBeEnabled();
+  });
+
+  test("admin sees an explicit error when creating the space fails [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, {
+      industry: PHARMACEUTICAL,
+      available: false,
+      isAdmin: true,
+      provisionError: "Genie provisioning is not supported for this industry.",
+    });
+    await page.getByTestId("genie-create-space").click();
+    await expect(page.getByTestId("genie-create-error")).toContainText("not supported");
+    await expect(dashboard.genieStatus).toHaveText("Not provisioned");
+    await expect(page.getByTestId("genie-create-space")).toBeEnabled();
+  });
+
+  test("pharmaceutical: unknown pipeline (404) is an informative empty state [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, { industry: PHARMACEUTICAL, statusNotFound: true });
+    await expect(dashboard.genieStatus).toHaveText("Not provisioned");
+    await expect(dashboard.genieDisabled).toContainText("No Genie space exists for this pipeline yet");
+    await expect(dashboard.genieInput).toBeDisabled();
+  });
+
+  test("starter question failure degrades to a hint, chat still works [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, { industry: PHARMACEUTICAL, startersFail: true });
+    await expect(dashboard.genieStatus).toHaveText("Ready");
+    await expect(page.getByText("Starter questions unavailable.")).toBeVisible();
+    await expect(dashboard.genieInput).toBeEnabled();
   });
 });

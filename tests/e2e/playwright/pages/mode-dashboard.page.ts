@@ -31,6 +31,12 @@ export class ModeDashboardPage {
     await expect(this.genieToggle).toBeVisible();
   }
 
+  /** Industry dashboard with a deployed realtime mode (any industry). */
+  async openIndustryDashboard(industryId: string) {
+    await this.page.goto(`/i/${industryId}/realtime/dashboard`);
+    await expect(this.genieToggle).toBeVisible();
+  }
+
   async ensureGenieOpen() {
     await expect(this.genieToggle).toBeVisible();
     await expect(this.genieToggle).toHaveAttribute("aria-expanded", /true|false/);

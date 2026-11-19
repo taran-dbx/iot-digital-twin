@@ -118,15 +118,22 @@ def test_production_bundle_ships_genie_copilot_c7505_smoke() -> None:
     assert ".genie-drawer" in css
 
 
-def test_manufacturing_uses_per_pipeline_genie_regression() -> None:
-    """[regression] Manufacturing passes pipeline context; copilot gates on it."""
-    page = _read("pages", "manufacturing-cell-page.tsx")
-    assert "setupId={setupId ?? pipelineId}" in page
+def test_every_industry_uses_per_pipeline_genie_regression() -> None:
+    """[regression] Pipeline context (not the industry) selects the per-pipeline copilot."""
+    cell = _read("pages", "manufacturing-cell-page.tsx")
+    assert "setupId={setupId ?? pipelineId}" in cell
+    mode_page = _read("pages", "mode-dashboard-page.tsx")
+    assert "setupId={catalogMode?.setupId ?? pipelineId}" in mode_page
     copilot = _read("components", "dashboard", "genie-copilot.tsx")
     assert "GeniePipelineCopilot" in copilot
-    assert '"manufacturing"' in copilot
+    assert "PER_PIPELINE_GENIE_INDUSTRIES" not in copilot
+    for name in ("genie-pipeline-copilot.tsx", "genie-drawer.tsx", "genie-query-attachment.tsx"):
+        assert "manufacturing" not in _read("components", "dashboard", name).lower(), name
+    assert "manufacturing" not in _read("hooks", "use-pipeline-genie.ts").lower()
     pipeline = _read("components", "dashboard", "genie-pipeline-copilot.tsx")
     assert "Genie space not provisioned yet" in pipeline
+    assert "Create Genie space" in pipeline
+    assert "provisionPipelineGenieSpace" in _read("hooks", "use-pipeline-genie.ts")
     api = _read("lib", "api.ts")
     for fn in (
         "getPipelineGenieStatus",
@@ -138,6 +145,7 @@ def test_manufacturing_uses_per_pipeline_genie_regression() -> None:
     ):
         assert fn in api, fn
     assert "/genie/pipelines/" in api
+    assert "/admin/pipelines/" in api
 
 
 def test_production_bundle_ships_pipeline_genie_smoke() -> None:

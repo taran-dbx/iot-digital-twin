@@ -1124,6 +1124,8 @@ export function ModeDashboardPage() {
       <GenieCopilot
         industry={industry.id}
         mode={mode}
+        setupId={catalogMode?.setupId ?? pipelineId}
+        isAdmin={isAdmin}
         assets={domainAssets}
         alert={explainAlert}
         open={genieOpen}

@@ -34,16 +34,17 @@ interface GenieCopilotProps {
   onOpenChange: (open: boolean) => void;
   /**
    * Pipeline identity (setup id, or the dashboard's pipeline/deployment id)
-   * for the per-pipeline Genie space. Only manufacturing uses it today.
+   * for the per-pipeline Genie space. Every industry with a pipeline uses it;
+   * without one the workspace-wide copilot is shown.
    */
   setupId?: string | null;
+  /** Admins get a "Create Genie space" action when the space is missing. */
+  isAdmin?: boolean;
 }
 
-/** Industries whose dashboards talk to a per-pipeline Genie space. */
-const PER_PIPELINE_GENIE_INDUSTRIES: ReadonlySet<string> = new Set(["manufacturing"]);
-
-export function usesPipelineGenie(industry: string, setupId: string | null | undefined): setupId is string {
-  return PER_PIPELINE_GENIE_INDUSTRIES.has(industry) && Boolean(setupId);
+/** Any industry dashboard that has a pipeline talks to its per-pipeline Genie space. */
+export function usesPipelineGenie(setupId: string | null | undefined): setupId is string {
+  return Boolean(setupId);
 }
 
 function operatorFacingReason(raw: string): string {
@@ -98,9 +99,14 @@ function defaultComponentId(assets: IndustryAssets | null, assetId?: string): st
   return undefined;
 }
 
-export function GenieCopilot({ setupId, ...props }: GenieCopilotProps) {
-  if (usesPipelineGenie(props.industry, setupId)) {
-    return <GeniePipelineCopilot key={`${setupId}:${props.mode}`} {...props} setupId={setupId} />;
+export function GenieCopilot({ setupId, isAdmin, ...props }: GenieCopilotProps) {
+  if (usesPipelineGenie(setupId)) {
+    return <GeniePipelineCopilot
+        key={`${setupId}:${props.mode}`}
+        {...props}
+        setupId={setupId}
+        isAdmin={isAdmin ?? false}
+      />;
   }
   return <StaticGenieCopilot {...props} />;
 }

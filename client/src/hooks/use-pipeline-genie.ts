@@ -12,7 +12,7 @@ import type { PipelineMode } from "@/lib/industries-api";
 import type { GenieMessageStatus, GeniePipelineStatus } from "@/lib/types";
 
 export const NOT_PROVISIONED_REASON =
-  "No Genie space exists for this pipeline yet. Deploy the pipeline to create one.";
+  "No Genie space exists for this pipeline yet. Deploy the pipeline, or ask an admin to create one.";
 
 /** loading → ready | not_provisioned (no space) | unavailable (space exists, unusable) | error. */
 export type SpaceState = "loading" | "ready" | "not_provisioned" | "unavailable" | "error";
@@ -47,6 +47,12 @@ function usePipelineStatus(setupId: string, mode: PipelineMode) {
   const [status, setStatus] = useState<GeniePipelineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [starters, setStarters] = useState<Starters>({ questions: [], error: null });
+  const [reloadTick, setReloadTick] = useState(0);
+  const reload = useCallback(() => {
+    setStatus(null);
+    setStatusError(null);
+    setReloadTick((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,13 +86,15 @@ function usePipelineStatus(setupId: string, mode: PipelineMode) {
     return () => {
       cancelled = true;
     };
-  }, [setupId, mode]);
+  }, [setupId, mode, reloadTick]);
 
-  return { status, statusError, starters };
+  return { status, statusError, starters, reload };
 }
 
 export function usePipelineGenie(setupId: string, mode: PipelineMode) {
-  const { status, statusError, starters } = usePipelineStatus(setupId, mode);
+  const { status, statusError, starters, reload } = usePipelineStatus(setupId, mode);
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionError, setProvisionError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [pendingMessageId, setPendingMessageId] = useState<string | null>(null);
   const [pollStatus, setPollStatus] = useState<GenieMessageStatus>("SUBMITTED");
@@ -103,6 +111,22 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
     setPendingMessageId(null);
     setError(GENIE_EXPIRED_MESSAGE);
   }, []);
+
+  const provision = useCallback(async (): Promise<boolean> => {
+    if (provisioning) return false;
+    setProvisioning(true);
+    setProvisionError(null);
+    try {
+      await api.provisionPipelineGenieSpace(setupId, mode);
+      reload();
+      return true;
+    } catch (err: unknown) {
+      setProvisionError(errorText(err, "Could not create the Genie space"));
+      return false;
+    } finally {
+      setProvisioning(false);
+    }
+  }, [provisioning, setupId, mode, reload]);
 
   const send = useCallback(
     async (text: string): Promise<boolean> => {
@@ -176,5 +200,20 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
     );
   }, [setupId, mode, conversationId, pendingMessageId, expire]);
 
-  return { status, spaceState, starters, available, transcript, pollStatus, pending, busy, error, statusError, send };
+  return {
+    status,
+    spaceState,
+    starters,
+    available,
+    transcript,
+    pollStatus,
+    pending,
+    busy,
+    error,
+    statusError,
+    send,
+    provision,
+    provisioning,
+    provisionError,
+  };
 }

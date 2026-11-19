@@ -11,6 +11,7 @@ import type {
   GenieMessageResponse,
   GeniePipelineAskRequest,
   GeniePipelineMessageResponse,
+  GeniePipelineProvisionResult,
   GeniePipelineStarters,
   GeniePipelineStatus,
   GenieQueryResult,
@@ -651,6 +652,13 @@ export const api = {
   // ── Per-pipeline Genie (one space per setup × mode) ──────────────────────
   getPipelineGenieStatus: (setupId: string, mode: PipelineMode) =>
     request<GeniePipelineStatus>(`${pipelineGenieBase(setupId, mode)}/status`),
+
+  /** Admin backfill: create-or-update the Genie space of an already-deployed mode. */
+  provisionPipelineGenieSpace: (setupId: string, mode: PipelineMode) =>
+    request<GeniePipelineProvisionResult>(
+      `/admin/pipelines/${encodeURIComponent(setupId)}/genie/${encodeURIComponent(mode)}`,
+      { method: "POST" },
+    ),
 
   getPipelineGenieStarters: (setupId: string, mode: PipelineMode) =>
     request<GeniePipelineStarters>(`${pipelineGenieBase(setupId, mode)}/starters`),

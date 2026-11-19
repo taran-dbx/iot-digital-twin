@@ -4,26 +4,60 @@ import { manufacturingCatalog } from "./dashboard-apis";
 
 export const PIPELINE_SETUP_ID = "setup-mfg-1";
 export const PIPELINE_DEPLOYMENT_ID = "deploy-mfg-rt";
-const GENIE_BASE = `/api/genie/pipelines/${PIPELINE_SETUP_ID}/realtime`;
 
-/** Catalog whose realtime mode is a running industry-first deployment. */
-export const deployedManufacturingCatalog = {
-  ...manufacturingCatalog,
-  industries: manufacturingCatalog.industries.map((industry) => ({
-    ...industry,
-    modes: industry.modes.map((mode) => ({
-      ...mode,
-      status: "running",
-      deployment_id: PIPELINE_DEPLOYMENT_ID,
-      setup_id: PIPELINE_SETUP_ID,
-    })),
-  })),
+export interface GenieIndustryFixture {
+  id: string;
+  name: string;
+  setupId: string;
+  deploymentId: string;
+  starters: string[];
+  heading: RegExp;
+}
+
+export const MANUFACTURING: GenieIndustryFixture = {
+  id: "manufacturing",
+  name: "Manufacturing",
+  setupId: PIPELINE_SETUP_ID,
+  deploymentId: PIPELINE_DEPLOYMENT_ID,
+  starters: ["How has spindle temperature trended this shift?", "Which station raised the most alerts?"],
+  heading: /Manufacturing twin/,
 };
 
-export const starterQuestions = [
-  "How has spindle temperature trended this shift?",
-  "Which station raised the most alerts?",
-];
+export const PHARMACEUTICAL: GenieIndustryFixture = {
+  id: "pharmaceutical",
+  name: "Pharmaceutical",
+  setupId: "setup-pharma-1",
+  deploymentId: "deploy-pharma-rt",
+  starters: ["How has bioreactor pH trended this batch?", "Which WFI loop raised the most alerts?"],
+  heading: /Pharma/i,
+};
+
+/** Catalog whose realtime mode is a running industry-first deployment of `fixture`. */
+export function deployedCatalog(fixture: GenieIndustryFixture, isAdmin = false) {
+  const base = manufacturingCatalog.industries[0];
+  return {
+    ...manufacturingCatalog,
+    is_admin: isAdmin,
+    industries: [
+      {
+        ...base,
+        id: fixture.id,
+        name: fixture.name,
+        modes: base.modes.map((mode) => ({
+          ...mode,
+          status: "running",
+          deployment_id: fixture.deploymentId,
+          setup_id: fixture.setupId,
+        })),
+      },
+    ],
+  };
+}
+
+export const deployedManufacturingCatalog = deployedCatalog(MANUFACTURING);
+
+/** Starters served by the backend `/starters` endpoint for manufacturing (kept for existing specs). */
+export const starterQuestions = MANUFACTURING.starters;
 
 const lineResult = {
   columns: [
@@ -122,6 +156,14 @@ const results: Record<string, unknown> = {
 };
 
 export interface PipelineGenieMockOptions {
+  /** Industry the dashboard belongs to (default manufacturing). */
+  industry?: GenieIndustryFixture;
+  /** Catalog `is_admin` — admins see the "Create Genie space" action. */
+  isAdmin?: boolean;
+  /** `/starters` answers an error so the empty state has no chips. */
+  startersFail?: boolean;
+  /** Admin backfill POST fails with this detail. */
+  provisionError?: string;
   available?: boolean;
   spaceId?: string | null;
   reason?: string;
@@ -145,26 +187,51 @@ export async function setGeniePollHooks(page: Page, hooks: { pollIntervalMs?: nu
 }
 
 export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOptions = {}) {
-  const available = options.available ?? true;
-  const spaceId = options.spaceId !== undefined ? options.spaceId : available ? "space-1" : null;
+  const fixture = options.industry ?? MANUFACTURING;
+  const genieBase = `/api/genie/pipelines/${fixture.setupId}/realtime`;
+  const provisionPath = `/api/admin/pipelines/${fixture.setupId}/genie/realtime`;
+  let provisioned = options.available ?? true;
+  const provisionCalls: string[] = [];
+  const currentSpaceId = () =>
+    options.spaceId !== undefined && !provisioned ? options.spaceId : provisioned ? "space-1" : null;
   let nextMessage = 1;
   const pollCounts = new Map<string, number>();
   const polledStatuses: string[] = [];
 
   await page.route("**/api/industries/catalog", async (route) => {
-    await route.fulfill({ json: deployedManufacturingCatalog });
+    await route.fulfill({ json: deployedCatalog(fixture, options.isAdmin ?? false) });
+  });
+  if (fixture.id !== MANUFACTURING.id) {
+    await page.route(`**/api/industries/${fixture.id}/assets`, async (route) => {
+      await route.fulfill({ json: { industry: fixture.id, sites: [] } });
+    });
+    await page.route(`**/api/industries/${fixture.id}/reference`, async (route) => {
+      await route.fulfill({ json: { industry: fixture.id, kpis: [], maintenance_history: [] } });
+    });
+  }
+
+  await page.route(`**${provisionPath}`, async (route) => {
+    provisionCalls.push(route.request().method());
+    if (options.provisionError) {
+      await route.fulfill({ status: 500, json: { detail: options.provisionError } });
+      return;
+    }
+    provisioned = true;
+    await route.fulfill({ json: { space_id: "space-1", status: "created" } });
   });
 
-  await page.route(`**${GENIE_BASE}/**`, async (route) => {
+  await page.route(`**${genieBase}/**`, async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname.slice(GENIE_BASE.length);
+    const path = new URL(request.url()).pathname.slice(genieBase.length);
 
     if (path === "/status") {
       if (options.statusNotFound) {
         await route.fulfill({ status: 404, json: { detail: "unknown setup" } });
         return;
       }
-      await route.fulfill({ json: { available, space_id: spaceId, reason: options.reason } });
+      await route.fulfill({
+        json: { available: provisioned, space_id: currentSpaceId(), reason: provisioned ? undefined : options.reason },
+      });
       return;
     }
     if (options.expireFirstMessage && path === "/conversations/conv-1/messages/msg-1") {
@@ -172,7 +239,11 @@ export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOp
       return;
     }
     if (path === "/starters") {
-      await route.fulfill({ json: { questions: starterQuestions } });
+      if (options.startersFail) {
+        await route.fulfill({ status: 500, json: { detail: "starters unavailable" } });
+        return;
+      }
+      await route.fulfill({ json: { questions: fixture.starters } });
       return;
     }
     if (request.method() === "POST" && /^\/conversations(\/conv-1\/messages)?$/.test(path)) {
@@ -203,5 +274,5 @@ export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOp
     }
     await route.fulfill({ status: 404, json: { detail: `Unexpected Genie request: ${path}` } });
   });
-  return { polledStatuses };
+  return { polledStatuses, provisionCalls, starters: fixture.starters };
 }
