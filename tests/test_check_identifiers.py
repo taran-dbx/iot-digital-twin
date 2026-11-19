@@ -37,7 +37,11 @@ def _rules(checker, text: str) -> list[str]:
 
 # Offending values are assembled at runtime so this file itself stays clean.
 _LAKEBASE_HOST = "ep-" + "quiet-river-" + "a1b2c3d4" + ".database.us-east-1.cloud.databricks.com"
-_ARN = "arn:aws:kafka:us-east-1:" + "111122223333" + ":cluster/x"
+_FAKE_ACCOUNT = "1111" + "2222" + "3333"
+_FAKE_WORKSPACE_ID = "9876" + "5432" + "1098" + "7654"
+_MSK_REAL = "b-1." + "demo." + "q7x2zk" + ".c3.kafka.us-east-1.amazonaws.com"
+_NPM_PROXY = "https://npm-" + "proxy.corp.example.net/pkg/-/pkg-1.0.0.tgz"
+_ARN = "arn:aws:kafka:us-east-1:" + _FAKE_ACCOUNT + ":cluster/x"
 _OWNER_EMAIL = "tar" + "anfake@" + "example.com"
 
 
@@ -48,13 +52,30 @@ _OWNER_EMAIL = "tar" + "anfake@" + "example.com"
         ("https://my-app-1234567890123456.aws." + "databricksapps.com", "databricksapps-host"),
         ("host = real-ws-1" + ".cloud.databricks.com", "databricks-cloud-host"),
         (
-            "zerobus: " + "7474659563748021" + ".zerobus.eu-central-1.cloud.databricks.com",
+            "zerobus: " + "1357924680135792" + ".zerobus.eu-central-1.cloud.databricks.com",
             "databricks-cloud-host",
         ),
         (_ARN, "aws-account-id-in-arn"),
         (_OWNER_EMAIL, "owner-identity"),
         ("profile fe-" + "vm-fakeworkspace", "real-workspace-name"),
-        ("aws_account_id = " + "111122223333", "aws-account-id-in-context"),
+        ("aws_account_id = " + _FAKE_ACCOUNT, "aws-account-id-in-context"),
+        ("owner 111 " + _FAKE_ACCOUNT + " end", "aws-account-id-bare"),
+        ("account=" + _FAKE_ACCOUNT, "aws-account-id-bare"),
+        ('"resolved": "' + _NPM_PROXY + '"', "private-npm-registry"),
+        ("registry=https://NPM-" + "PROXY.dev.example.net/", "private-npm-registry"),
+        (_MSK_REAL + ":9098", "msk-broker-host"),
+        (
+            "b-2-public." + "demo." + "q7x2zk" + ".c12.kafka.eu-west-1.amazonaws.com",
+            "msk-broker-host",
+        ),
+        ("zerobus_id = " + _FAKE_WORKSPACE_ID, "workspace-id"),
+        ("workspace_id: " + _FAKE_WORKSPACE_ID, "workspace-id"),
+        ("https://x.example.net/?o=" + _FAKE_WORKSPACE_ID, "workspace-id"),
+        ("https://" + _FAKE_WORKSPACE_ID + ".host.example.net/", "workspace-id"),
+        (
+            "https://" + _FAKE_WORKSPACE_ID + ".zerobus.us-east-1.cloud.databricks.com",
+            "databricks-cloud-host",
+        ),
     ],
 )
 def test_flags_real_identifiers(checker, text: str, rule: str) -> None:
@@ -73,12 +94,34 @@ def test_flags_real_identifiers(checker, text: str, rule: str) -> None:
         "arn:aws:iam::123456789012:role/example",
         "arn:aws:iam::000000000000:role/example",
         "aws_account_id = 123456789012",
+        "owner 123456789012 end",
+        "uuid 11111111-1111-4111-8111-111111111111 tail",
+        "ts 1700000000000 ms and ratio 0.123456789012",
+        "registry https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
+        "b-1.example.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
+        "b-1-public.example.xxxxxx.c1.kafka.us-east-1.amazonaws.com:9198",
+        "b-1.x.y.kafka.eu-west-2.amazonaws.com:9198",
+        "zerobus 1357924680135792 and workspace_id = 1234567890123456",
+        "111111111111111.zerobus.us-east-1.cloud.databricks.com",
+        "WORKSPACE_ID = 1234567890123456",
         "step-by-step-runbook.png and validation-step-failure-reason.png",
         "admin@example.com",
     ],
 )
 def test_allows_placeholders(checker, text: str) -> None:
     assert _rules(checker, text) == []
+
+
+def test_overlapping_rules_report_one_hit_per_value(checker) -> None:
+    assert _rules(checker, _ARN) == ["aws-account-id-in-arn"]
+
+
+def test_npm_proxy_is_flagged_in_lockfile_paths(checker, tmp_path: Path) -> None:
+    lock = tmp_path / "package-lock.json"
+    lock.write_text('{"resolved": "' + _NPM_PROXY + '"}\n', encoding="utf-8")
+    assert [h.rule for h in checker.scan_file(lock, "package-lock.json")] == [
+        "private-npm-registry"
+    ]
 
 
 def test_inline_allow_marker_suppresses_a_line(checker) -> None:
