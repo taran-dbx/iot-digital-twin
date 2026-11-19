@@ -110,6 +110,9 @@ set `DATABRICKS_CONFIG_PROFILE`.
 
 Deployment uses **Declarative Automation Bundles**. Quick version:
 
+Workspace-specific values have no defaults. Copy `variable-overrides.json.example` to
+`.databricks/bundle/<target>/variable-overrides.json` (gitignored) and fill it in first.
+
 ```bash
 make bundle-validate PROFILE=<cli-profile>
 databricks bundle deploy -t dev --profile <cli-profile>
