@@ -121,7 +121,7 @@ databricks bundle run -t dev --profile <cli-profile>
 
 Do not point `prod` at an existing app without binding it first
 (`databricks bundle deployment bind`); see [docs/deployment.md](docs/deployment.md) for
-variables, targets, binding, prerequisites (service-principal grants) and rollback.
+variables, targets, binding, prerequisites (service-principal grants) and troubleshooting.
 
 ## Testing and quality gates
 

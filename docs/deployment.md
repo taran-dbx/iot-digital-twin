@@ -124,6 +124,8 @@ and serves `/api/health` but reports `db_available: false` and DBSQL calls fail:
 
 ## Troubleshooting
 
+> **Two storage variables:** `UC_STORAGE_BASE` sets where per-industry external tables live (`industry_catalog_service`); `UC_STORAGE_ROOT` sets the managed storage root used when creating a catalog (`routes/provisioning.py`). They are independent.
+
 Each item below was checked against the current code.
 
 | Symptom | Cause | Fix |
