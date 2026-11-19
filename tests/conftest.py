@@ -20,6 +20,10 @@ SRC_ROOT = str(Path(__file__).resolve().parent.parent / "src")
 if SRC_ROOT not in sys.path:
     sys.path.insert(0, SRC_ROOT)
 
+# Never send usage-tracking events from the test suite (the app reads this at
+# import time). Tests that exercise tracking build their own UsageTracker.
+os.environ.setdefault("USAGE_TRACKING_ENABLED", "false")
+
 
 # ---------------------------------------------------------------------------
 # Conditionally pre-mock databricks.sdk to prevent architecture-mismatch
