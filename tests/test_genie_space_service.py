@@ -12,6 +12,7 @@ from databricks.sdk.errors import NotFound
 
 from iot_twin.services import resource_deleters
 from iot_twin.services.genie import genie_space_service as gss
+from iot_twin.services.industry.industry_templates import CURATED_INDUSTRIES
 from iot_twin.services.teardown_service import teardown_setup
 
 HEX32 = re.compile(r"^[0-9a-f]{32}$")
@@ -72,11 +73,12 @@ class TestExpectedTables:
         with pytest.raises(ValueError):
             gss.expected_tables("manufacturing", "batch")
 
-    def test_supports_only_manufacturing(self) -> None:
-        assert gss.supports_industry("manufacturing") is True
-        assert gss.supports_industry("Manufacturing") is True
-        assert gss.supports_industry("pharmaceutical") is False
-        assert gss.supports_industry(None) is False
+    def test_supports_every_offered_industry(self) -> None:
+        for industry in CURATED_INDUSTRIES:
+            assert gss.industry_supported(industry) is True
+        assert gss.industry_supported("Manufacturing") is True
+        assert gss.industry_supported("retail") is False
+        assert gss.industry_supported(None) is False
 
 
 class TestBuildSerializedSpace:
@@ -145,7 +147,7 @@ class TestBuildSerializedSpace:
         questions = space["config"]["sample_questions"]
         assert [q["id"] for q in questions] == sorted(q["id"] for q in questions)
         texts = {q["question"][0] for q in questions}
-        assert texts == set(gss.starter_questions("microbatch"))
+        assert texts == set(gss.starter_questions("manufacturing", "microbatch"))
 
     def test_ids_unique_and_deterministic(self) -> None:
         first = gss.build_serialized_space("manufacturing", "realtime")
@@ -163,19 +165,23 @@ class TestBuildSerializedSpace:
 class TestStarterQuestions:
     @pytest.mark.parametrize("mode", ["realtime", "microbatch", "zerobus"])
     def test_manufacturing_topics_per_mode(self, mode: str) -> None:
-        questions = gss.starter_questions(mode)
+        questions = gss.starter_questions("manufacturing", mode)
         blob = " ".join(questions).lower()
         for topic in ("oee", "downtime", "anomal", "fault", "maintenance"):
             assert topic in blob, (mode, topic)
         assert len(questions) == len(set(questions))
 
     def test_mode_aware(self) -> None:
-        assert gss.starter_questions("realtime") != gss.starter_questions("microbatch")
-        assert gss.starter_questions("zerobus") != gss.starter_questions("microbatch")
+        assert gss.starter_questions("manufacturing", "realtime") != gss.starter_questions(
+            "manufacturing", "microbatch"
+        )
+        assert gss.starter_questions("manufacturing", "zerobus") != gss.starter_questions(
+            "manufacturing", "microbatch"
+        )
 
     def test_unknown_mode(self) -> None:
         with pytest.raises(ValueError):
-            gss.starter_questions("nope")
+            gss.starter_questions("manufacturing", "nope")
 
 
 # ---------------------------------------------------------------------------
@@ -314,13 +320,13 @@ class TestEnsurePipelineSpace:
             )
 
     @pytest.mark.asyncio
-    async def test_rejects_non_manufacturing(self) -> None:
+    async def test_rejects_unknown_industry(self) -> None:
         with pytest.raises(gss.GenieSpaceError):
             await gss.ensure_pipeline_space(
                 _ledger_db([]),
                 setup_id="s",
                 deployment_id="d",
-                industry="pharmaceutical",
+                industry="retail",
                 mode="realtime",
                 warehouse_id="wh",
                 w=MagicMock(),

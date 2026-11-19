@@ -252,7 +252,7 @@ class TestContent:
         assert "o''brien" in content._maintenance_sql("c.s.t", refs, "o'brien")
 
     def test_oee_quality_ignores_null_bounds(self) -> None:
-        sql = content._oee_sql("cat.sch.manufacturing_realtime")
+        sql = content._health_sql("cat.sch.manufacturing_realtime", "oee_pct")
         assert "min_value IS NULL OR max_value IS NULL THEN NULL" in sql
         assert "COALESCE(quality, 1)" in sql
 

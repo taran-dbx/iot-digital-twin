@@ -1,4 +1,4 @@
-"""Per-pipeline manufacturing Genie HTTP API (see docs/genie-pipeline-api.md).
+"""Per-pipeline Genie HTTP API (all industries) (see docs/genie-pipeline-api.md).
 
 ``/api/genie/pipelines/{setup_id}/{mode}/...`` — status, starters, start,
 follow-up, poll and attachment query results for the Genie space provisioned
@@ -68,14 +68,14 @@ async def _resolve_scope(state: AppState, pipeline_id: str, mode: str) -> Pipeli
     setup_id = str(setup.get("id"))
     industry = str(setup.get("industry") or "").strip().lower()
     space_id = None
-    if genie_space_service.supports_industry(industry):
+    if genie_space_service.industry_supported(industry):
         space_id = await genie_space_service.find_space_id(db, setup_id, mode)
     return PipelineScope(setup_id=setup_id, mode=mode, industry=industry, space_id=space_id)
 
 
 async def _require_space(state: AppState, setup_id: str, mode: str) -> PipelineScope:
     scope = await _resolve_scope(state, setup_id, mode)
-    if not genie_space_service.supports_industry(scope.industry):
+    if not genie_space_service.industry_supported(scope.industry):
         raise HTTPException(status_code=404, detail="unknown pipeline")
     if not scope.space_id:
         raise genie_service.GenieDisabledError(
@@ -167,14 +167,18 @@ async def pipeline_genie_status(
     _user: str = Depends(require_identity),
 ):
     scope = await _resolve_scope(state, setup_id, mode)
-    if not genie_space_service.supports_industry(scope.industry):
+    base = {"industry": scope.industry, "supported": True}
+    if not genie_space_service.industry_supported(scope.industry):
         return {
+            **base,
+            "supported": False,
             "available": False,
             "space_id": None,
-            "reason": "Per-pipeline Genie is only available for manufacturing pipelines.",
+            "reason": f"Per-pipeline Genie is not available for industry {scope.industry!r}.",
         }
     if not scope.space_id:
         return {
+            **base,
             "available": False,
             "space_id": None,
             "reason": "No Genie space is provisioned for this pipeline yet. "
@@ -191,17 +195,19 @@ async def pipeline_genie_status(
     except Exception as exc:
         logger.warning("Genie allowlist check failed for space %s: %s", scope.space_id, exc)
         return {
+            **base,
             "available": False,
             "space_id": scope.space_id,
             "reason": "Genie space could not be verified. Try again shortly.",
         }
     if not allowlist.get("authorization_enforced"):
         return {
+            **base,
             "available": False,
             "space_id": scope.space_id,
             "reason": str(allowlist.get("requirement") or "Genie table allowlist mismatch"),
         }
-    return {"available": True, "space_id": scope.space_id}
+    return {**base, "available": True, "space_id": scope.space_id}
 
 
 @router.get(f"{_PREFIX}/starters")
@@ -212,9 +218,9 @@ async def pipeline_genie_starters(
     _user: str = Depends(require_identity),
 ):
     scope = await _resolve_scope(state, setup_id, mode)
-    if not genie_space_service.supports_industry(scope.industry):
+    if not genie_space_service.industry_supported(scope.industry):
         raise HTTPException(status_code=404, detail="unknown pipeline")
-    return {"questions": list(genie_space_service.starter_questions(scope.mode))}
+    return {"questions": list(genie_space_service.starter_questions(scope.industry, scope.mode))}
 
 
 @router.post(f"{_PREFIX}/conversations")

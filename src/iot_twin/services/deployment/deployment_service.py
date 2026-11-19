@@ -814,7 +814,7 @@ async def deploy_pipeline(
     )
 
 
-# --- Per-pipeline Genie space (best-effort, manufacturing only) --------------
+# --- Per-pipeline Genie space (best-effort, every industry) --------------
 GENIE_SPACE_TIMEOUT_S = 60.0
 
 
@@ -839,7 +839,7 @@ async def _attach_genie_space(
     from iot_twin.services.genie import genie_space_service
 
     industry = setup.get("industry")
-    if not genie_space_service.supports_industry(industry):
+    if not genie_space_service.industry_supported(industry):
         return result
     try:
         warehouse_id = await genie_space_service.genie_warehouse(db, setup)

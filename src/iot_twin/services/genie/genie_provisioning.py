@@ -1,4 +1,4 @@
-"""Provision the Genie space for an ALREADY-deployed manufacturing pipeline.
+"""Provision the Genie space for an ALREADY-deployed pipeline of any industry.
 
 Backs ``POST /api/admin/pipelines/{setup_id}/genie/{mode}`` so pipelines
 deployed before per-pipeline Genie existed can get a space without a redeploy.
@@ -89,11 +89,11 @@ async def _ensure(
 async def provision_existing_pipeline_space(
     db: DBExecutor, pipeline_id: str, mode: str, *, w: Any | None = None
 ) -> dict[str, Any]:
-    """Create-or-update the Genie space of a deployed manufacturing mode.
+    """Create-or-update the Genie space of a deployed pipeline mode (any industry).
 
     Returns ``{"space_id", "created", "warnings"}``.  Raises
     :class:`GenieProvisionError` (404 unknown id/deployment, 409 not deployed or
-    precondition such as missing intelligence tables, 422 non-manufacturing,
+    precondition such as missing intelligence tables, 422 unknown industry,
     504 timeout, 502 SDK failure).
     """
     if mode not in genie_space_service.PIPELINE_MODES:
@@ -102,8 +102,10 @@ async def provision_existing_pipeline_space(
         setup = await genie_space_service.resolve_pipeline_setup(db, pipeline_id, mode)
     except genie_space_service.PipelineNotFound as exc:
         raise GenieProvisionError(404, "unknown pipeline") from exc
-    if not genie_space_service.supports_industry(setup.get("industry")):
-        raise GenieProvisionError(422, "per-pipeline Genie is only available for manufacturing")
+    if not genie_space_service.industry_supported(setup.get("industry")):
+        raise GenieProvisionError(
+            422, f"per-pipeline Genie is not available for industry {setup.get('industry')!r}"
+        )
     setup_id = str(setup.get("id"))
     deployment = await _require_deployed(db, setup_id, mode)
     space = await _ensure(db, setup, setup_id, deployment, mode, w)

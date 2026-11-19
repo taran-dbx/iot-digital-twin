@@ -1,4 +1,4 @@
-"""Manufacturing Genie space content: instructions, example SQL, snippets, starters.
+"""Per-industry Genie space content: instructions, example SQL, snippets, starters.
 
 Pure functions with no I/O — :mod:`services.genie_space_service` assigns the
 ids and assembles the ``serialized_space`` payload.  Column references in SQL
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from iot_twin.services.genie.genie_industry_profile import IndustryProfile
 from iot_twin.services.uc_ident import sql_fqn
 
 MODE_LABELS: dict[str, str] = {
@@ -17,13 +18,26 @@ MODE_LABELS: dict[str, str] = {
     "zerobus": "Zerobus direct-ingest",
 }
 
-_COMMON_STARTERS: tuple[str, ...] = (
-    "What is the approximate OEE per sensor over the last 24 hours?",
-    "How many minutes of downtime did each sensor have today?",
-    "Which sensors had the most anomalies (values outside min/max) in the last hour?",
-    "Which fault codes or sensors had active faults most often this week?",
-    "Which assets with recent faults are due for maintenance?",
-)
+
+def _common_starters(profile: IndustryProfile) -> tuple[str, ...]:
+    return (
+        f"What is the approximate {profile.health_term} per sensor over the last 24 hours?",
+        "How many minutes of downtime did each sensor have today?",
+        "Which sensors had the most anomalies (values outside min/max) in the last hour?",
+        "Which fault codes or sensors had active faults most often this week?",
+        "Which assets with recent faults are due for maintenance?",
+    )
+
+
+def _industry_starters(profile: IndustryProfile) -> tuple[str, ...]:
+    """Questions about this industry's own sensors (derived industries only)."""
+    if not profile.derived:
+        return ()
+    return tuple(
+        f"What is the average {sensor} reading per hour over the last day?"
+        for sensor in profile.sensor_examples[:2]
+    )
+
 
 _MODE_STARTERS: dict[str, tuple[str, ...]] = {
     "realtime": (
@@ -90,11 +104,11 @@ def _literal(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def starter_questions(mode: str) -> tuple[str, ...]:
-    """Return manufacturing starter questions for ``mode`` (common + mode-specific)."""
+def starter_questions(mode: str, profile: IndustryProfile) -> tuple[str, ...]:
+    """Return starter questions for ``mode`` (common + industry + mode-specific)."""
     if mode not in _MODE_STARTERS:
         raise ValueError(f"unknown mode {mode!r}")
-    return _COMMON_STARTERS + _MODE_STARTERS[mode]
+    return _common_starters(profile) + _industry_starters(profile) + _MODE_STARTERS[mode]
 
 
 def _cdc_column_configs() -> list[dict[str, Any]]:
@@ -108,15 +122,15 @@ def _cdc_column_configs() -> list[dict[str, Any]]:
     ]
 
 
-def column_configs(cdc: bool = False) -> list[dict[str, Any]]:
+def column_configs(profile: IndustryProfile, cdc: bool = False) -> list[dict[str, Any]]:
     """Column guidance for the telemetry table (unsorted; caller sorts).
 
     ``cdc`` adds the Lakehouse Sync shadow-table bookkeeping columns.
     """
-    return [*_sensor_column_configs(), *(_cdc_column_configs() if cdc else [])]
+    return [*_sensor_column_configs(profile), *(_cdc_column_configs() if cdc else [])]
 
 
-def _sensor_column_configs() -> list[dict[str, Any]]:
+def _sensor_column_configs(profile: IndustryProfile) -> list[dict[str, Any]]:
     return [
         {
             "column_name": "sensor_name",
@@ -129,7 +143,7 @@ def _sensor_column_configs() -> list[dict[str, Any]]:
             "column_name": "sensor_type",
             "enable_format_assistance": True,
             "enable_entity_matching": True,
-            "description": ["Measurement kind, e.g. temperature, vibration, pressure."],
+            "description": [f"Measurement kind, e.g. {profile.type_examples}."],
         },
         {
             "column_name": "event_time",
@@ -142,7 +156,9 @@ def _sensor_column_configs() -> list[dict[str, Any]]:
         },
         {
             "column_name": "nominal_value",
-            "description": ["Design/target value. Used for the OEE performance factor."],
+            "description": [
+                f"Design/target value. Used for the {profile.health_term} performance factor."
+            ],
             "synonyms": ["target", "setpoint"],
         },
         {"column_name": "min_value", "description": ["Lower bound of the normal operating range."]},
@@ -156,13 +172,42 @@ def _sensor_column_configs() -> list[dict[str, Any]]:
 
 
 def text_instructions(
-    telemetry: str, metrics: str, mode: str, industry: str = "manufacturing"
+    telemetry: str, metrics: str | None, mode: str, profile: IndustryProfile
 ) -> list[str]:
-    """The single Genie text-instruction block, one newline-terminated rule per string."""
-    return [f"{line}\n" for line in _instruction_lines(telemetry, metrics, mode, industry)]
+    """The single Genie text-instruction block, one newline-terminated rule per string.
+
+    ``metrics`` is None for modes without a metrics table (zerobus).
+    """
+    return [f"{line}\n" for line in _instruction_lines(telemetry, metrics, mode, profile)]
 
 
-def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -> list[str]:
+def _scope_line(telemetry: str, metrics: str | None, mode: str, profile: IndustryProfile) -> str:
+    metrics_part = (
+        f"Streaming throughput/latency metrics are in {metrics}. " if metrics is not None else ""
+    )
+    return (
+        f"This space covers ONE {profile.label} {MODE_LABELS[mode]} pipeline. "
+        f"Sensor telemetry is in {telemetry} (one row per reading). "
+        f"{metrics_part}"
+        "Asset, sensor-binding, maintenance, alert-rule and alert-snapshot "
+        "reference data is in the intelligence_* tables."
+    )
+
+
+def _industry_context_lines(profile: IndustryProfile) -> list[str]:
+    """Extra grounding lines for industries whose wording is derived from the catalog."""
+    if not profile.derived:
+        return []
+    lines = [f"Typical {profile.label} sensors: {', '.join(profile.sensor_examples)}."]
+    if profile.units:
+        lines.append(f"Units used in {profile.label} readings include: {', '.join(profile.units)}.")
+    return lines
+
+
+def _instruction_lines(
+    telemetry: str, metrics: str | None, mode: str, profile: IndustryProfile
+) -> list[str]:
+    industry = profile.industry
     t = _short(telemetry)
     lit = _literal(industry)
     row_filter = telemetry_row_filter(mode, industry, f"{t}.")
@@ -174,18 +219,18 @@ def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -
         if row_filter
         else None
     )
-    zerobus_note = (
-        f"{metrics} has no rows for zerobus; answer ingest-rate questions from "
-        f"COUNT(*) over {telemetry} per minute."
-        if mode == "zerobus"
-        else f"Filter {metrics} with mode = '{mode}' for this pipeline's streaming metrics."
-    )
+    if metrics is None:
+        metrics_note = (
+            f"This pipeline has no streaming metrics table; answer ingest-rate questions from "
+            f"COUNT(*) over {telemetry} per minute."
+        )
+    else:
+        metrics_note = (
+            f"Filter {metrics} with mode = '{mode}' for this pipeline's streaming metrics."
+        )
     return [
-        f"This space covers ONE manufacturing {MODE_LABELS[mode]} pipeline. "
-        f"Sensor telemetry is in {telemetry} (one row per reading). "
-        f"Streaming throughput/latency metrics are in {metrics}. "
-        "Asset, sensor-binding, maintenance, alert-rule and alert-snapshot "
-        "reference data is in the intelligence_* tables.",
+        _scope_line(telemetry, metrics, mode, profile),
+        *_industry_context_lines(profile),
         f"Downtime = time intervals where {t}.fault_active is TRUE. Approximate "
         "downtime minutes as the count of distinct minutes "
         f"(date_trunc('minute', {t}.event_time)) with at least one fault_active reading.",
@@ -194,7 +239,7 @@ def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -
         f"Performance = AVG(LEAST({t}.value / {t}.nominal_value, 1)) for readings with "
         "nominal_value > 0 (how close output runs to its nominal rate).",
         f"Quality = share of readings with {t}.value BETWEEN {t}.min_value AND {t}.max_value.",
-        "OEE (approximation) = Availability x Performance x Quality. Always say it is "
+        f"{profile.health_term} (approximation) = Availability x Performance x Quality. Always say it is "
         "an approximation derived from sensor telemetry, not production counts.",
         f"Anomaly = a reading where {t}.value < {t}.min_value OR {t}.value > "
         f"{t}.max_value. Ignore rows where min_value or max_value is NULL.",
@@ -213,7 +258,7 @@ def _instruction_lines(telemetry: str, metrics: str, mode: str, industry: str) -
         "their last maintenance.",
         "Default time window when unspecified: the last 24 hours, using "
         f"{t}.event_time >= current_timestamp() - INTERVAL 24 HOURS.",
-        zerobus_note,
+        metrics_note,
         *([cdc_note] if cdc_note else []),
         "Never modify data. Answer read-only with SELECT queries.",
     ]
@@ -228,7 +273,7 @@ def _downtime_sql(tel: str, row_filter: str | None = None) -> str:
     )
 
 
-def _oee_sql(tel: str, row_filter: str | None = None) -> str:
+def _health_sql(tel: str, alias: str, row_filter: str | None = None) -> str:
     return (
         "WITH m AS (SELECT sensor_name, "
         "COUNT(DISTINCT date_trunc('minute', event_time)) AS observed_min, "
@@ -245,7 +290,7 @@ def _oee_sql(tel: str, row_filter: str | None = None) -> str:
         "ROUND(100 * performance, 2) AS performance_pct, ROUND(100 * quality, 2) AS quality_pct, "
         "ROUND(100 * (1 - fault_min / observed_min) * COALESCE(performance, 1) "
         "* COALESCE(quality, 1), 2) "
-        "AS oee_pct FROM m ORDER BY oee_pct ASC"
+        f"AS {alias} FROM m ORDER BY {alias} ASC"
     )
 
 
@@ -278,8 +323,8 @@ def _maintenance_sql(
     )
 
 
-def _mode_sql(tel: str, metrics: str, mode: str) -> tuple[str, str]:
-    if mode == "zerobus":
+def _mode_sql(tel: str, metrics: str | None, mode: str) -> tuple[str, str]:
+    if metrics is None:
         return (
             "How many readings per minute were ingested over the last hour?",
             "SELECT date_trunc('minute', event_time) AS minute, COUNT(*) AS readings "
@@ -296,38 +341,42 @@ def _mode_sql(tel: str, metrics: str, mode: str) -> tuple[str, str]:
 
 def example_sqls(
     telemetry: str,
-    metrics: str,
+    metrics: str | None,
     refs: dict[str, str],
     mode: str,
-    industry: str = "manufacturing",
+    profile: IndustryProfile,
 ) -> list[tuple[str, str]]:
     """Return ``(question, sql)`` pairs scoped to this pipeline's tables."""
     tel = _quoted(telemetry)
+    industry = profile.industry
     rf = telemetry_row_filter(mode, industry)
     return [
         (
             "How many minutes of downtime did each sensor have in the last 24 hours?",
             _downtime_sql(tel, rf),
         ),
-        ("What is the approximate OEE per sensor over the last 24 hours?", _oee_sql(tel, rf)),
+        (
+            f"What is the approximate {profile.health_term} per sensor over the last 24 hours?",
+            _health_sql(tel, profile.health_alias, rf),
+        ),
         ("Which sensors had the most anomalies in the last hour?", _anomaly_sql(tel, rf)),
         (
             "Which assets had the most faults this week and when were they last maintained?",
             _maintenance_sql(tel, refs, industry, rf),
         ),
-        _mode_sql(tel, _quoted(metrics), mode),
+        _mode_sql(tel, _quoted(metrics) if metrics else None, mode),
     ]
 
 
 def sql_snippets(
-    telemetry: str, mode: str = "microbatch", industry: str = "manufacturing"
+    telemetry: str, mode: str, profile: IndustryProfile
 ) -> dict[str, list[dict[str, Any]]]:
     """Reusable measures / filters / expressions qualified with the table name.
 
     For realtime, measures and filters also apply the CDC/industry row filter.
     """
     t = _short(telemetry)
-    rf = telemetry_row_filter(mode, industry, f"{t}.")
+    rf = telemetry_row_filter(mode, profile.industry, f"{t}.")
     fault = f"CASE WHEN {t}.fault_active THEN 1.0 ELSE 0.0 END"
     anomaly = (
         f"CASE WHEN {t}.min_value IS NULL OR {t}.max_value IS NULL THEN NULL "

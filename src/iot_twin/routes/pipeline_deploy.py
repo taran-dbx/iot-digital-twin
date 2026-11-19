@@ -7,7 +7,7 @@ Thin HTTP surface over ``iot_twin.services.deployment.deployment_service``:
     POST /api/admin/pipelines/{setup_id}/{mode}/stop      cancel active runs
     GET  /api/admin/pipelines/{setup_id}/{mode}/status    latest run state
     POST /api/admin/pipelines/{setup_id}/genie/{mode}     Genie space for an
-         already-deployed manufacturing mode (no job/stream changes)
+         already-deployed pipeline mode (no job/stream changes)
 
 The consumer/producer notebook sources are the P5a-generated artifacts
 (``client/src/lib/notebook-template.ts`` / ``data-producer-notebook.ts``),
@@ -124,7 +124,7 @@ async def provision_genie_space_endpoint(
     request: Request,
     state: AppState = Depends(get_app_state),
 ):
-    """Create-or-update the Genie space of an EXISTING deployed manufacturing mode.
+    """Create-or-update the Genie space of an EXISTING deployed pipeline mode.
 
     ``setup_id`` may be the ``pipeline_setup.id`` or the mode's
     ``pipeline_deployment.id``.  Touches only the Genie space + its ledger row.

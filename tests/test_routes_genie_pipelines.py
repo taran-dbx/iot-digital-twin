@@ -28,7 +28,7 @@ SETUPS = {
     },
     "22222222-2222-4222-8222-222222222222": {
         "id": "22222222-2222-4222-8222-222222222222",
-        "industry": "pharmaceutical",
+        "industry": "retail",  # not an offered industry
     },
 }
 DEPLOYMENTS = {
@@ -145,7 +145,12 @@ class TestStatus:
     async def test_available_when_space_matches(self, api: AsyncClient) -> None:
         resp = await api.get(f"{BASE}/status", headers=ALICE)
         assert resp.status_code == 200
-        assert resp.json() == {"available": True, "space_id": "sp-rt"}
+        assert resp.json() == {
+            "available": True,
+            "space_id": "sp-rt",
+            "industry": "manufacturing",
+            "supported": True,
+        }
         api.ws.genie.get_space.assert_called_with("sp-rt", include_serialized_space=True)
 
     @pytest.mark.asyncio
@@ -159,14 +164,15 @@ class TestStatus:
         assert "Redeploy" in body["reason"]
 
     @pytest.mark.asyncio
-    async def test_unavailable_for_non_manufacturing(self, api: AsyncClient) -> None:
+    async def test_unavailable_for_unknown_industry(self, api: AsyncClient) -> None:
         body = (
             await api.get(
                 "/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime/status"
             )
         ).json()
         assert body["available"] is False
-        assert "manufacturing" in body["reason"]
+        assert body["supported"] is False and body["industry"] == "retail"
+        assert "retail" in body["reason"]
 
     @pytest.mark.asyncio
     async def test_unavailable_on_allowlist_mismatch(self, api: AsyncClient) -> None:
@@ -214,11 +220,11 @@ class TestStarters:
                 "/api/genie/pipelines/11111111-1111-4111-8111-111111111111/zerobus/starters"
             )
         ).json()
-        assert rt == {"questions": list(gss.starter_questions("realtime"))}
+        assert rt == {"questions": list(gss.starter_questions("manufacturing", "realtime"))}
         assert zb["questions"] != rt["questions"]
 
     @pytest.mark.asyncio
-    async def test_non_manufacturing_404(self, api: AsyncClient) -> None:
+    async def test_unknown_industry_404(self, api: AsyncClient) -> None:
         resp = await api.get(
             "/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime/starters"
         )
@@ -267,7 +273,7 @@ class TestConversations:
         assert resp.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_start_404_for_non_manufacturing(self, api: AsyncClient) -> None:
+    async def test_start_404_for_unknown_industry(self, api: AsyncClient) -> None:
         resp = await _start(
             api, base="/api/genie/pipelines/22222222-2222-4222-8222-222222222222/realtime"
         )
@@ -461,7 +467,8 @@ class TestIdResolution:
     @pytest.mark.asyncio
     async def test_deployment_id_resolves_to_setup(self, api: AsyncClient) -> None:
         base = f"/api/genie/pipelines/{DEP_RT}/realtime"
-        assert (await api.get(f"{base}/status")).json() == {"available": True, "space_id": "sp-rt"}
+        status = (await api.get(f"{base}/status")).json()
+        assert status["available"] is True and status["space_id"] == "sp-rt"
         resp = await _start(api, base=base)
         assert resp.status_code == 200
         assert (

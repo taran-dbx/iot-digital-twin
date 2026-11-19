@@ -125,10 +125,10 @@ class TestDeployGenieHook:
         w.genie.create_space.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_non_manufacturing_skips_hook(self, monkeypatch) -> None:
+    async def test_unknown_industry_skips_hook(self, monkeypatch) -> None:
         ensure = AsyncMock()
         monkeypatch.setattr(gss, "ensure_pipeline_space", ensure)
-        result = await _deploy(_db(_setup("pharmaceutical", "zerobus")), "zerobus", _ws())
+        result = await _deploy(_db(_setup("retail", "zerobus")), "zerobus", _ws())
         ensure.assert_not_called()
         assert "genie_space" not in result and "warnings" not in result
 

@@ -23,7 +23,7 @@ URL = f"/api/admin/pipelines/{SETUP_ID}/genie/realtime"
 
 SETUPS = {
     SETUP_ID: {"id": SETUP_ID, "industry": "manufacturing", "warehouse_id": "wh-1"},
-    PHARMA_ID: {"id": PHARMA_ID, "industry": "pharmaceutical"},
+    PHARMA_ID: {"id": PHARMA_ID, "industry": "retail"},
 }
 DEPLOYED = {
     "id": DEP_ID,
@@ -180,7 +180,7 @@ class TestProvisionExisting:
         assert (await _post()).status_code == 409
         env.ws.genie.create_space.assert_not_called()
 
-    async def test_non_manufacturing_422(self, env) -> None:
+    async def test_unknown_industry_422(self, env) -> None:
         resp = await _post(f"/api/admin/pipelines/{PHARMA_ID}/genie/realtime")
         assert resp.status_code == 422
 

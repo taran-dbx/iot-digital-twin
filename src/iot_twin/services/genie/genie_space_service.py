@@ -1,14 +1,18 @@
-"""Per-pipeline Genie space lifecycle for the manufacturing dashboard.
+"""Per-pipeline Genie space lifecycle, for every industry the app offers.
 
-One Genie space per ``(setup_id, mode)`` for the **manufacturing** industry,
-auto-created (or refreshed) after a successful deploy.  The space contains:
+One Genie space per ``(setup_id, mode)``, auto-created (or refreshed) after a
+successful deploy.  The space contains only tables that exist for the mode:
 
-- the mode's telemetry table ``{catalog}.{schema}.manufacturing_{mode}``,
-- the shared streaming metrics table ``manufacturing_metrics``,
+- the mode's telemetry table (``{catalog}.{schema}.{industry}_{mode}``, or the
+  CDF shadow history table for realtime),
+- the shared streaming metrics table ``{industry}_metrics`` (modes that write
+  one — not zerobus),
 - the dedicated ``intelligence_*`` reference tables.
 
-Manufacturing KPIs (downtime / availability / OEE / anomalies) are answered
-through Genie text instructions, example SQL and SQL snippets — no new tables.
+Wording and examples are generated from the industry catalog
+(:mod:`genie_industry_profile`); KPIs (downtime / availability / health index
+or OEE / anomalies) are answered through Genie text instructions, example SQL
+and SQL snippets — no new tables.
 
 **Persistence**: the space id lives in the ``provisioned_resource`` ledger
 (``resource_type='genie_space'``, ``metadata.mode``).  The ledger is already
@@ -37,11 +41,16 @@ from iot_twin.services import resource_ledger
 from iot_twin.services.cdf_reconciliation_service import delta_table_fqn
 from iot_twin.services.db.app_repo_common import DBExecutor
 from iot_twin.services.deployment import deployment_repo
+from iot_twin.services.genie import genie_space_content
+from iot_twin.services.genie.genie_industry_profile import (
+    is_known_industry,
+    mode_has_metrics,
+    profile_for,
+)
 from iot_twin.services.genie.genie_space_content import (
     column_configs,
     example_sqls,
     sql_snippets,
-    starter_questions,
     text_instructions,
 )
 from iot_twin.services.genie_service import invalidate_allowlist_cache
@@ -56,7 +65,6 @@ RESOURCE_TYPE = "genie_space"
 # (20-35) and is independent of the jobs (40), so trash it before both.
 TEARDOWN_ORDER_GENIE_SPACE = 45
 PARENT_PATH_ENV = "GENIE_SPACE_PARENT_PATH"
-GENIE_INDUSTRY = "manufacturing"
 PIPELINE_MODES: tuple[str, ...] = ("realtime", "microbatch", "zerobus")
 MAX_RESULT_ROWS = 500
 SERIALIZED_VERSION = 2
@@ -75,7 +83,9 @@ __all__ = [
     "make_genie_space_deleter",
     "query_result_payload",
     "starter_questions",
-    "supports_industry",
+    "industry_supported",
+    "metrics_table",
+    "telemetry_table",
 ]
 
 
@@ -116,9 +126,15 @@ async def resolve_pipeline_setup(db: DBExecutor, pipeline_id: object, mode: str)
 # ---------------------------------------------------------------------------
 # Scope helpers
 # ---------------------------------------------------------------------------
-def supports_industry(industry: str | None) -> bool:
-    """Return True when per-pipeline Genie spaces exist for ``industry``."""
-    return (industry or "").strip().lower() == GENIE_INDUSTRY
+def industry_supported(industry: str | None) -> bool:
+    """Return True for every industry the app offers (curated template exists)."""
+    return is_known_industry(industry)
+
+
+def starter_questions(industry: str, mode: str) -> tuple[str, ...]:
+    """Starter questions for ``(industry, mode)`` — industry-aware."""
+    _require_mode(mode)
+    return genie_space_content.starter_questions(mode, profile_for(industry))
 
 
 def _require_mode(mode: str) -> str:
@@ -140,12 +156,22 @@ def telemetry_table(industry: str, mode: str) -> str:
     return industry_table(industry, mode)
 
 
-def expected_tables(industry: str, mode: str) -> tuple[str, ...]:
-    """Return the sorted FQN set a pipeline space must contain — no more, no less."""
+def metrics_table(industry: str, mode: str) -> str | None:
+    """FQN of the shared streaming-metrics table, or None when the mode has none."""
     _require_mode(mode)
+    return industry_table(industry, "metrics") if mode_has_metrics(mode) else None
+
+
+def expected_tables(industry: str, mode: str) -> tuple[str, ...]:
+    """Return the sorted FQN set a pipeline space must contain — no more, no less.
+
+    Only tables that exist for the mode are listed (zerobus has no metrics table).
+    """
+    _require_mode(mode)
+    metrics = metrics_table(industry, mode)
     tables = {
         telemetry_table(industry, mode),
-        industry_table(industry, "metrics"),
+        *([metrics] if metrics else []),
         *reference_tables().values(),
     }
     return tuple(sorted(tables))
@@ -161,15 +187,17 @@ def _parent_path() -> str | None:
     return value or None
 
 
-def space_title(mode: str, setup_id: Any) -> str:
-    return f"Manufacturing {mode} pipeline ({setup_id})"
+def space_title(industry: str, mode: str, setup_id: Any) -> str:
+    return f"{profile_for(industry).name} {mode} pipeline ({setup_id})"
 
 
-def space_description(mode: str) -> str:
+def space_description(industry: str, mode: str) -> str:
+    profile = profile_for(industry)
+    metrics = " streaming metrics and" if mode_has_metrics(mode) else ""
     return (
-        f"Manufacturing {mode} telemetry, streaming metrics and intelligence "
-        "reference tables. Answers OEE, downtime, anomaly, fault and maintenance "
-        "questions for this pipeline."
+        f"{profile.name} {mode} telemetry,{metrics} intelligence "
+        f"reference tables. Answers {profile.health_term}, downtime, anomaly, fault and "
+        "maintenance questions for this pipeline."
     )
 
 
@@ -177,13 +205,14 @@ def space_description(mode: str) -> str:
 # serialized_space builder
 # ---------------------------------------------------------------------------
 def _table_entries(industry: str, mode: str) -> list[dict[str, Any]]:
+    profile = profile_for(industry)
     telemetry = telemetry_table(industry, mode)
     entries = []
     for fqn in expected_tables(industry, mode):
         entry: dict[str, Any] = {"identifier": fqn}
         if fqn == telemetry:
             entry["column_configs"] = sorted(
-                column_configs(cdc=mode == "realtime"), key=lambda c: c["column_name"]
+                column_configs(profile, cdc=mode == "realtime"), key=lambda c: c["column_name"]
             )
         entries.append(entry)
     return sorted(entries, key=lambda e: e["identifier"])
@@ -194,25 +223,26 @@ def _with_ids(kind: str, mode: str, items: list[dict[str, Any]]) -> list[dict[st
     return sorted(keyed, key=lambda item: item["id"])
 
 
-def _sample_questions(mode: str) -> list[dict[str, Any]]:
-    return _with_ids("sample", mode, [{"question": [q]} for q in starter_questions(mode)])
+def _sample_questions(industry: str, mode: str) -> list[dict[str, Any]]:
+    return _with_ids("sample", mode, [{"question": [q]} for q in starter_questions(industry, mode)])
 
 
 def _instructions(industry: str, mode: str) -> dict[str, Any]:
     telemetry = telemetry_table(industry, mode)
-    metrics = industry_table(industry, "metrics")
+    metrics = metrics_table(industry, mode)
     refs = reference_tables()
-    snippets = sql_snippets(telemetry, mode, industry)
+    profile = profile_for(industry)
+    snippets = sql_snippets(telemetry, mode, profile)
     return {
         "text_instructions": _with_ids(
-            "text", mode, [{"content": text_instructions(telemetry, metrics, mode, industry)}]
+            "text", mode, [{"content": text_instructions(telemetry, metrics, mode, profile)}]
         ),
         "example_question_sqls": _with_ids(
             "example",
             mode,
             [
                 {"question": [question], "sql": [sql]}
-                for question, sql in example_sqls(telemetry, metrics, refs, mode, industry)
+                for question, sql in example_sqls(telemetry, metrics, refs, mode, profile)
             ],
         ),
         "sql_snippets": {
@@ -226,7 +256,7 @@ def build_serialized_space(industry: str, mode: str) -> str:
     _require_mode(mode)
     payload = {
         "version": SERIALIZED_VERSION,
-        "config": {"sample_questions": _sample_questions(mode)},
+        "config": {"sample_questions": _sample_questions(industry, mode)},
         "data_sources": {"tables": _table_entries(industry, mode)},
         "instructions": _instructions(industry, mode),
     }
@@ -271,8 +301,8 @@ def _space_kwargs(mode: str, setup_id: Any, industry: str, warehouse_id: str) ->
     kwargs: dict[str, Any] = {
         "warehouse_id": warehouse_id,
         "serialized_space": build_serialized_space(industry, mode),
-        "title": space_title(mode, setup_id),
-        "description": space_description(mode),
+        "title": space_title(industry, mode, setup_id),
+        "description": space_description(industry, mode),
     }
     parent = _parent_path()
     if parent:
@@ -414,8 +444,8 @@ async def _create_and_record(
 
 
 def _validate_inputs(industry: str, mode: str, warehouse_id: str | None) -> None:
-    if not supports_industry(industry):
-        raise GenieSpaceError(f"per-pipeline Genie spaces are not supported for {industry!r}")
+    if not industry_supported(industry):
+        raise GenieSpaceError(f"unknown industry {industry!r}: no Genie space can be built")
     _require_mode(mode)
     if not (warehouse_id or "").strip():
         raise GenieSpaceError("no SQL warehouse configured for the Genie space")
