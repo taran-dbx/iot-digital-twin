@@ -35,6 +35,10 @@ dev = [
     "ruff==0.17.4",
     "mypy==2.4.1",
     "pre-commit==4.7.0",
+    # Executes ops/notebooks/pipeline_health_check.ipynb in sample mode (tests/test_pipeline_health_notebook.py).
+    "nbformat==5.11.1",
+    "nbclient==0.11.0",
+    "ipykernel==7.4.0",
 ]
 
 # The app is deployed as a source tree (``uvicorn --app-dir src iot_twin.app:app``);

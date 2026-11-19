@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
   GitHub Actions CI, Dependabot, Makefile and `.editorconfig`.
 - Identifier check (`scripts/check_identifiers.py`) that blocks workspace-specific values.
 - Documentation: README, architecture, deployment and contributing guides.
+- `ops/notebooks/pipeline_health_check.ipynb`: a read-only, inline-only Databricks notebook that
+  scores one deployed pipeline end to end (jobs, Lakebase, LakeTS, CDF/Delta, metrics,
+  cross-checks), with identifier redaction and a synthetic `sample` mode; see `ops/README.md`.
 
 ### Changed
 - Python code moved to the `src/iot_twin/` package; `services/` grouped into subpackages.
