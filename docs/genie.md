@@ -80,6 +80,21 @@ plus the five `intelligence_*` reference tables in every case.
 - The shared copilot space and per-pipeline spaces are independent; editing one never
   changes the other.
 
+## Behaviour changes for the shared space
+
+Porting the per-pipeline code also touched shared-copilot code paths:
+
+- `genie_service._pack_for` now resolves the warehouse with `resolve_warehouse_id` (app-global or user
+  warehouse fallback; previously only the env var), so alert "explain" can include a telemetry summary,
+  capped at 5 s.
+- `inspect_space_tables` now parses `serialized_space`, so a shared space can reach the `matched`
+  allowlist state.
+- The deploy hook can add up to 60 s to the deploy request. It is best-effort and never fails the deploy.
+- There is no per-`(setup, mode)` lock: a deploy racing a backfill can create two spaces. The effect is
+  bounded: the newest ledger row wins and teardown trashes every active row.
+- Zerobus spaces created by the earlier manufacturing-only version lose the metrics table on the next
+  redeploy or backfill, and report unavailable (allowlist mismatch) until then.
+
 # Per-pipeline Genie API
 
 Each pipeline `(setup_id, mode)` gets its own Genie space,
@@ -238,8 +253,10 @@ return `available: false` with `supported: false`. An unknown setup returns 404.
 {"questions": ["What is the approximate OEE per sensor over the last 24 hours?", "…"]}
 ```
 
-The list depends on the mode: five shared questions (OEE, downtime, anomalies, faults, maintenance) plus
-two for the mode.
+The list depends on the industry and mode: five shared questions (health index or OEE, downtime, anomalies,
+faults, maintenance), two per-sensor questions for industries other than manufacturing (average reading per
+hour of their first two sample sensors), and two for the mode. That is 7 questions for manufacturing and 9
+for pharmaceutical, energy and automotive, in every mode.
 
 ### `POST …/conversations`
 

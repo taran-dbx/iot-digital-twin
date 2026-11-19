@@ -225,3 +225,20 @@ class TestEnsureSpace:
         kwargs = w.genie.create_space.call_args.kwargs
         assert kwargs["title"] == gss.space_title(industry, mode, "s1")
         assert json.loads(kwargs["serialized_space"])["data_sources"]["tables"]
+
+
+class TestWordingLeaks:
+    MFG_ONLY = ("machine/sensor", "production counts")
+
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("industry", [i for i in CURATED_INDUSTRIES if i != "manufacturing"])
+    def test_no_manufacturing_phrases(self, industry: str, mode: str) -> None:
+        text = _blob(_space(industry, mode))
+        for phrase in self.MFG_ONLY:
+            assert phrase not in text, (industry, mode, phrase)
+
+    @pytest.mark.parametrize("mode", ["realtime", "microbatch"])
+    def test_manufacturing_keeps_its_wording(self, mode: str) -> None:
+        text = _blob(_space("manufacturing", mode))
+        for phrase in self.MFG_ONLY:
+            assert phrase in text

@@ -23,6 +23,11 @@ _TYPE_EXAMPLE_OVERRIDES: dict[str, str] = {
     "manufacturing": "temperature, vibration, pressure",
 }
 _DEFAULT_HEALTH = ("operating health index", "health_index_pct")
+# Wording that is manufacturing-specific in the historical output.
+_FAULT_SUBJECT_OVERRIDES: dict[str, str] = {"manufacturing": "machine/sensor"}
+_OUTPUT_NOTE_OVERRIDES: dict[str, str] = {"manufacturing": "production counts"}
+_DEFAULT_FAULT_SUBJECT = "equipment/sensor"
+_DEFAULT_OUTPUT_NOTE = "recorded output counts"
 
 
 class UnknownIndustry(ValueError):
@@ -38,6 +43,8 @@ class IndustryProfile:
     type_examples: str  # sensor_type column examples
     sensor_examples: tuple[str, ...]
     units: tuple[str, ...]
+    fault_subject: str  # who reports an active fault
+    output_note: str  # what the health index is NOT derived from
     derived: bool  # True when wording is derived (not the historical manufacturing text)
 
     @property
@@ -74,6 +81,8 @@ def profile_for(industry: str | None) -> IndustryProfile:
         type_examples=_TYPE_EXAMPLE_OVERRIDES.get(key, ", ".join(samples)),
         sensor_examples=samples,
         units=_units(key),
+        fault_subject=_FAULT_SUBJECT_OVERRIDES.get(key, _DEFAULT_FAULT_SUBJECT),
+        output_note=_OUTPUT_NOTE_OVERRIDES.get(key, _DEFAULT_OUTPUT_NOTE),
         derived=key not in _HEALTH_TERM_OVERRIDES,
     )
 

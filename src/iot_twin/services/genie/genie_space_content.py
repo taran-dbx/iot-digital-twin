@@ -165,7 +165,9 @@ def _sensor_column_configs(profile: IndustryProfile) -> list[dict[str, Any]]:
         {"column_name": "max_value", "description": ["Upper bound of the normal operating range."]},
         {
             "column_name": "fault_active",
-            "description": ["TRUE while the machine/sensor reports an active fault (downtime)."],
+            "description": [
+                f"TRUE while the {profile.fault_subject} reports an active fault (downtime)."
+            ],
             "synonyms": ["fault", "down", "stopped", "alarm"],
         },
     ]
@@ -240,7 +242,7 @@ def _instruction_lines(
         "nominal_value > 0 (how close output runs to its nominal rate).",
         f"Quality = share of readings with {t}.value BETWEEN {t}.min_value AND {t}.max_value.",
         f"{profile.health_term} (approximation) = Availability x Performance x Quality. Always say it is "
-        "an approximation derived from sensor telemetry, not production counts.",
+        f"an approximation derived from sensor telemetry, not {profile.output_note}.",
         f"Anomaly = a reading where {t}.value < {t}.min_value OR {t}.value > "
         f"{t}.max_value. Ignore rows where min_value or max_value is NULL.",
         "The intelligence_* tables hold several industries: ALWAYS filter every "
