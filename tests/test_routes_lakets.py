@@ -11,9 +11,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes.lakets import router as lakets_router
-from services import lakets_service
+from iot_twin.core.state import AppState
+from iot_twin.routes.lakets import router as lakets_router
+from iot_twin.services.lakets import lakets_service
 
 DEPLOYMENT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -43,7 +43,7 @@ def _build_app_with_state(state: AppState) -> FastAPI:
 
 
 def _patch_pipeline_lakebase(lb):
-    return patch("routes.lakets.get_pipeline_lakebase", AsyncMock(return_value=lb))
+    return patch("iot_twin.routes.lakets.get_pipeline_lakebase", AsyncMock(return_value=lb))
 
 
 def _ready_conn() -> MagicMock:
@@ -190,7 +190,7 @@ class TestCdfStatus:
         app = _build_app_with_state(state)
         with (
             _patch_pipeline_lakebase(lb),
-            patch("routes.lakets._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
+            patch("iot_twin.routes.lakets._LAKEBASE_PROBE_TIMEOUT_SECONDS", 0.01),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -281,11 +281,11 @@ class TestCdfStatus:
         app = _build_app_with_state(state)
         with (
             patch(
-                "routes.lakets.get_industry_lakebase",
+                "iot_twin.routes.lakets.get_industry_lakebase",
                 new=AsyncMock(return_value=lb),
             ),
             patch(
-                "routes.lakets._is_realtime_industry_deployment",
+                "iot_twin.routes.lakets._is_realtime_industry_deployment",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -317,14 +317,14 @@ class TestCdfStatus:
         app = _build_app_with_state(state)
         with (
             patch(
-                "routes.lakets.get_industry_lakebase",
+                "iot_twin.routes.lakets.get_industry_lakebase",
                 new=AsyncMock(side_effect=hang),
             ),
             patch(
-                "routes.lakets._is_realtime_industry_deployment",
+                "iot_twin.routes.lakets._is_realtime_industry_deployment",
                 new=AsyncMock(return_value=True),
             ),
-            patch("routes.lakets._LAKEBASE_RESOLVE_TIMEOUT_SECONDS", 0.05),
+            patch("iot_twin.routes.lakets._LAKEBASE_RESOLVE_TIMEOUT_SECONDS", 0.05),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -397,15 +397,15 @@ class TestLaketsDashboard:
 
         with (
             patch(
-                "routes.lakets.get_industry_lakebase",
+                "iot_twin.routes.lakets.get_industry_lakebase",
                 industry_resolver,
             ),
             patch(
-                "routes.lakets.get_pipeline_lakebase",
+                "iot_twin.routes.lakets.get_pipeline_lakebase",
                 legacy_resolver,
             ),
             patch(
-                "routes.lakets.lakets_service.get_dashboard",
+                "iot_twin.routes.lakets.lakets_service.get_dashboard",
                 dashboard_service,
                 create=True,
             ),
@@ -441,7 +441,7 @@ class TestLaketsDashboard:
         resolver = AsyncMock()
         app = _build_app_with_state(state)
 
-        with patch("routes.lakets.get_industry_lakebase", resolver):
+        with patch("iot_twin.routes.lakets.get_industry_lakebase", resolver):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 unknown = await c.get("/api/pipelines/pipe-1/lakets/dashboard?industry=pharma")
                 malformed = await c.get(
@@ -463,7 +463,7 @@ class TestLaketsDashboard:
         resolver = AsyncMock()
         app = _build_app_with_state(state)
 
-        with patch("routes.lakets.get_industry_lakebase", resolver):
+        with patch("iot_twin.routes.lakets.get_industry_lakebase", resolver):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
                     f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard?industry=pharmaceutical"
@@ -487,7 +487,7 @@ class TestLaketsDashboard:
         resolver = AsyncMock()
         app = _build_app_with_state(state)
 
-        with patch("routes.lakets.get_industry_lakebase", resolver):
+        with patch("iot_twin.routes.lakets.get_industry_lakebase", resolver):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
                     "/api/pipelines/not-a-uuid/lakets/dashboard?industry=pharmaceutical"
@@ -508,7 +508,7 @@ class TestLaketsDashboard:
         resolver = AsyncMock()
         app = _build_app_with_state(state)
 
-        with patch("routes.lakets.get_industry_lakebase", resolver):
+        with patch("iot_twin.routes.lakets.get_industry_lakebase", resolver):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
                     f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard?industry=pharmaceutical"
@@ -528,7 +528,7 @@ class TestLaketsDashboard:
         app = _build_app_with_state(state)
 
         with patch(
-            "routes.lakets.get_pipeline_lakebase",
+            "iot_twin.routes.lakets.get_pipeline_lakebase",
             AsyncMock(return_value=None),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

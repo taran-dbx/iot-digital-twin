@@ -1,10 +1,10 @@
-"""Tests for services.databricks_sdk — detect_cloud helper."""
+"""Tests for iot_twin.services.databricks_sdk — detect_cloud helper."""
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from services.databricks_sdk import detect_cloud
+from iot_twin.services.databricks_sdk import detect_cloud
 
 
 class TestDetectCloud:

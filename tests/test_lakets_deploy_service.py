@@ -1,4 +1,4 @@
-"""Tests for services.lakets_deploy_service.deploy_retention_job."""
+"""Tests for iot_twin.services.lakets.lakets_deploy_service.deploy_retention_job."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services import lakets_deploy_service
+from iot_twin.services.lakets import lakets_deploy_service
 
 
 def _fake_workspace_client() -> MagicMock:

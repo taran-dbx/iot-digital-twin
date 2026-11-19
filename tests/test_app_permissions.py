@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from services.app_permissions import (
+from iot_twin.services.app_permissions import (
     DEFAULT_APP_NAME,
     _app_name,
     grant_app_can_use,
@@ -69,14 +69,14 @@ class TestGrantAppCanUse:
 
 class TestIsAdmin:
     def test_is_admin_true_for_group_member(self, monkeypatch) -> None:
-        from services import app_permissions as ap
+        from iot_twin.services import app_permissions as ap
 
         monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
         monkeypatch.setattr(ap, "_user_groups", lambda req: {"iot-admins", "users"})
         assert ap.is_admin(object()) is True
 
     def test_is_admin_false_for_non_member(self, monkeypatch) -> None:
-        from services import app_permissions as ap
+        from iot_twin.services import app_permissions as ap
 
         monkeypatch.setenv("ADMIN_GROUP", "iot-admins")
         monkeypatch.setattr(ap, "_user_groups", lambda req: {"users"})

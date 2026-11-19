@@ -10,11 +10,11 @@ from databricks.sdk.errors import NotFound
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 
 def _build_app_with_state(state: AppState) -> FastAPI:
-    from routes.pipelines import router as pipelines_router
+    from iot_twin.routes.pipelines import router as pipelines_router
 
     app = FastAPI()
     app.state.app_state = state
@@ -53,7 +53,7 @@ def _mock_pipeline_lakebase(db: MagicMock) -> MagicMock:
 
 def _patch_pipeline_lakebase(db: MagicMock | None):
     handle = _mock_pipeline_lakebase(db) if db is not None else None
-    return patch("routes.pipelines.get_pipeline_lakebase", AsyncMock(return_value=handle))
+    return patch("iot_twin.routes.pipelines.get_pipeline_lakebase", AsyncMock(return_value=handle))
 
 
 class TestLakebaseHealth:
@@ -141,11 +141,11 @@ class TestLakebaseHealth:
         transport = ASGITransport(app=app)
         with (
             patch(
-                "routes.pipelines._is_industry_deployment",
+                "iot_twin.routes.pipelines._is_industry_deployment",
                 AsyncMock(return_value=False),
             ),
             patch(
-                "routes.pipelines.get_industry_lakebase",
+                "iot_twin.routes.pipelines.get_industry_lakebase",
                 AsyncMock(),
             ) as resolve_industry,
         ):
@@ -252,12 +252,14 @@ class TestHealLakebase:
         )
 
         with (
-            patch("routes.pipelines.WorkspaceClient", return_value=ws),
-            patch("routes.pipelines.provision_lakebase_role", provision_mock),
-            patch("routes.pipelines.install_lakets_if_missing", lakets_mock),
-            patch("routes.pipelines.grant_app_can_use", grant_mock),
-            patch("routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")),
-            patch("routes.pipelines.deploy_lakets_ops_jobs", ops_jobs_mock),
+            patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws),
+            patch("iot_twin.routes.pipelines.provision_lakebase_role", provision_mock),
+            patch("iot_twin.routes.pipelines.install_lakets_if_missing", lakets_mock),
+            patch("iot_twin.routes.pipelines.grant_app_can_use", grant_mock),
+            patch(
+                "iot_twin.routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")
+            ),
+            patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", ops_jobs_mock),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-heal/heal-lakebase")
@@ -327,11 +329,11 @@ class TestHealLakebase:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()),
-            patch("routes.pipelines.provision_lakebase_role", AsyncMock()),
-            patch("routes.pipelines.install_lakets_if_missing", AsyncMock()),
-            patch("routes.pipelines.grant_app_can_use", MagicMock()),
-            patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
+            patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()),
+            patch("iot_twin.routes.pipelines.provision_lakebase_role", AsyncMock()),
+            patch("iot_twin.routes.pipelines.install_lakets_if_missing", AsyncMock()),
+            patch("iot_twin.routes.pipelines.grant_app_can_use", MagicMock()),
+            patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-missing/heal-lakebase")
@@ -351,11 +353,11 @@ class TestHealLakebase:
         transport = ASGITransport(app=app)
 
         with (
-            patch("routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()),
-            patch("routes.pipelines.provision_lakebase_role", AsyncMock()),
-            patch("routes.pipelines.install_lakets_if_missing", AsyncMock()),
-            patch("routes.pipelines.grant_app_can_use", MagicMock()),
-            patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
+            patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()),
+            patch("iot_twin.routes.pipelines.provision_lakebase_role", AsyncMock()),
+            patch("iot_twin.routes.pipelines.install_lakets_if_missing", AsyncMock()),
+            patch("iot_twin.routes.pipelines.grant_app_can_use", MagicMock()),
+            patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-heal/heal-lakebase")
@@ -377,12 +379,14 @@ class TestHealLakebase:
         lakets_mock = AsyncMock(return_value={"installed": True})
 
         with (
-            patch("routes.pipelines.WorkspaceClient", return_value=ws),
-            patch("routes.pipelines.provision_lakebase_role", provision_mock),
-            patch("routes.pipelines.install_lakets_if_missing", lakets_mock),
-            patch("routes.pipelines.grant_app_can_use", MagicMock()),
-            patch("routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")),
-            patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
+            patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws),
+            patch("iot_twin.routes.pipelines.provision_lakebase_role", provision_mock),
+            patch("iot_twin.routes.pipelines.install_lakets_if_missing", lakets_mock),
+            patch("iot_twin.routes.pipelines.grant_app_can_use", MagicMock()),
+            patch(
+                "iot_twin.routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")
+            ),
+            patch("iot_twin.routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
         ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-heal/heal-lakebase")
@@ -472,7 +476,7 @@ class TestDeletePipelineUcSafety:
         app = _build_app_with_state(state)
         ws = _make_delete_ws_mock()
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -500,7 +504,7 @@ class TestDeletePipelineUcSafety:
         app = _build_app_with_state(state)
         ws = _make_delete_ws_mock()
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -520,7 +524,7 @@ class TestDeletePipelineUcSafety:
         ws = _make_delete_ws_mock()
         ws.jobs.delete.side_effect = RuntimeError("permission denied")
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -546,7 +550,7 @@ class TestDeletePipelineUcSafety:
         ws = _make_delete_ws_mock()
         ws.jobs.delete.side_effect = NotFound("job not found")
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -565,7 +569,7 @@ class TestDeletePipelineUcSafety:
         transport = ASGITransport(app=app)
 
         ws = _make_delete_ws_mock()
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 
@@ -600,7 +604,7 @@ class TestDeletePipelineUcSafety:
         transport = ASGITransport(app=app)
 
         ws = _make_delete_ws_mock()
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 
@@ -625,7 +629,7 @@ class TestDeletePipelineUcSafety:
         transport = ASGITransport(app=app)
 
         ws = _make_delete_ws_mock()
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 
@@ -654,7 +658,7 @@ class TestDeletePipelineUcSafety:
 
         ws = _make_delete_ws_mock()
         ws.tables.delete = MagicMock(side_effect=NotFound("table does not exist"))
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 
@@ -689,7 +693,7 @@ class TestDeletePipelineUcSafety:
 
         ws = _make_delete_ws_mock()
         ws.tables.delete = MagicMock(side_effect=RuntimeError("permission denied"))
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 
@@ -714,7 +718,7 @@ class TestDeletePipelineUcSafety:
         transport = ASGITransport(app=app)
 
         ws = _make_delete_ws_mock()
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws):
+        with patch("iot_twin.routes.pipelines.WorkspaceClient", return_value=ws):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.delete("/api/pipelines/pipe-del")
 

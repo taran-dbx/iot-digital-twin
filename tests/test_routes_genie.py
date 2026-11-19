@@ -12,9 +12,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes.genie import router as genie_router
-from services.genie_service import GenieDisabledError, GenieValidationError
+from iot_twin.core.state import AppState
+from iot_twin.routes.genie import router as genie_router
+from iot_twin.services.genie_service import GenieDisabledError, GenieValidationError
 
 # Hang guard for the event-loop regression test; never a timing budget.
 _HANG_GUARD_S = 30.0
@@ -79,7 +79,7 @@ class TestGenieRoutes:
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
         with patch(
-            "routes.genie.genie_service.start_conversation",
+            "iot_twin.routes.genie.genie_service.start_conversation",
             return_value={
                 "conversation_id": "c1",
                 "message_id": "m1",
@@ -153,7 +153,7 @@ class TestGenieRoutes:
             "industry": "manufacturing",
         }
         with patch(
-            "routes.genie.genie_service.create_message",
+            "iot_twin.routes.genie.genie_service.create_message",
             return_value={
                 "conversation_id": "c1",
                 "message_id": "m2",
@@ -167,7 +167,7 @@ class TestGenieRoutes:
         assert follow.json()["message_id"] == "m2"
 
         with patch(
-            "routes.genie.genie_service.get_message",
+            "iot_twin.routes.genie.genie_service.get_message",
             return_value={
                 "conversation_id": "c1",
                 "message_id": "m2",
@@ -190,7 +190,7 @@ class TestGenieRoutes:
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
         with patch(
-            "routes.genie.genie_service.validate_request",
+            "iot_twin.routes.genie.genie_service.validate_request",
             side_effect=GenieValidationError("unknown alert"),
         ):
             resp = await genie_client.post(
@@ -212,7 +212,7 @@ class TestGenieRoutes:
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
         with patch(
-            "routes.genie.genie_service.start_conversation",
+            "iot_twin.routes.genie.genie_service.start_conversation",
             side_effect=GenieDisabledError("GENIE_SPACE_ID is not configured"),
         ):
             resp = await genie_client.post(
@@ -229,7 +229,7 @@ class TestGenieRoutes:
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.setenv("GENIE_ALLOWLIST_CONFIRMED", "true")
         with patch(
-            "routes.genie.genie_service.start_conversation",
+            "iot_twin.routes.genie.genie_service.start_conversation",
             side_effect=RuntimeError("secret warehouse token leaked"),
         ):
             resp = await genie_client.post(
@@ -265,11 +265,11 @@ class TestGenieRoutes:
 
         with (
             patch(
-                "routes.genie.genie_service.require_table_allowlist",
+                "iot_twin.routes.genie.genie_service.require_table_allowlist",
                 return_value={"authorization_enforced": True},
             ),
             patch(
-                "routes.genie.genie_service.start_conversation",
+                "iot_twin.routes.genie.genie_service.start_conversation",
                 side_effect=blocking_start,
             ),
         ):
@@ -319,7 +319,7 @@ class TestGenieRoutes:
         """[C7502][defect] Conversations cannot start on an unverified table allowlist."""
         monkeypatch.setenv("GENIE_SPACE_ID", "space-1")
         monkeypatch.delenv("GENIE_ALLOWLIST_CONFIRMED", raising=False)
-        with patch("routes.genie.genie_service.start_conversation") as start:
+        with patch("iot_twin.routes.genie.genie_service.start_conversation") as start:
             resp = await genie_client.post(
                 "/api/genie/conversations",
                 json={"industry": "manufacturing", "mode": "realtime", "question": "hi"},
@@ -349,7 +349,7 @@ class TestGenieRoutes:
             }
 
         with patch(
-            "routes.genie.genie_service.status_payload",
+            "iot_twin.routes.genie.genie_service.status_payload",
             side_effect=blocking_status,
         ):
             started = asyncio.create_task(genie_client.get("/api/genie/status"))

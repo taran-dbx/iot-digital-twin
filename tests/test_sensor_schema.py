@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from models import sensor_schema as ss
+from iot_twin.models import sensor_schema as ss
 
 # ---------------------------------------------------------------------------
 # Canonical field expectations — mirror the ``SensorRecord`` in the
@@ -227,21 +227,21 @@ class TestMutualConsistency:
 
 
 class TestSqlDdlDerivedFromSsot:
-    """``models.sql_ddl.SENSOR_READINGS_DDL`` is derived from the SSOT."""
+    """``iot_twin.models.sql_ddl.SENSOR_READINGS_DDL`` is derived from the SSOT."""
 
     def test_sensor_readings_ddl_matches_ssot(self) -> None:
-        from models import sql_ddl
+        from iot_twin.models import sql_ddl
 
         assert ss.pg_chronotable_ddl("{table_name}") == sql_ddl.SENSOR_READINGS_DDL
 
     def test_sensor_readings_ddl_now_has_the_missing_four_columns(self) -> None:
-        from models import sql_ddl
+        from iot_twin.models import sql_ddl
 
         for col in MISSING_FOUR_COLUMNS:
             assert col in sql_ddl.SENSOR_READINGS_DDL
 
     def test_sensor_readings_ddl_still_formats(self) -> None:
-        from models import sql_ddl
+        from iot_twin.models import sql_ddl
 
         ddl = sql_ddl.SENSOR_READINGS_DDL.format(table_name="sensor_readings")
         assert "CREATE TABLE IF NOT EXISTS sensor_readings" in ddl

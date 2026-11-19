@@ -40,8 +40,8 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
     """Boot the app lifespan with all external I/O mocked.
 
     Patches:
-    - services.app_backend_db.build_app_backend_manager → mock_mgr
-    - models.app_schema.ensure_app_schema              → AsyncMock
+    - iot_twin.services.db.app_backend_db.build_app_backend_manager → mock_mgr
+    - iot_twin.models.app_schema.ensure_app_schema              → AsyncMock
     - app.run_simulator                                → AsyncMock (no loop)
     - app.install_sigterm_handler                      → no-op
     - app.shutdown                                     → AsyncMock (no-op cleanup)
@@ -55,17 +55,17 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
 
     with (
         patch(
-            "services.app_backend_db.build_app_backend_manager",
+            "iot_twin.services.db.app_backend_db.build_app_backend_manager",
             return_value=mock_mgr,
         ),
-        patch("models.app_schema.ensure_app_schema", mock_ensure_schema),
-        patch("app.run_simulator", AsyncMock()),
-        patch("app.install_sigterm_handler"),
-        patch("app.shutdown", AsyncMock()),
+        patch("iot_twin.models.app_schema.ensure_app_schema", mock_ensure_schema),
+        patch("iot_twin.app.run_simulator", AsyncMock()),
+        patch("iot_twin.app.install_sigterm_handler"),
+        patch("iot_twin.app.shutdown", AsyncMock()),
     ):
         from fastapi import FastAPI
 
-        import app as app_module
+        import iot_twin.app as app_module
 
         fa = FastAPI()
         async with app_module.lifespan(fa):

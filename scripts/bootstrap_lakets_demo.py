@@ -24,11 +24,14 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+# Repo root (for ``scripts.*``) and src/ (for ``iot_twin``) must be importable.
+for _path in (_ROOT / "src", _ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from scripts._profile import require_profile
-from services.provisioning_service import (
+
+from iot_twin.services.provisioning_service import (
     provision_lakebase_project_and_branch,
     provision_lakebase_role,
     provision_lakebase_table,
@@ -37,7 +40,7 @@ from services.provisioning_service import (
 PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
 DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
-DEFAULT_LAKETS_SQL = str(_ROOT / "databricks" / "vendor" / "lakets.sql")
+DEFAULT_LAKETS_SQL = str(_ROOT / "src" / "iot_twin" / "resources" / "lakets.sql")
 
 
 def _print_header(title: str) -> None:
@@ -135,7 +138,7 @@ async def main() -> int:
     endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
     pg_host = endpoint.status.hosts.host
 
-    from models.sql_ddl import LAKEBASE_ROLE_NAME
+    from iot_twin.models.sql_ddl import LAKEBASE_ROLE_NAME
 
     _print_header("3B. provision_lakebase_table + install_lakets  (direct)")
     direct_result = await provision_lakebase_table(

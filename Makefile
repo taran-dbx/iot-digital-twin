@@ -26,7 +26,7 @@ format: ## Apply ruff fixes and formatting
 	$(PYTHON) -m ruff check --fix .
 	$(PYTHON) -m ruff format .
 
-typecheck: ## Mypy (core/, models/) and client tsc
+typecheck: ## Mypy (src/iot_twin/core, models) and client tsc
 	$(PYTHON) -m mypy
 	cd $(CLIENT_DIR) && $(NPM) run typecheck
 

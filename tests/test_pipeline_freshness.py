@@ -1,4 +1,4 @@
-"""Unit tests for services/pipeline_freshness.py — the per-mode "is data flowing?"
+"""Unit tests for services/pipelines/pipeline_freshness.py — the per-mode "is data flowing?"
 signal that gates ``running`` vs ``starting`` in the readiness contract.
 
 The sink probes are exercised with fakes (a stub Lakebase handle / a stub DBSQL
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from services import pipeline_freshness as pf
+from iot_twin.services.pipelines import pipeline_freshness as pf
 
 _UC_CATALOG = "example_eu_catalog"
 _UC_SCHEMA = "rtm_lakets_zb"

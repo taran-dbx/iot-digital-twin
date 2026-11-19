@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services import health_checks as hc
-from services import pipeline_view as pv
+from iot_twin.services import health_checks as hc
+from iot_twin.services.pipelines import pipeline_view as pv
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ class TestCheckLakebaseEndpoints:
 def _chrono_conn(*, registered=1, forward=(96, "2026-07-07T10:00:00Z"), columns=None):
     """Build an asyncpg-style conn whose queries return canned chronotable data."""
     if columns is None:
-        from models.sensor_schema import insert_columns
+        from iot_twin.models.sensor_schema import insert_columns
 
         columns = ["id", *insert_columns()]
     conn = MagicMock()

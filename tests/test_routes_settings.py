@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 
 
 def _build_app() -> FastAPI:
-    from routes.settings import router as settings_router
+    from iot_twin.routes.settings import router as settings_router
 
     app = FastAPI()
     app.include_router(settings_router)
@@ -64,13 +64,15 @@ async def _post_provision_secrets(w: MagicMock, scope: str = "iot_scope") -> dic
     body = {"secrets": {"scope": scope}}
     with (
         patch(
-            "routes.settings.provision_secrets_scope",
+            "iot_twin.routes.settings.provision_secrets_scope",
             AsyncMock(return_value={"resource": "Secret scope", "status": "created"}),
         ),
-        patch("routes.settings.validate_secrets", AsyncMock(return_value={"status": "pass"})),
+        patch(
+            "iot_twin.routes.settings.validate_secrets", AsyncMock(return_value={"status": "pass"})
+        ),
         patch("databricks.sdk.WorkspaceClient", return_value=w),
-        patch("routes.settings.grant_app_can_use") as grant_mock,
-        patch("routes.settings._app_name", return_value="iot-digital-twin"),
+        patch("iot_twin.routes.settings.grant_app_can_use") as grant_mock,
+        patch("iot_twin.routes.settings._app_name", return_value="iot-digital-twin"),
     ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/settings/provision/secrets", json=body)

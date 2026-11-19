@@ -1,7 +1,8 @@
 # Files excluded from `databricks sync` (the deployed app bundle).
 # NEVER exclude what the running app needs: static/dist/ (SPA bundle),
 # lib/*.whl (simulator wheel, installed via requirements.txt and read at
-# runtime) and databricks/vendor/lakets.sql.
+# runtime), src/ (the iot_twin package, started with --app-dir src) and
+# src/iot_twin/resources/lakets.sql.
 
 # ── VCS / local tooling ───────────────────────────────────────────────────
 .git/
@@ -47,7 +48,7 @@ blob-report/
 # ── Dev-only assets ───────────────────────────────────────────────────────
 # Keep these in git but out of the deployed bundle to slim it.
 # Anchored so only a top-level notebooks/ scratch dir is excluded;
-# databricks/vendor/lakets.sql is still synced.
+# src/iot_twin/resources/lakets.sql is still synced.
 /notebooks/
 capture_screenshots.py
 screenshots/

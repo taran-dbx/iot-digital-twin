@@ -1,4 +1,4 @@
-"""Tests for services.source_registry — key derivation, claim, release, check."""
+"""Tests for iot_twin.services.source_registry — key derivation, claim, release, check."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.source_registry import (
+from iot_twin.services.source_registry import (
     check_source_available,
     claim_source,
     derive_source_key,

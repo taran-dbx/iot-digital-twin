@@ -1,4 +1,4 @@
-"""Tests for core.auth — JWT-based user identity extraction."""
+"""Tests for iot_twin.core.auth — JWT-based user identity extraction."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from core import auth
-from core.auth import get_current_user, require_identity
+from iot_twin.core import auth
+from iot_twin.core.auth import get_current_user, require_identity
 
 
 @pytest.fixture(autouse=True)

@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services import lakets_service, provisioning_service
+from iot_twin.services import provisioning_service
+from iot_twin.services.lakets import lakets_service
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -288,7 +289,7 @@ class TestEnsureStreamingSP:
         # tests exercise the SP create / already-exists / permission paths
         # instead of bailing out early at a failed (unauthenticated) scope step.
         with patch(
-            "services.provisioning_service.provision_secrets_scope",
+            "iot_twin.services.provisioning_service.provision_secrets_scope",
             new=AsyncMock(return_value={"resource": "Secret scope", "status": "created"}),
         ):
             yield
@@ -297,8 +298,10 @@ class TestEnsureStreamingSP:
     async def test_fresh_create_returns_client_id_and_grants(self) -> None:
         w = _make_sp_ws(existing_keys=[])
         with (
-            patch("services.provisioning_service.grant_app_can_use") as grant_mock,
-            patch("services.provisioning_service._app_name", return_value="iot-digital-twin"),
+            patch("iot_twin.services.provisioning_service.grant_app_can_use") as grant_mock,
+            patch(
+                "iot_twin.services.provisioning_service._app_name", return_value="iot-digital-twin"
+            ),
         ):
             out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
 
@@ -322,8 +325,10 @@ class TestEnsureStreamingSP:
             sp_app_id="existing-app-id",
         )
         with (
-            patch("services.provisioning_service.grant_app_can_use") as grant_mock,
-            patch("services.provisioning_service._app_name", return_value="iot-digital-twin"),
+            patch("iot_twin.services.provisioning_service.grant_app_can_use") as grant_mock,
+            patch(
+                "iot_twin.services.provisioning_service._app_name", return_value="iot-digital-twin"
+            ),
         ):
             out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
 
@@ -338,8 +343,10 @@ class TestEnsureStreamingSP:
         w = _make_sp_ws(existing_keys=[])
         w.service_principals.create.side_effect = Exception("not authorized")
         with (
-            patch("services.provisioning_service.grant_app_can_use"),
-            patch("services.provisioning_service._app_name", return_value="iot-digital-twin"),
+            patch("iot_twin.services.provisioning_service.grant_app_can_use"),
+            patch(
+                "iot_twin.services.provisioning_service._app_name", return_value="iot-digital-twin"
+            ),
         ):
             out = await provisioning_service.ensure_streaming_sp(w, "iot-secrets")
 

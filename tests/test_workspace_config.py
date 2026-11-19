@@ -44,25 +44,25 @@ class TestGetConfigReadsEnvVars:
     """get_config() must read every field from the corresponding env var."""
 
     def test_uc_catalog(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.uc_catalog == "test_catalog"
 
     def test_uc_schema(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.uc_schema == "test_schema"
 
     def test_lakebase_project(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.lakebase_project == "iot-app-backend"
 
     def test_lakebase_endpoint(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert (
@@ -71,31 +71,31 @@ class TestGetConfigReadsEnvVars:
         )
 
     def test_warehouse_id(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.warehouse_id == "0123456789abcdef"
 
     def test_zerobus_endpoint(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.zerobus_endpoint == "2222222222222222.zerobus.eu-central-1.cloud.databricks.com"
 
     def test_app_sp_client_id(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.app_sp_client_id == "00000000-0000-0000-0000-00000000000a"
 
     def test_industries_parsed_as_list(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.industries == ["pharmaceutical", "manufacturing"]
 
     def test_pg_host_optional_present(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.pg_host == "example-pg.database.eu-central-1.cloud.databricks.com"
@@ -105,13 +105,13 @@ class TestGetConfigReadsEnvVars:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("PGHOST", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert cfg.pg_host == ""
 
     def test_config_is_frozen(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         with pytest.raises((AttributeError, TypeError)):
@@ -126,7 +126,7 @@ class TestOptionalFields:
             monkeypatch.setenv(key, val)
         monkeypatch.setenv("SECRET_SCOPE", "my-scope")
         monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().secret_scope == "my-scope"
 
@@ -137,7 +137,7 @@ class TestOptionalFields:
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("SECRET_SCOPE", raising=False)
         monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "zb-scope")
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().secret_scope == "zb-scope"
 
@@ -146,7 +146,7 @@ class TestOptionalFields:
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("SECRET_SCOPE", raising=False)
         monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().secret_scope == ""
 
@@ -154,7 +154,7 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.setenv("UC_SERVICE_CREDENTIAL", "my-cred")
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().service_credential == "my-cred"
 
@@ -162,7 +162,7 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("UC_SERVICE_CREDENTIAL", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().service_credential == ""
 
@@ -170,7 +170,7 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "my-project")
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().pipelines_project == "my-project"
 
@@ -178,7 +178,7 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("PIPELINES_LAKEBASE_PROJECT", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().pipelines_project == ""
 
@@ -186,7 +186,7 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.setenv("GENIE_SPACE_ID", "space-xyz")
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().genie_space_id == "space-xyz"
 
@@ -194,7 +194,7 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("GENIE_SPACE_ID", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         assert get_config().genie_space_id == ""
 
@@ -205,14 +205,14 @@ class TestCallTimeGetters:
     def test_get_secret_scope_reads_secret_scope_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SECRET_SCOPE", "call-time-scope")
         monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
-        from core.workspace_config import get_secret_scope
+        from iot_twin.core.workspace_config import get_secret_scope
 
         assert get_secret_scope() == "call-time-scope"
 
     def test_get_secret_scope_falls_back_to_zerobus(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SECRET_SCOPE", raising=False)
         monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "zb-call-scope")
-        from core.workspace_config import get_secret_scope
+        from iot_twin.core.workspace_config import get_secret_scope
 
         assert get_secret_scope() == "zb-call-scope"
 
@@ -221,13 +221,13 @@ class TestCallTimeGetters:
     ) -> None:
         monkeypatch.delenv("SECRET_SCOPE", raising=False)
         monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
-        from core.workspace_config import get_secret_scope
+        from iot_twin.core.workspace_config import get_secret_scope
 
         assert get_secret_scope() == ""
 
     def test_get_service_credential_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("UC_SERVICE_CREDENTIAL", "call-time-cred")
-        from core.workspace_config import get_service_credential
+        from iot_twin.core.workspace_config import get_service_credential
 
         assert get_service_credential() == "call-time-cred"
 
@@ -235,13 +235,13 @@ class TestCallTimeGetters:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("UC_SERVICE_CREDENTIAL", raising=False)
-        from core.workspace_config import get_service_credential
+        from iot_twin.core.workspace_config import get_service_credential
 
         assert get_service_credential() == ""
 
     def test_get_pipelines_project_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "call-time-project")
-        from core.workspace_config import get_pipelines_project
+        from iot_twin.core.workspace_config import get_pipelines_project
 
         assert get_pipelines_project() == "call-time-project"
 
@@ -249,13 +249,13 @@ class TestCallTimeGetters:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("PIPELINES_LAKEBASE_PROJECT", raising=False)
-        from core.workspace_config import get_pipelines_project
+        from iot_twin.core.workspace_config import get_pipelines_project
 
         assert get_pipelines_project() == ""
 
     def test_get_genie_space_id_reads_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GENIE_SPACE_ID", "space-from-resource")
-        from core.workspace_config import get_genie_space_id
+        from iot_twin.core.workspace_config import get_genie_space_id
 
         assert get_genie_space_id() == "space-from-resource"
 
@@ -263,7 +263,7 @@ class TestCallTimeGetters:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("GENIE_SPACE_ID", raising=False)
-        from core.workspace_config import get_genie_space_id
+        from iot_twin.core.workspace_config import get_genie_space_id
 
         assert get_genie_space_id() == ""
 
@@ -278,7 +278,7 @@ class TestGetConfigRaisesOnMissingRequired:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.delenv(missing_var, raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         with pytest.raises(RuntimeError, match=missing_var):
             get_config()
@@ -288,7 +288,7 @@ class TestGetConfigRaisesOnMissingRequired:
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("UC_CATALOG", raising=False)
         monkeypatch.delenv("DATABRICKS_SQL_WAREHOUSE_ID", raising=False)
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         with pytest.raises(RuntimeError) as exc_info:
             get_config()
@@ -301,7 +301,7 @@ class TestGetConfigRaisesOnMissingRequired:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.setenv("PGHOST", "")
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()  # must not raise
         assert cfg.pg_host == ""
@@ -311,7 +311,7 @@ class TestWorkspaceConfigStructure:
     """WorkspaceConfig must be a frozen dataclass with the expected field set."""
 
     def test_expected_fields(self, full_env: None) -> None:
-        from core.workspace_config import WorkspaceConfig, get_config
+        from iot_twin.core.workspace_config import WorkspaceConfig, get_config
 
         cfg = get_config()
         assert isinstance(cfg, WorkspaceConfig)
@@ -335,7 +335,7 @@ class TestWorkspaceConfigStructure:
         assert actual == expected
 
     def test_industries_is_list(self, full_env: None) -> None:
-        from core.workspace_config import get_config
+        from iot_twin.core.workspace_config import get_config
 
         cfg = get_config()
         assert isinstance(cfg.industries, list)

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services import uc_secrets
+from iot_twin.services import uc_secrets
 
 
 def _make_ws(*, get_value: str | None = ""):

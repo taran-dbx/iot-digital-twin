@@ -20,8 +20,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.workspace_config import get_pipelines_project
-from services import pipelines_project_service as pps
+from iot_twin.core.workspace_config import get_pipelines_project
+from iot_twin.services.pipelines import pipeline_project_service as pps
 
 # The test suite sets this env var so get_pipelines_project() returns a known value.
 _TEST_PIPELINES_PROJECT = "iot-pipelines"
@@ -201,7 +201,7 @@ class TestProvisionIndustryBranch:
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-0d42")
 
         calls: list[dict] = []
-        from services import provisioning_service
+        from iot_twin.services import provisioning_service
 
         async def _fake_role(**kwargs):
             calls.append(kwargs)
@@ -233,7 +233,7 @@ class TestProvisionIndustryBranch:
     async def test_branch_role_failure_is_non_fatal(self, monkeypatch) -> None:
         ws = _make_ws(branch_exists=False, replica_exists=False)
         monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-sp-0d42")
-        from services import provisioning_service
+        from iot_twin.services import provisioning_service
 
         async def _boom(**kwargs):
             raise RuntimeError("lakebase project-admin required")

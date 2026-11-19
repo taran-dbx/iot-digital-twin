@@ -17,12 +17,13 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes import industries_admin
-from services import pipeline_setup_repo, resource_ledger, teardown_service
-from services import validation_state_machine as sm
+from iot_twin.core.state import AppState
+from iot_twin.routes import industries_admin
+from iot_twin.services import resource_ledger, teardown_service
+from iot_twin.services.pipelines import pipeline_setup_repo
+from iot_twin.services.validation import validation_state_machine as sm
 
-MOD = "routes.industries_admin"
+MOD = "iot_twin.routes.industries_admin"
 
 
 # ---------------------------------------------------------------------------
@@ -1519,7 +1520,7 @@ class TestRollupHealth:
 # ---------------------------------------------------------------------------
 @pytest_asyncio.fixture()
 async def schema_ready(app_backend_conn):
-    from models import app_schema
+    from iot_twin.models import app_schema
 
     await app_schema.ensure_app_schema(app_backend_conn)
     return app_backend_conn

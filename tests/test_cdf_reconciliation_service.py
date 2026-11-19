@@ -8,9 +8,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes import pipeline_deploy
-from services import cdf_reconciliation_service as cdf
+from iot_twin.core.state import AppState
+from iot_twin.routes import pipeline_deploy
+from iot_twin.services import cdf_reconciliation_service as cdf
 
 
 def test_canonical_names_are_industry_unique_c7234(monkeypatch):
@@ -88,7 +88,7 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
     update = AsyncMock(return_value=deployment)
     monkeypatch.setattr(cdf.deployment_repo, "update_deployment", update)
     monkeypatch.setattr(
-        cdf.pipelines_project_service,
+        cdf.pipeline_project_service,
         "get_write_conn",
         AsyncMock(side_effect=[migration_conn, poll_conn]),
     )
@@ -190,7 +190,7 @@ async def test_failure_closes_connections_and_preserves_deployed_status_c7248(
     update = AsyncMock()
     monkeypatch.setattr(cdf.deployment_repo, "update_deployment", update)
     monkeypatch.setattr(
-        cdf.pipelines_project_service,
+        cdf.pipeline_project_service,
         "get_write_conn",
         AsyncMock(side_effect=[migration_conn, poll_conn]),
     )

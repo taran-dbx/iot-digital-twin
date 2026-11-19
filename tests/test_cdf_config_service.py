@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services import cdf_config_service as cdf
+from iot_twin.services import cdf_config_service as cdf
 
 
 class NotFoundError(RuntimeError):

@@ -26,7 +26,7 @@ against the in-process app would never return for an infinite SSE generator.
 The SSE E2E tests therefore exercise the fan-out by pre-registering a queue
 on ``state.sse_clients`` (exactly what the SSE endpoint handler does at
 runtime) and asserting that the ingest / alerts POST lands an event on that
-queue via ``services.simulator_service.broadcast``.  ``_stream_sse_once``
+queue via ``iot_twin.services.simulator_service.broadcast``.  ``_stream_sse_once``
 uses the ``AsyncClient.stream`` API to cover the GET /api/events route shape
 (status + media type) with a deadline so the infinite generator is cancelled.
 """
@@ -42,7 +42,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,8 +120,8 @@ class TestSseIngestBroadcastE2E:
 
     @pytest_asyncio.fixture()
     async def sse_client(self) -> AsyncGenerator[tuple[AsyncClient, AppState], None]:
-        from routes.sensor_data import router as sensor_router
-        from routes.websocket import router as ws_router
+        from iot_twin.routes.sensor_data import router as sensor_router
+        from iot_twin.routes.websocket import router as ws_router
 
         state = _app_state_with_db()
         app = _build_app_with_routers(state, ws_router, sensor_router)
@@ -198,7 +198,9 @@ class TestSseIngestBroadcastE2E:
         client, state = sse_client
         queue = _register_sse_queue(state)
 
-        with patch("routes.sensor_data.get_pipeline_lakebase", new=AsyncMock()) as mock_get_lb:
+        with patch(
+            "iot_twin.routes.sensor_data.get_pipeline_lakebase", new=AsyncMock()
+        ) as mock_get_lb:
             resp = await client.post(
                 "/api/sss/ingest",
                 json=[
@@ -236,7 +238,7 @@ class TestSseThresholdAlertBroadcastE2E:
 
     @pytest_asyncio.fixture()
     async def sse_client(self) -> AsyncGenerator[tuple[AsyncClient, AppState], None]:
-        from routes.websocket import router as ws_router
+        from iot_twin.routes.websocket import router as ws_router
 
         state = _app_state_with_db()
         app = _build_app_with_routers(state, ws_router)
@@ -321,7 +323,7 @@ class TestTimeseriesEndpointsReturnRowsShape:
 
     @pytest_asyncio.fixture()
     async def ts_client(self) -> AsyncGenerator[AsyncClient, None]:
-        from routes.sensor_data import router as sensor_router
+        from iot_twin.routes.sensor_data import router as sensor_router
 
         state = _app_state_with_db(rows=self._LAKEBASE_ROWS)
         app = _build_app_with_routers(state, sensor_router)
@@ -343,21 +345,21 @@ class TestTimeseriesEndpointsReturnRowsShape:
 
     @pytest.mark.asyncio
     async def test_dbsql_timeseries_returns_rows_shape(self) -> None:
-        from routes.sensor_data import router as sensor_router
+        from iot_twin.routes.sensor_data import router as sensor_router
 
         state = _app_state_with_db()
         # Stub the helpers used by the dbsql-timeseries route.
         with (
             patch(
-                "routes.sensor_data.get_pipeline_catalog",
+                "iot_twin.routes.sensor_data.get_pipeline_catalog",
                 new=AsyncMock(return_value="my_catalog"),
             ),
             patch(
-                "routes.sensor_data.resolve_warehouse_id",
+                "iot_twin.routes.sensor_data.resolve_warehouse_id",
                 new=AsyncMock(return_value="warehouse-xyz"),
             ),
             patch(
-                "routes.sensor_data.execute_dbsql",
+                "iot_twin.routes.sensor_data.execute_dbsql",
                 new=AsyncMock(
                     return_value={
                         "columns": list(self._DBSQL_ROWS[0].keys()),
@@ -391,7 +393,7 @@ class TestSyncCheckRouteWired:
 
     @pytest_asyncio.fixture()
     async def sync_client(self) -> AsyncGenerator[AsyncClient, None]:
-        from routes.lakets import router as lakets_router
+        from iot_twin.routes.lakets import router as lakets_router
 
         app = _build_app_with_routers(AppState(), lakets_router)
         transport = ASGITransport(app=app)
@@ -422,7 +424,7 @@ class TestRetentionDeployRoute:
 
     @pytest_asyncio.fixture()
     async def deploy_client(self) -> AsyncGenerator[AsyncClient, None]:
-        from routes.lakets import router as lakets_router
+        from iot_twin.routes.lakets import router as lakets_router
 
         app = _build_app_with_routers(AppState(), lakets_router)
         transport = ASGITransport(app=app)
@@ -445,7 +447,7 @@ class TestRetentionDeployRoute:
     async def test_deploy_returns_job_id_and_notebook_path(
         self, deploy_client: AsyncClient
     ) -> None:
-        from services import lakets_deploy_service
+        from iot_twin.services.lakets import lakets_deploy_service
 
         w = self._fake_workspace_client()
         with (

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from core.state import AppState
-from services.alert_engine import AlertRecord
-from services.alert_sse import (
+from iot_twin.core.state import AppState
+from iot_twin.services.alerts.alert_engine import AlertRecord
+from iot_twin.services.alerts.alert_sse import (
     EVENT_ACKNOWLEDGED,
     EVENT_CLEARED,
     EVENT_OPENED,

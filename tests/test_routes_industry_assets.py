@@ -9,11 +9,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
+from iot_twin.core.state import AppState
 
 
 def _build_app_with_state(state: AppState) -> FastAPI:
-    from routes.industries import router as industries_router
+    from iot_twin.routes.industries import router as industries_router
 
     app = FastAPI()
     app.state.app_state = state
@@ -117,7 +117,7 @@ class TestSimulatorFacingEnergyAlias:
         gen = _generator([record])
         app = _build_app_with_state(_state())
         transport = ASGITransport(app=app)
-        with patch("routes.industries.DataGenerator", return_value=gen) as ctor:
+        with patch("iot_twin.routes.industries.DataGenerator", return_value=gen) as ctor:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get("/api/industries/energy/sensors")
 
@@ -140,7 +140,7 @@ class TestSimulatorFacingEnergyAlias:
         gen = _generator([record], sensor_count=1)
         app = _build_app_with_state(_state())
         transport = ASGITransport(app=app)
-        with patch("routes.industries.DataGenerator", return_value=gen) as ctor:
+        with patch("iot_twin.routes.industries.DataGenerator", return_value=gen) as ctor:
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post(
                     "/api/generate-sample",

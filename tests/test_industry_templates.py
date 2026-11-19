@@ -1,9 +1,9 @@
-"""Tests for services.industry_templates — curated industry data ported from
+"""Tests for iot_twin.services.industry.industry_templates — curated industry data ported from
 the design reference (design-ref/Digital Twin Platform.dc.html)."""
 
 from __future__ import annotations
 
-from services.industry_templates import (
+from iot_twin.services.industry.industry_templates import (
     CURATED_INDUSTRIES,
     get_template,
     mode_config,

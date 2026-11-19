@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-import services.industry_service as isvc
+import iot_twin.services.industry.industry_service as isvc
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "test_schema"

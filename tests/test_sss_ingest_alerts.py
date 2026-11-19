@@ -10,9 +10,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from routes.sensor_data import router as sensor_router
-from services.alert_engine import AlertEngine
+from iot_twin.core.state import AppState
+from iot_twin.routes.sensor_data import router as sensor_router
+from iot_twin.services.alerts.alert_engine import AlertEngine
 
 
 def _build_app(state: AppState) -> FastAPI:

@@ -8,17 +8,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.state import AppState
-from services import pipeline_db
+from iot_twin.core.state import AppState
+from iot_twin.services.pipelines import pipeline_db
 
 ROOT = Path(__file__).parents[1]
 
 
 def test_lakebase_pool_uses_bounded_timeouts_c7263() -> None:
     """[C7263][defect][regression] asyncpg pools must not hang forever."""
-    backend = (ROOT / "backend.py").read_text(encoding="utf-8")
-    pipeline_db = (ROOT / "services" / "pipeline_db.py").read_text(encoding="utf-8")
-    lakets = (ROOT / "routes" / "lakets.py").read_text(encoding="utf-8")
+    backend = (ROOT / "src" / "iot_twin" / "core" / "lakebase.py").read_text(encoding="utf-8")
+    pipeline_db = (
+        ROOT / "src" / "iot_twin" / "services" / "pipelines" / "pipeline_db.py"
+    ).read_text(encoding="utf-8")
+    lakets = (ROOT / "src" / "iot_twin" / "routes" / "lakets.py").read_text(encoding="utf-8")
 
     assert "command_timeout=" in backend
     assert "timeout=" in backend
@@ -64,7 +66,7 @@ async def test_pipeline_pool_initialization_is_single_flight_c7263() -> None:
 
     with (
         patch(
-            "services.pipeline_db._load_pipeline_sink_config",
+            "iot_twin.services.pipelines.pipeline_db._load_pipeline_sink_config",
             AsyncMock(
                 return_value={
                     "lb_project_id": "project",
@@ -74,15 +76,15 @@ async def test_pipeline_pool_initialization_is_single_flight_c7263() -> None:
             ),
         ),
         patch(
-            "services.pipeline_db._resolve_endpoint_host_bounded",
+            "iot_twin.services.pipelines.pipeline_db._resolve_endpoint_host_bounded",
             AsyncMock(return_value="host"),
         ),
         patch(
-            "services.pipeline_db.PipelineLakebaseHandle",
+            "iot_twin.services.pipelines.pipeline_db.PipelineLakebaseHandle",
             MagicMock(return_value=handle),
         ) as handle_factory,
         patch(
-            "services.pipeline_db._initialize_handle",
+            "iot_twin.services.pipelines.pipeline_db._initialize_handle",
             AsyncMock(side_effect=initialize_once),
         ) as initialize,
     ):

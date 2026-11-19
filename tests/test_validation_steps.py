@@ -1,6 +1,6 @@
 """Unit tests for the effectful realtime validation executors (spec §1.10).
 
-These exercise the *branching / wiring* of ``services/validation_steps.py`` with
+These exercise the *branching / wiring* of ``services/validation/validation_steps.py`` with
 the cluster command execution and Lakebase connections mocked out — the live
 streaming path stays behind ``tests/test_integration_validation.py`` (opt-in).
 
@@ -20,10 +20,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from services import health_checks as hc
-from services import validation_state_machine as sm
-from services import validation_steps as vs
-from services.validation_service import StepContext, StepResult
+from iot_twin.services import health_checks as hc
+from iot_twin.services.validation import validation_state_machine as sm
+from iot_twin.services.validation import validation_steps as vs
+from iot_twin.services.validation.validation_service import StepContext, StepResult
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "test_schema"

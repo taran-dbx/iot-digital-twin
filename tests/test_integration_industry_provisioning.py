@@ -28,7 +28,7 @@ INDUSTRY = "spiketest"
 CATALOG = os.getenv("UC_CATALOG", "")
 SCHEMA = os.getenv("UC_SCHEMA", "")
 _VENDORED_LAKETS = str(
-    Path(__file__).resolve().parent.parent / "databricks" / "vendor" / "lakets.sql"
+    Path(__file__).resolve().parent.parent / "src" / "iot_twin" / "resources" / "lakets.sql"
 )
 
 
@@ -55,7 +55,7 @@ def _warehouse_or_skip(ws):
 
 
 async def _catalog_exists(ws, wh, catalog: str) -> bool:
-    from services.dbsql_service import execute_dbsql
+    from iot_twin.services.dbsql_service import execute_dbsql
 
     res = await execute_dbsql(f"SHOW CATALOGS LIKE '{catalog}'", wh)
     return res["row_count"] > 0
@@ -63,10 +63,10 @@ async def _catalog_exists(ws, wh, catalog: str) -> bool:
 
 @pytest.mark.asyncio
 async def test_integration_full_provision_and_teardown() -> None:
-    from services import industry_catalog_service as ics
-    from services import industry_provisioning_service as ips
-    from services import pipelines_project_service as pps
-    from services.dbsql_service import execute_dbsql
+    from iot_twin.services.dbsql_service import execute_dbsql
+    from iot_twin.services.industry import industry_catalog_service as ics
+    from iot_twin.services.industry import industry_provisioning_service as ips
+    from iot_twin.services.pipelines import pipeline_project_service as pps
 
     if not CATALOG or not SCHEMA:
         pytest.skip("UC_CATALOG / UC_SCHEMA not set — integration provisioning skipped")

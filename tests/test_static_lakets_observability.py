@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = REPO_ROOT / "static" / "dist"
-APP_PY = REPO_ROOT / "app.py"
+APP_PY = REPO_ROOT / "src" / "iot_twin" / "app.py"
 INDEX_HTML = DIST_ROOT / "index.html"
 OBSERVABILITY_JS = DIST_ROOT / "lakets-observability.js"
 OBSERVABILITY_CSS = DIST_ROOT / "lakets-observability.css"
@@ -31,7 +31,7 @@ def test_index_loads_observer_before_main_bundle_c7226_smoke_regression() -> Non
     assert module_bundle is not None
     assert observer_script < module_bundle.start()
     assert 'href="/static/dist/lakets-observability.css"' in index
-    assert 'app.mount("/static", StaticFiles(directory="static")' in app_source
+    assert 'app.mount("/static", StaticFiles(directory=STATIC_DIR)' in app_source
     assert OBSERVABILITY_JS.is_file()
     assert OBSERVABILITY_CSS.is_file()
 

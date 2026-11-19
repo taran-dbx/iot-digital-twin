@@ -1,4 +1,4 @@
-"""Tests for services.lakets_service — LakeTS bootstrap + version probe."""
+"""Tests for iot_twin.services.lakets.lakets_service — LakeTS bootstrap + version probe."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services import lakets_service
+from iot_twin.services.lakets import lakets_service
 
 
 # ---------------------------------------------------------------------------

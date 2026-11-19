@@ -1,7 +1,7 @@
 """Tests for the one-click pipeline-setup orchestrator + route.
 
 Covers:
-- ``services.pipeline_setup_service.setup_pipeline_lakebase`` — step ordering,
+- ``iot_twin.services.pipelines.pipeline_setup_service.setup_pipeline_lakebase`` — step ordering,
   create_new_project branching, per-rollup create_rollup calls, deploy with all
   four ops jobs enabled, and NON-FATAL per-step failures.
 - ``POST /api/setup/pipeline-lakebase`` — validation + delegation.
@@ -21,7 +21,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from services import pipeline_setup_service
+from iot_twin.services.pipelines import pipeline_setup_service
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,7 +81,7 @@ def _default_patchers() -> dict:
     """Return the default set of patchers (mocks) for the orchestrator."""
     return {
         "ensure_streaming_sp": patch(
-            "services.pipeline_setup_service.ensure_streaming_sp",
+            "iot_twin.services.pipelines.pipeline_setup_service.ensure_streaming_sp",
             new=AsyncMock(
                 return_value={
                     "client_id": "sp-123",
@@ -91,23 +91,23 @@ def _default_patchers() -> dict:
             ),
         ),
         "provision_project": patch(
-            "services.pipeline_setup_service.provision_lakebase_project_and_branch",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_project_and_branch",
             new=AsyncMock(return_value=[{"resource": "project", "status": "created"}]),
         ),
         "provision_role": patch(
-            "services.pipeline_setup_service.provision_lakebase_role",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_role",
             new=AsyncMock(return_value=[{"resource": "role", "status": "created"}]),
         ),
         "provision_table": patch(
-            "services.pipeline_setup_service.provision_lakebase_table",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_table",
             new=AsyncMock(return_value={"resource": "table", "status": "created"}),
         ),
         "create_rollup": patch(
-            "services.pipeline_setup_service.lakets_service.create_rollup",
+            "iot_twin.services.pipelines.pipeline_setup_service.lakets_service.create_rollup",
             new=AsyncMock(return_value={"resource": "rollup", "status": "created"}),
         ),
         "deploy_jobs": patch(
-            "services.pipeline_setup_service.deploy_lakets_ops_jobs",
+            "iot_twin.services.pipelines.pipeline_setup_service.deploy_lakets_ops_jobs",
             new=MagicMock(return_value=[{"job": "partition", "status": "created"}]),
         ),
         "ws": patch.object(pipeline_setup_service, "_new_ws", return_value=_make_ws()),
@@ -143,7 +143,7 @@ class TestStepOrdering:
         patchers = _default_patchers()
         proj_mock = AsyncMock(return_value=[{"resource": "project", "status": "created"}])
         patchers["provision_project"] = patch(
-            "services.pipeline_setup_service.provision_lakebase_project_and_branch",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_project_and_branch",
             new=proj_mock,
         )
         with ExitStack() as stack:
@@ -163,7 +163,7 @@ class TestStepOrdering:
         patchers = _default_patchers()
         proj_mock = AsyncMock(return_value=[])
         patchers["provision_project"] = patch(
-            "services.pipeline_setup_service.provision_lakebase_project_and_branch",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_project_and_branch",
             new=proj_mock,
         )
         with ExitStack() as stack:
@@ -195,7 +195,7 @@ class TestRollups:
         patchers = _default_patchers()
         rollup_mock = AsyncMock(return_value={"resource": "rollup", "status": "created"})
         patchers["create_rollup"] = patch(
-            "services.pipeline_setup_service.lakets_service.create_rollup",
+            "iot_twin.services.pipelines.pipeline_setup_service.lakets_service.create_rollup",
             new=rollup_mock,
         )
         with ExitStack() as stack:
@@ -218,7 +218,7 @@ class TestRollups:
         rollup_mock = AsyncMock(return_value={"resource": "rollup", "status": "created"})
         connect_mock = AsyncMock(return_value=_stub_conn())
         patchers["create_rollup"] = patch(
-            "services.pipeline_setup_service.lakets_service.create_rollup",
+            "iot_twin.services.pipelines.pipeline_setup_service.lakets_service.create_rollup",
             new=rollup_mock,
         )
         patchers["connect"] = patch("asyncpg.connect", new=connect_mock)
@@ -245,7 +245,7 @@ class TestDeployJobs:
         patchers = _default_patchers()
         deploy_mock = MagicMock(return_value=[{"job": "x", "status": "created"}])
         patchers["deploy_jobs"] = patch(
-            "services.pipeline_setup_service.deploy_lakets_ops_jobs",
+            "iot_twin.services.pipelines.pipeline_setup_service.deploy_lakets_ops_jobs",
             new=deploy_mock,
         )
         with ExitStack() as stack:
@@ -277,19 +277,19 @@ class TestNonFatal:
         rollup_mock = AsyncMock(return_value={"resource": "rollup", "status": "created"})
         deploy_mock = MagicMock(return_value=[{"job": "x", "status": "created"}])
         patchers["provision_role"] = patch(
-            "services.pipeline_setup_service.provision_lakebase_role",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_role",
             new=AsyncMock(side_effect=Exception("role boom")),
         )
         patchers["provision_table"] = patch(
-            "services.pipeline_setup_service.provision_lakebase_table",
+            "iot_twin.services.pipelines.pipeline_setup_service.provision_lakebase_table",
             new=table_mock,
         )
         patchers["create_rollup"] = patch(
-            "services.pipeline_setup_service.lakets_service.create_rollup",
+            "iot_twin.services.pipelines.pipeline_setup_service.lakets_service.create_rollup",
             new=rollup_mock,
         )
         patchers["deploy_jobs"] = patch(
-            "services.pipeline_setup_service.deploy_lakets_ops_jobs",
+            "iot_twin.services.pipelines.pipeline_setup_service.deploy_lakets_ops_jobs",
             new=deploy_mock,
         )
         with ExitStack() as stack:
@@ -316,7 +316,7 @@ class TestNonFatal:
     async def test_deploy_failure_surfaced_not_raised(self) -> None:
         patchers = _default_patchers()
         patchers["deploy_jobs"] = patch(
-            "services.pipeline_setup_service.deploy_lakets_ops_jobs",
+            "iot_twin.services.pipelines.pipeline_setup_service.deploy_lakets_ops_jobs",
             new=MagicMock(side_effect=Exception("deploy boom")),
         )
         with ExitStack() as stack:
@@ -340,7 +340,7 @@ class TestNonFatal:
 
         patchers = _default_patchers()
         patchers["create_rollup"] = patch(
-            "services.pipeline_setup_service.lakets_service.create_rollup",
+            "iot_twin.services.pipelines.pipeline_setup_service.lakets_service.create_rollup",
             new=AsyncMock(side_effect=_rollup),
         )
         with ExitStack() as stack:
@@ -369,8 +369,8 @@ class TestNonFatal:
 
 
 def _build_app() -> FastAPI:
-    from core.state import get_app_state
-    from routes.setup import router as setup_router
+    from iot_twin.core.state import get_app_state
+    from iot_twin.routes.setup import router as setup_router
 
     app = FastAPI()
     app.include_router(setup_router)
@@ -398,7 +398,7 @@ class TestSetupRoute:
                 "lb_project_id": params["lb_project_id"],
             }
 
-        with patch("routes.setup.setup_pipeline_lakebase", new=_fake_setup):
+        with patch("iot_twin.routes.setup.setup_pipeline_lakebase", new=_fake_setup):
             status, payload = await _post(
                 {
                     "pipeline_id": "pipe-1",

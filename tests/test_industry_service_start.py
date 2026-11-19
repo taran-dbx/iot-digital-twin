@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-import services.industry_service as isvc
+import iot_twin.services.industry.industry_service as isvc
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "test_schema"
@@ -246,7 +246,7 @@ def test_provision_catalog_schema_calls_provision_uc_catalog(monkeypatch):
         return [{"resource": "ok", "status": "created"}]
 
     monkeypatch.setattr(
-        "services.provisioning_service.provision_uc_catalog", fake_provision_uc_catalog
+        "iot_twin.services.provisioning_service.provision_uc_catalog", fake_provision_uc_catalog
     )
 
     result = _run(isvc._provision_catalog_schema("pharmaceutical", "realtime"))
@@ -262,7 +262,9 @@ def test_provision_lakebase_branch_calls_setup_pipeline_lakebase(monkeypatch):
         calls["params"] = params
         return {"success": True, "steps": []}
 
-    monkeypatch.setattr("services.pipeline_setup_service.setup_pipeline_lakebase", fake_setup)
+    monkeypatch.setattr(
+        "iot_twin.services.pipelines.pipeline_setup_service.setup_pipeline_lakebase", fake_setup
+    )
 
     result = _run(isvc._provision_lakebase_branch(None, "energy", "realtime", "pid-1"))
 

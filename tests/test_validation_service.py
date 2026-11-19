@@ -12,8 +12,8 @@ import copy
 
 import pytest
 
-from services import validation_service as vs
-from services import validation_state_machine as sm
+from iot_twin.services.validation import validation_service as vs
+from iot_twin.services.validation import validation_state_machine as sm
 
 pytestmark = pytest.mark.asyncio
 

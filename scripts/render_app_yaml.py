@@ -169,7 +169,7 @@ def render_app_yaml(profile: dict[str, str]) -> str:
         "command:\n"
         '  - "/bin/sh"\n'
         '  - "-c"\n'
-        '  - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"\n'
+        '  - "uvicorn --app-dir src iot_twin.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"\n'
         "\n"
         "env:\n"
         f"{body}\n"

@@ -34,13 +34,18 @@ dev = [
     "pre-commit==4.7.0",
 ]
 
-# The app is deployed as a source tree, not installed as a package.
-[tool.setuptools]
-py-modules = []
+# The app is deployed as a source tree (``uvicorn --app-dir src iot_twin.app:app``);
+# the package config below also makes ``pip install -e .`` work for development.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+iot_twin = ["resources/*.sql"]
 
 # ── Ruff ───────────────────────────────────────────────────────────────────
 [tool.ruff]
 target-version = "py311"
+src = ["src"]
 line-length = 100
 extend-exclude = ["client", "qa", "static", "design-ref", "lib"]
 
@@ -69,15 +74,7 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = [
-    "backend",
-    "core",
-    "domain",
-    "models",
-    "routes",
-    "scenario_engine",
-    "services",
-]
+known-first-party = ["iot_twin"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests build fixtures after sys.path / env tweaks and assert broad failures
@@ -95,6 +92,7 @@ docstring-code-format = false
 # ── Pytest ─────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 # Async tests opt in explicitly with @pytest.mark.asyncio.
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
@@ -104,10 +102,10 @@ markers = [
 ]
 
 # ── Mypy ───────────────────────────────────────────────────────────────────
-# Lenient baseline: start with core/ and models/, widen as types land.
+# Lenient baseline: start with core/ and models/ (src/iot_twin/), widen as types land.
 [tool.mypy]
 python_version = "3.11"
-files = ["core", "models"]
+files = ["src/iot_twin/core", "src/iot_twin/models"]
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_configs = true

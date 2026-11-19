@@ -13,13 +13,13 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.state import AppState
-from domain.catalog import AlertRule, list_alert_rules
-from models import app_schema
-from routes.alerts import router as alerts_router
-from services.alert_engine import AlertEngine
-from services.alert_responses import AlertResponseStore, response_store_for
-from services.production_control import ProductionControl
+from iot_twin.core.state import AppState
+from iot_twin.domain.catalog import AlertRule, list_alert_rules
+from iot_twin.models import app_schema
+from iot_twin.routes.alerts import router as alerts_router
+from iot_twin.services.alerts.alert_engine import AlertEngine
+from iot_twin.services.alerts.alert_responses import AlertResponseStore, response_store_for
+from iot_twin.services.production_control import ProductionControl
 from tests.test_production_control import FakeWorkspace
 
 SPINDLE = {
@@ -95,7 +95,7 @@ async def cell() -> AsyncGenerator[tuple[AsyncClient, AppState, Clock, asyncio.Q
     app.state.app_state = state
     app.include_router(alerts_router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        with patch("routes.alerts.app_permissions.is_admin", return_value=True):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=True):
             yield client, state, clock, queue
 
 
@@ -201,7 +201,7 @@ class TestAlertResponses:
             "/api/alerts/does-not-exist/responses", json={"action": "hold_batch"}
         )
         assert missing.status_code == 404
-        with patch("routes.alerts.app_permissions.is_admin", return_value=False):
+        with patch("iot_twin.routes.alerts.app_permissions.is_admin", return_value=False):
             denied = await client.post(
                 f"/api/alerts/{alert_id}/responses", json={"action": "hold_batch"}
             )

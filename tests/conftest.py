@@ -14,10 +14,11 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-# Ensure the project root is on sys.path so imports resolve.
-PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# Ensure ``src/`` is on sys.path so ``import iot_twin`` resolves even without
+# ``pip install -e .`` (pytest's ``pythonpath`` setting does the same).
+SRC_ROOT = str(Path(__file__).resolve().parent.parent / "src")
+if SRC_ROOT not in sys.path:
+    sys.path.insert(0, SRC_ROOT)
 
 
 # ---------------------------------------------------------------------------
@@ -81,8 +82,8 @@ def _pre_mock_sdk() -> None:
 
 _pre_mock_sdk()
 
-from core.state import AppState
-from domain.catalog import list_alert_rules
+from iot_twin.core.state import AppState
+from iot_twin.domain.catalog import list_alert_rules
 
 
 @pytest.fixture()
@@ -96,7 +97,7 @@ def instant_alert_rules():
     def _rules(industry: str):
         return tuple(replace(rule, duration_s=0.0) for rule in list_alert_rules(industry))
 
-    with patch("services.alert_engine.list_alert_rules", side_effect=_rules):
+    with patch("iot_twin.services.alerts.alert_engine.list_alert_rules", side_effect=_rules):
         yield
 
 
@@ -132,7 +133,7 @@ def _build_test_app(state: AppState):
     """Create a minimal FastAPI app wired to the given AppState."""
     from fastapi import FastAPI
 
-    from routes.health import router as health_router
+    from iot_twin.routes.health import router as health_router
 
     test_app = FastAPI()
     test_app.state.app_state = state

@@ -24,15 +24,17 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 _ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+# Repo root (for ``scripts.*``) and src/ (for ``iot_twin``) must be importable.
+for _path in (_ROOT / "src", _ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-
-from core.state import AppState
-from routes.provisioning import router as provisioning_router
 from scripts._profile import require_profile
+
+from iot_twin.core.state import AppState
+from iot_twin.routes.provisioning import router as provisioning_router
 
 PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
@@ -40,7 +42,7 @@ DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
 TABLE = os.getenv("PG_TABLE", "sensor_readings")
 LAKETS_SQL_PATH = os.getenv(
     "LAKETS_SQL_PATH",
-    str(_ROOT / "databricks" / "vendor" / "lakets.sql"),
+    str(_ROOT / "src" / "iot_twin" / "resources" / "lakets.sql"),
 )
 
 

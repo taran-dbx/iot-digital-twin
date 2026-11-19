@@ -8,13 +8,14 @@ import csv
 import hashlib
 import importlib
 import io
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from services import runtime_wheel_service as rws
+from iot_twin.services import runtime_wheel_service as rws
 
 
 def _sha256_record(data: bytes) -> str:
@@ -175,3 +176,84 @@ class TestRuntimeWheelAugmentation:
         monkeypatch.setenv("RUNTIME_WHEEL_SHA256", "0" * 64)
         with pytest.raises(rws.RuntimeWheelError):
             rws.augment_runtime_wheel(source)
+
+
+_SUBPROCESS_IMPORT_SCRIPT = """
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import domain
+import scenario_engine
+import domain.catalog
+import scenario_engine.cadence
+import scenario_engine.engine
+
+assert "iot_twin" not in sys.modules, "wheel code must not import the iot_twin package"
+for module in (domain, scenario_engine, domain.catalog, scenario_engine.engine):
+    assert module.__file__.startswith(sys.argv[1]), module.__file__
+assert hasattr(domain, "get_domain")
+assert hasattr(scenario_engine, "ScenarioEngine")
+print("ok")
+"""
+
+
+def _source_package_members() -> set[str]:
+    return {
+        path.relative_to(rws.PACKAGE_ROOT).as_posix()
+        for package in ("domain", "scenario_engine")
+        for path in (rws.PACKAGE_ROOT / package).rglob("*.py")
+        if "__pycache__" not in path.parts
+    }
+
+
+class TestRuntimeWheelLayout:
+    """Job clusters import ``domain`` / ``scenario_engine`` as top-level packages."""
+
+    def _built_wheel(self, tmp_path: Path) -> Path:
+        source = _minimal_simulator_wheel(tmp_path / rws.WHEEL_FILENAME)
+        dest = tmp_path / "built" / rws.WHEEL_FILENAME
+        dest.parent.mkdir()
+        dest.write_bytes(rws.augment_runtime_wheel(source))
+        return dest
+
+    def test_members_are_toplevel_packages(self, tmp_path: Path) -> None:
+        dest = self._built_wheel(tmp_path)
+        with zipfile.ZipFile(dest) as archive:
+            names = set(archive.namelist())
+        expected = _source_package_members()
+        assert {"domain/__init__.py", "domain/catalog.py"} <= expected
+        assert expected <= names
+        added = {n for n in names if n.startswith(("domain/", "scenario_engine/"))}
+        assert added == expected
+        assert not [n for n in names if n.startswith(("iot_twin", "src/"))]
+
+    def test_member_sources_do_not_reference_iot_twin(self, tmp_path: Path) -> None:
+        dest = self._built_wheel(tmp_path)
+        with zipfile.ZipFile(dest) as archive:
+            for name in _source_package_members():
+                text = archive.read(name).decode("utf-8")
+                assert "iot_twin" not in text, name
+
+    def test_extracted_wheel_imports_in_clean_interpreter(self, tmp_path: Path) -> None:
+        dest = self._built_wheel(tmp_path)
+        extract = tmp_path / "extract"
+        extract.mkdir()
+        with zipfile.ZipFile(dest) as archive:
+            archive.extractall(extract)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", _SUBPROCESS_IMPORT_SCRIPT, str(extract)],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "ok"
+
+    def test_real_bundled_wheel_is_augmentable(self, tmp_path: Path) -> None:
+        source = rws.bundled_wheel_path()
+        assert source.is_file(), f"bundled simulator wheel missing at {source}"
+        payload = rws.augment_runtime_wheel(source)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = set(archive.namelist())
+        assert _source_package_members() <= names
