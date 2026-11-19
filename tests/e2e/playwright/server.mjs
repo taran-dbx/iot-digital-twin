@@ -4,7 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const port = Number(process.env.PORT ?? 4317);
-const dist = fileURLToPath(new URL("../../static/dist/", import.meta.url));
+const dist = fileURLToPath(new URL("../../../static/dist/", import.meta.url));
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",

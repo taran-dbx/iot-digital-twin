@@ -10,7 +10,7 @@ import { expect, test } from "../fixtures/test";
 import { ModeDashboardPage } from "../pages/mode-dashboard.page";
 
 const evidenceDir = fileURLToPath(
-  new URL("../../../qa-reports/evidence/", import.meta.url),
+  new URL("../../../../qa-reports/evidence/", import.meta.url),
 );
 
 test.describe("[Windsor] Genie investigation copilot", () => {

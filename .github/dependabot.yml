@@ -19,7 +19,7 @@ updates:
         patterns: [eslint*, "@eslint/*", typescript-eslint, globals]
 
   - package-ecosystem: npm
-    directory: /qa/playwright
+    directory: /tests/e2e/playwright
     schedule:
       interval: weekly
     open-pull-requests-limit: 3

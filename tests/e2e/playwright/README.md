@@ -5,8 +5,8 @@ bundle with SPA fallback behavior and mocks only the APIs required by each
 scenario.
 
 ```bash
-cd qa/playwright
-npm install
+cd tests/e2e/playwright
+npm ci
 npx playwright install chromium
 npm test
 ```
@@ -14,7 +14,7 @@ npm test
 Set `PLAYWRIGHT_BASE_URL` to run the same tests against a deployed app instead
 of the local static server.
 
-Reports are written to `qa-reports/`:
+Reports are written to `qa-reports/` (repo root, gitignored):
 
 - `results/playwright.xml` — JUnit for CI/TestQuality ingestion
 - `results/playwright.json` — input for `qa-shadow-report`

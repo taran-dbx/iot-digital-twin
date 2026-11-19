@@ -49,7 +49,7 @@ client/                  React + Vite + TypeScript SPA source
 static/dist/             built SPA served by the app (committed; CI checks it is fresh)
 lib/                     simulator wheel installed by requirements.txt
 tests/                   pytest suite
-qa/playwright/           browser QA against the built SPA
+tests/e2e/playwright/    browser QA against the built SPA
 scripts/                 ops and end-to-end tooling (profile-driven)
 deploy/workspaces/       workspace profile templates (*.profile.example)
 databricks.yml           Declarative Automation Bundle (DABs) definition
@@ -129,7 +129,7 @@ variables, targets, binding, prerequisites (service-principal grants) and rollba
 make check          # everything CI runs
 make test           # pytest only
 cd client && npm run lint && npm run typecheck && npm run build
-cd qa/playwright && npm install && npx playwright install chromium && npm test
+cd tests/e2e/playwright && npm ci && npx playwright install chromium && npm test
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff (lint and format), mypy on `core` and `models`,
@@ -144,7 +144,7 @@ run locally through `pre-commit`.
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, auth, storage |
 | [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites |
 | [docs/deployment-playbook.md](docs/deployment-playbook.md) | Legacy manual runbook and troubleshooting notes (partly superseded) |
-| [qa/playwright/README.md](qa/playwright/README.md) | Browser QA |
+| [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [docs/archive/](docs/archive/) | Historical plans and snapshots |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |

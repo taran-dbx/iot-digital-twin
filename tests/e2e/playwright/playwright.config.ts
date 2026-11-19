@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig, devices } from "@playwright/test";
 
-const qaRoot = fileURLToPath(new URL("..", import.meta.url));
-const reportsRoot = join(qaRoot, "..", "qa-reports");
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const reportsRoot = join(repoRoot, "qa-reports");
 
 export default defineConfig({
   testDir: "./specs",
