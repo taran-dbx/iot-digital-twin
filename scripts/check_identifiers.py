@@ -25,8 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 ALLOW_MARKER = "check-identifiers: allow"
 MAX_BYTES = 5_000_000
-# Lockfile `resolved` URLs point at an internal npm mirror (deferred; see PR notes).
-EXCLUDED_PATHS = frozenset({"client/package-lock.json"})
 
 # First DNS label of a *.cloud.databricks.com host that is a known placeholder.
 _PLACEHOLDER_LABEL = re.compile(
@@ -123,7 +121,7 @@ def run(files: Iterable[str]) -> list[Hit]:
     hits: list[Hit] = []
     for name in files:
         path = (REPO_ROOT / name) if not Path(name).is_absolute() else Path(name)
-        if name in EXCLUDED_PATHS or not path.is_file() or path.resolve() == SELF:
+        if not path.is_file() or path.resolve() == SELF:
             continue
         hits.extend(scan_file(path, name))
     return hits

@@ -251,7 +251,7 @@ def test_legacy_pipeline_pages_are_unreachable_c7263():
     """[C7263][defect][regression] Industry UI never opens legacy pipeline pages."""
     root = Path(__file__).parents[1]
     bundle = _bundle()
-    app = (root / "client" / "src" / "app.tsx").read_text(encoding="utf-8")
+    app = (root / "client" / "src" / "App.tsx").read_text(encoding="utf-8")
     pipeline_card = (
         root / "client" / "src" / "components" / "industry" / "pipeline-card.tsx"
     ).read_text(encoding="utf-8")
