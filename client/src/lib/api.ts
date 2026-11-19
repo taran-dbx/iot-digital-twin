@@ -9,6 +9,11 @@ import type {
   GenieAskRequest,
   GenieConversationIds,
   GenieMessageResponse,
+  GeniePipelineAskRequest,
+  GeniePipelineMessageResponse,
+  GeniePipelineStarters,
+  GeniePipelineStatus,
+  GenieQueryResult,
   GenieStatusResponse,
   LakebaseProvisionParams,
   NodeTypesResponse,
@@ -50,6 +55,30 @@ import type { PipelineMode } from "@/lib/industries-api";
 
 const BASE_URL = "/api";
 
+/** Error thrown by {@link request} for non-2xx responses; carries the HTTP status. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function isApiStatus(err: unknown, status: number): boolean {
+  return err instanceof ApiError && err.status === status;
+}
+
+function errorDetail(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const { error, detail } = body as { error?: unknown; detail?: unknown };
+    if (typeof error === "string" && error) return error;
+    if (typeof detail === "string" && detail) return detail;
+  }
+  return `Request failed: ${status}`;
+}
+
 async function request<T>(
   endpoint: string,
   options?: RequestInit
@@ -64,8 +93,8 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || body.detail || `Request failed: ${res.status}`);
+    const body: unknown = await res.json().catch(() => ({}));
+    throw new ApiError(errorDetail(body, res.status), res.status);
   }
 
   return res.json();
@@ -618,4 +647,57 @@ export const api = {
     request<GenieMessageResponse>(
       `/genie/conversations/${conversationId}/messages/${messageId}`,
     ),
+
+  // ── Per-pipeline Genie (one space per setup × mode) ──────────────────────
+  getPipelineGenieStatus: (setupId: string, mode: PipelineMode) =>
+    request<GeniePipelineStatus>(`${pipelineGenieBase(setupId, mode)}/status`),
+
+  getPipelineGenieStarters: (setupId: string, mode: PipelineMode) =>
+    request<GeniePipelineStarters>(`${pipelineGenieBase(setupId, mode)}/starters`),
+
+  startPipelineGenieConversation: (
+    setupId: string,
+    mode: PipelineMode,
+    body: GeniePipelineAskRequest,
+  ) =>
+    request<GenieConversationIds>(`${pipelineGenieBase(setupId, mode)}/conversations`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  addPipelineGenieMessage: (
+    setupId: string,
+    mode: PipelineMode,
+    conversationId: string,
+    body: GeniePipelineAskRequest,
+  ) =>
+    request<GenieConversationIds>(
+      `${pipelineGenieBase(setupId, mode)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  getPipelineGenieMessage: (
+    setupId: string,
+    mode: PipelineMode,
+    conversationId: string,
+    messageId: string,
+  ) =>
+    request<GeniePipelineMessageResponse>(
+      `${pipelineGenieBase(setupId, mode)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    ),
+
+  getPipelineGenieAttachmentResult: (
+    setupId: string,
+    mode: PipelineMode,
+    conversationId: string,
+    messageId: string,
+    attachmentId: string,
+  ) =>
+    request<GenieQueryResult>(
+      `${pipelineGenieBase(setupId, mode)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/result`,
+    ),
 };
+
+function pipelineGenieBase(setupId: string, mode: PipelineMode): string {
+  return `/genie/pipelines/${encodeURIComponent(setupId)}/${encodeURIComponent(mode)}`;
+}

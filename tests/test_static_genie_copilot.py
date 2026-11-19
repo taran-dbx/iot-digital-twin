@@ -55,7 +55,11 @@ def test_api_client_exposes_genie_endpoints_c7505_regression() -> None:
 
 def test_copilot_is_investigation_drawer_c7505_usability() -> None:
     """[C7505][usability] Copilot is a right-side drawer, not a floating bubble."""
-    component = _read("components", "dashboard", "genie-copilot.tsx")
+    # Drawer chrome lives in genie-drawer.tsx, shared by the workspace-wide and
+    # per-pipeline copilots; genie-copilot.tsx dispatches between them.
+    component = _read("components", "dashboard", "genie-copilot.tsx") + _read(
+        "components", "dashboard", "genie-drawer.tsx"
+    )
     css = _read("styles", "dubois.css")
     assert 'data-testid="genie-copilot"' in component
     assert 'data-testid="genie-copilot-drawer"' in component
@@ -112,3 +116,52 @@ def test_production_bundle_ships_genie_copilot_c7505_smoke() -> None:
     ):
         assert marker in bundle, marker
     assert ".genie-drawer" in css
+
+
+def test_manufacturing_uses_per_pipeline_genie_regression() -> None:
+    """[regression] Manufacturing passes pipeline context; copilot gates on it."""
+    page = _read("pages", "manufacturing-cell-page.tsx")
+    assert "setupId={setupId ?? pipelineId}" in page
+    copilot = _read("components", "dashboard", "genie-copilot.tsx")
+    assert "GeniePipelineCopilot" in copilot
+    assert '"manufacturing"' in copilot
+    pipeline = _read("components", "dashboard", "genie-pipeline-copilot.tsx")
+    assert "Genie space not provisioned yet" in pipeline
+    api = _read("lib", "api.ts")
+    for fn in (
+        "getPipelineGenieStatus",
+        "getPipelineGenieStarters",
+        "startPipelineGenieConversation",
+        "addPipelineGenieMessage",
+        "getPipelineGenieMessage",
+        "getPipelineGenieAttachmentResult",
+    ):
+        assert fn in api, fn
+    assert "/genie/pipelines/" in api
+
+
+def test_production_bundle_ships_pipeline_genie_smoke() -> None:
+    """[smoke] Bundle includes per-pipeline Genie routes and result chart chrome."""
+    bundle = _bundle()
+    for marker in (
+        "/genie/pipelines/",
+        "Genie space not provisioned yet",
+        "genie-result",
+        "Show SQL",
+        "truncated to",
+    ):
+        assert marker in bundle, marker
+
+
+def test_genie_polling_is_shared_and_status_aware_regression() -> None:
+    """[regression] Both copilots poll via the shared helper; only terminal statuses stop it."""
+    types = _read("lib", "types.ts")
+    for status in ("SUBMITTED", "ASKING_AI", "PENDING_WAREHOUSE", "QUERY_RESULT_EXPIRED"):
+        assert status in types, status
+    poll = _read("lib", "genie-poll.ts")
+    assert "setInterval" not in poll
+    assert "This conversation expired - ask again." in poll
+    for name in ("genie-copilot.tsx",):
+        assert "startGeniePoll" in _read("components", "dashboard", name)
+    assert "startGeniePoll" in _read("hooks", "use-pipeline-genie.ts")
+    assert "class ApiError" in _read("lib", "api.ts")

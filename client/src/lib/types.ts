@@ -376,12 +376,23 @@ export interface AlertListResponse {
   alerts: AlertRecord[];
 }
 
+/**
+ * Genie message lifecycle. Only COMPLETED / FAILED / CANCELLED /
+ * QUERY_RESULT_EXPIRED are terminal; every other value — including statuses
+ * Genie adds later (mapped to UNKNOWN) — means "keep polling".
+ */
 export type GenieMessageStatus =
-  | "IN_PROGRESS"
+  | "SUBMITTED"
+  | "FETCHING_METADATA"
+  | "FILTERING_CONTEXT"
+  | "ASKING_AI"
+  | "PENDING_WAREHOUSE"
   | "EXECUTING_QUERY"
+  | "IN_PROGRESS"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED"
+  | "QUERY_RESULT_EXPIRED"
   | "UNKNOWN";
 
 export type GenieAllowlistStatus = "matched" | "mismatch" | "manual_required";
@@ -420,6 +431,54 @@ export interface GenieMessageResponse {
   content: string | null;
   attachments: Array<Record<string, unknown>>;
   error: string | null;
+}
+
+/** Per-pipeline Genie (`/api/genie/pipelines/{setup_id}/{mode}/status`). */
+export interface GeniePipelineStatus {
+  available: boolean;
+  space_id: string | null;
+  reason?: string;
+}
+
+export interface GeniePipelineStarters {
+  questions: string[];
+}
+
+export interface GeniePipelineAskRequest {
+  question: string;
+}
+
+export interface GenieAttachmentQuery {
+  sql: string;
+  description: string | null;
+}
+
+/**
+ * Per-pipeline Genie attachment, exactly as documented in
+ * docs/genie-pipeline-api.md: all four keys are always present.
+ */
+export interface GeniePipelineAttachment {
+  attachment_id: string;
+  text: string | null;
+  query: GenieAttachmentQuery | null;
+  suggested_questions: string[];
+}
+
+/** Same envelope as {@link GenieMessageResponse}, with typed attachments. */
+export interface GeniePipelineMessageResponse
+  extends Omit<GenieMessageResponse, "attachments"> {
+  attachments: GeniePipelineAttachment[];
+}
+
+export interface GenieResultColumn {
+  name: string;
+  type: string;
+}
+
+export interface GenieQueryResult {
+  columns: GenieResultColumn[];
+  rows: unknown[][];
+  truncated: boolean;
 }
 
 export interface GenieAskRequest {

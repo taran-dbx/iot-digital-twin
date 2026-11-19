@@ -935,6 +935,7 @@ export function ModeDashboardPage() {
         powered={powered}
         isAdmin={isAdmin}
         pipelineId={pipeline.id}
+        setupId={catalogMode?.setupId ?? null}
         refreshSec={refreshSec}
         onRefreshSec={setRefreshSec}
         nonce={lakebaseNonce}

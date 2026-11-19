@@ -46,6 +46,8 @@ export interface IndustryMode {
   pipelineId: string | null;
   /** Per-mode identity from the industry-first pipeline_deployment table. */
   deploymentId: string | null;
+  /** Owning pipeline_setup id when the catalog exposes it (per-pipeline Genie). */
+  setupId: string | null;
 }
 
 export interface IndustryKpi {
@@ -84,6 +86,7 @@ interface RawIndustryMode {
   status: string;
   pipeline_id?: string | null;
   deployment_id?: string | null;
+  setup_id?: string | null;
 }
 
 interface RawIndustry {
@@ -114,6 +117,7 @@ function mapMode(raw: RawIndustryMode): IndustryMode {
     status: raw.status as ModeStatus,
     pipelineId: raw.pipeline_id ?? null,
     deploymentId: raw.deployment_id ?? null,
+    setupId: raw.setup_id ?? null,
   };
 }
 
