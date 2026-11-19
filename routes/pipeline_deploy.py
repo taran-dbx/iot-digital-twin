@@ -46,9 +46,7 @@ def _require_admin(request: Request) -> None:
 def _require_db(state: AppState) -> Any:
     db = getattr(state, "app_backend_db", None)
     if db is None:
-        raise HTTPException(
-            status_code=503, detail="app-backend metadata database is unavailable"
-        )
+        raise HTTPException(status_code=503, detail="app-backend metadata database is unavailable")
     return db
 
 
@@ -109,9 +107,9 @@ async def deploy_pipeline_endpoint(
         raise HTTPException(
             status_code=409,
             detail={"error": str(exc), "outstanding": exc.outstanding},
-        )
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except cdf_reconciliation_service.RealtimeCdfError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except deployment_service.RuntimeOAuthCredentialError as exc:
@@ -170,9 +168,7 @@ async def stop_pipeline_endpoint(
     _validate_mode(mode)
     db = _require_db(state)
     job_id = await _resolve_job_id(db, setup_id, mode)
-    result = deployment_service.stop_pipeline(
-        job_id, continuous=mode != "zerobus"
-    )
+    result = deployment_service.stop_pipeline(job_id, continuous=mode != "zerobus")
     _invalidate_industry_runtime_cache(state)
     return result
 

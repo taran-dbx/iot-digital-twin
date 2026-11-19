@@ -53,7 +53,7 @@ async def shutdown(state: AppState) -> None:
     if state.db_available and state.db:
         try:
             await asyncio.wait_for(state.db.close(), timeout=2)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Lakebase pool close timed out")
 
     # Close the app-backend metadata pool — only if it is NOT the same object as
@@ -63,7 +63,7 @@ async def shutdown(state: AppState) -> None:
     if app_backend_db and app_backend_db is not state.db:
         try:
             await asyncio.wait_for(app_backend_db.close(), timeout=2)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("app-backend Lakebase pool close timed out")
         except Exception as exc:
             logger.warning("app-backend Lakebase close error: %s", exc)
@@ -73,7 +73,7 @@ async def shutdown(state: AppState) -> None:
     for pid, handle in list(pipeline_dbs.items()):
         try:
             await asyncio.wait_for(handle.close(), timeout=2)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Pipeline %s Lakebase close timed out", pid)
         except Exception as exc:
             logger.warning("Pipeline %s Lakebase close error: %s", pid, exc)

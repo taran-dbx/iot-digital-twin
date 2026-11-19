@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from dataclasses import field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Request, WebSocket
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 def _default_sources() -> dict[str, SourceMetrics]:
     from models.source_metrics import create_default_sources
+
     return create_default_sources()
 
 
@@ -53,9 +54,7 @@ class AppState:
 
     # Genie conversation ownership — process-local, fail-closed after restart
     genie_conversations: dict[str, dict[str, str]] = field(default_factory=dict)
-    genie_sdk_semaphore: asyncio.Semaphore = field(
-        default_factory=lambda: asyncio.Semaphore(4)
-    )
+    genie_sdk_semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
 
     # Background tasks
     simulator_task: asyncio.Task | None = None

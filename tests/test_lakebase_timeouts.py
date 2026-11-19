@@ -46,9 +46,7 @@ async def test_failed_handle_initialization_closes_resources_c7263(
     handle = SlowHandle()
     monkeypatch.setattr(pipeline_db, "_LAKEBASE_INIT_TIMEOUT_SECONDS", 0.01)
 
-    initialized = await pipeline_db._initialize_handle(
-        handle, description="test handle"
-    )
+    initialized = await pipeline_db._initialize_handle(handle, description="test handle")
 
     assert initialized is False
     assert handle.closed is True
@@ -64,25 +62,30 @@ async def test_pipeline_pool_initialization_is_single_flight_c7263() -> None:
         await asyncio.sleep(0.01)
         return True
 
-    with patch(
-        "services.pipeline_db._load_pipeline_sink_config",
-        AsyncMock(
-            return_value={
-                "lb_project_id": "project",
-                "lb_branch_id": "branch",
-                "lb_database": "database",
-            }
+    with (
+        patch(
+            "services.pipeline_db._load_pipeline_sink_config",
+            AsyncMock(
+                return_value={
+                    "lb_project_id": "project",
+                    "lb_branch_id": "branch",
+                    "lb_database": "database",
+                }
+            ),
         ),
-    ), patch(
-        "services.pipeline_db._resolve_endpoint_host_bounded",
-        AsyncMock(return_value="host"),
-    ), patch(
-        "services.pipeline_db.PipelineLakebaseHandle",
-        MagicMock(return_value=handle),
-    ) as handle_factory, patch(
-        "services.pipeline_db._initialize_handle",
-        AsyncMock(side_effect=initialize_once),
-    ) as initialize:
+        patch(
+            "services.pipeline_db._resolve_endpoint_host_bounded",
+            AsyncMock(return_value="host"),
+        ),
+        patch(
+            "services.pipeline_db.PipelineLakebaseHandle",
+            MagicMock(return_value=handle),
+        ) as handle_factory,
+        patch(
+            "services.pipeline_db._initialize_handle",
+            AsyncMock(side_effect=initialize_once),
+        ) as initialize,
+    ):
         first, second = await asyncio.gather(
             pipeline_db.get_pipeline_lakebase(state, "pipeline-1"),
             pipeline_db.get_pipeline_lakebase(state, "pipeline-1"),

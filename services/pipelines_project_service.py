@@ -85,9 +85,7 @@ def branch_resource_name(branch: str, project_id: str | None = None) -> str:
     return f"projects/{project_id or get_pipelines_project()}/branches/{branch}"
 
 
-def endpoint_resource_name(
-    branch: str, endpoint_id: str, project_id: str | None = None
-) -> str:
+def endpoint_resource_name(branch: str, endpoint_id: str, project_id: str | None = None) -> str:
     return f"projects/{project_id or get_pipelines_project()}/branches/{branch}/endpoints/{endpoint_id}"
 
 
@@ -102,9 +100,7 @@ def _is_already_exists(exc: Exception) -> bool:
 
 
 # --- Project ---------------------------------------------------------------
-def ensure_pipelines_project(
-    *, ws: Any | None = None, project_id: str | None = None
-) -> dict:
+def ensure_pipelines_project(*, ws: Any | None = None, project_id: str | None = None) -> dict:
     """Ensure the shared ``iot-pipelines`` project exists (create if missing).
 
     Returns ``{"project", "name", "status"}`` where status is
@@ -273,7 +269,9 @@ async def provision_industry_branch(
         )
         logger.info(
             "Resized primary endpoint %s to CU [%s, %s]",
-            primary_name, primary_min_cu, primary_max_cu,
+            primary_name,
+            primary_min_cu,
+            primary_max_cu,
         )
     except Exception as exc:
         logger.warning("Primary endpoint resize skipped for %s: %s", primary_name, exc)
@@ -334,8 +332,12 @@ async def provision_industry_branch(
     #     read/write path (get_read_conn / get_write_conn) fails with "password
     #     authentication failed" on every freshly provisioned industry branch.
     result["app_sp_role"] = await _ensure_app_sp_branch_role(
-        ws, project_id, branch,
-        db=db, setup_id=setup_id, deployment_id=deployment_id,
+        ws,
+        project_id,
+        branch,
+        db=db,
+        setup_id=setup_id,
+        deployment_id=deployment_id,
     )
 
     # 6. Ledger.
@@ -397,9 +399,7 @@ async def _ensure_app_sp_branch_role(
 
     client_id = _app_sp_client_id(ws)
     if not client_id:
-        logger.warning(
-            "Could not resolve app SP client id — skipping branch role for %s", branch
-        )
+        logger.warning("Could not resolve app SP client id — skipping branch role for %s", branch)
         return {"status": "skipped", "reason": "unresolved app SP client id"}
 
     try:
@@ -410,9 +410,7 @@ async def _ensure_app_sp_branch_role(
             ws=ws,
         )
     except Exception as exc:  # pragma: no cover - provision_lakebase_role is best-effort
-        logger.warning(
-            "App SP branch-role registration failed for %s (non-fatal): %s", branch, exc
-        )
+        logger.warning("App SP branch-role registration failed for %s (non-fatal): %s", branch, exc)
         role_results = [{"status": "failed", "error": str(exc)[:200]}]
 
     if db is not None and setup_id is not None:

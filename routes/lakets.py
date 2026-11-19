@@ -33,6 +33,8 @@ _LAKETS_DASHBOARD_TIMEOUT_SECONDS = 30.0
 async def _probe_wait(coro, *, timeout: float = _LAKEBASE_PROBE_TIMEOUT_SECONDS):
     """Await ``coro`` with a deadline and fully reap cancellation."""
     return await asyncio.wait_for(coro, timeout=timeout)
+
+
 _CDF_STATUS_SQL = """
 SELECT t.status
 FROM wal2delta.tables t
@@ -56,8 +58,7 @@ WHERE r.schema_name = 'public'
 
 def _unavailable_dashboard(reason: str) -> dict[str, dict[str, Any]]:
     return {
-        section: {"value": None, "reason": reason}
-        for section in lakets_service.DASHBOARD_SECTIONS
+        section: {"value": None, "reason": reason} for section in lakets_service.DASHBOARD_SECTIONS
     }
 
 
@@ -199,9 +200,7 @@ async def get_cdf_status(
         try:
             industry = cdf_reconciliation_service.normalize_industry(industry)
         except ValueError:
-            return JSONResponse(
-                status_code=400, content={"error": "Invalid industry"}
-            )
+            return JSONResponse(status_code=400, content={"error": "Invalid industry"})
         try:
             UUID(pipeline_id)
         except ValueError:
@@ -210,9 +209,7 @@ async def get_cdf_status(
                 content={"error": "Invalid pipeline deployment id"},
             )
         try:
-            is_bound = await _is_realtime_industry_deployment(
-                state, pipeline_id, industry
-            )
+            is_bound = await _is_realtime_industry_deployment(state, pipeline_id, industry)
         except Exception as exc:
             logger.warning(
                 "CDF deployment validation failed for %s: %s",
@@ -243,13 +240,10 @@ async def get_cdf_status(
             ),
             timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             **none_result,
-            "reason": (
-                f"Lakebase probe timeout after "
-                f"{_LAKEBASE_RESOLVE_TIMEOUT_SECONDS:g}s"
-            ),
+            "reason": (f"Lakebase probe timeout after {_LAKEBASE_RESOLVE_TIMEOUT_SECONDS:g}s"),
         }
     except Exception as exc:
         return {**none_result, "reason": f"Pipeline Lakebase not resolvable: {exc}"[:200]}
@@ -276,16 +270,11 @@ async def get_cdf_status(
                 ),
                 timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
             )
-            expected_shadow = (
-                rows[0].get("shadow_table") if rows else None
-            )
-    except asyncio.TimeoutError:
+            expected_shadow = rows[0].get("shadow_table") if rows else None
+    except TimeoutError:
         return {
             **none_result,
-            "reason": (
-                f"Lakebase Sync probe timeout after "
-                f"{_LAKEBASE_PROBE_TIMEOUT_SECONDS:g}s"
-            ),
+            "reason": (f"Lakebase Sync probe timeout after {_LAKEBASE_PROBE_TIMEOUT_SECONDS:g}s"),
         }
     except Exception as exc:
         logger.warning("cdf-status wal2delta probe failed for %s: %s", pipeline_id, exc)
@@ -313,7 +302,7 @@ async def get_cdf_status(
             lb.fetchval("SELECT MAX(event_time) FROM sensor_readings"),
             timeout=_LAKEBASE_PROBE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("cdf-status latest hot timestamp timed out for %s", pipeline_id)
     except Exception as exc:
         logger.warning(
@@ -360,9 +349,7 @@ async def get_lakets_dashboard(
                 content={"error": "Invalid pipeline deployment id"},
             )
         try:
-            is_bound = await _is_realtime_industry_deployment(
-                state, pipeline_id, industry
-            )
+            is_bound = await _is_realtime_industry_deployment(state, pipeline_id, industry)
         except Exception as exc:
             logger.warning(
                 "Realtime deployment validation failed for %s: %s",
@@ -389,7 +376,7 @@ async def get_lakets_dashboard(
             ),
             timeout=_LAKEBASE_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS dashboard Lakebase resolution timed out for %s after %.0fs",
             pipeline_id,
@@ -412,7 +399,7 @@ async def get_lakets_dashboard(
             lakets_service.get_dashboard(lb),
             timeout=_LAKETS_DASHBOARD_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "LakeTS dashboard timed out for %s after %.0fs",
             pipeline_id,

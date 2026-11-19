@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 DIST = Path(__file__).parents[1] / "static" / "dist"
 
 

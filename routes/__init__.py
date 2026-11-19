@@ -4,28 +4,28 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from routes.health import router as health_router
-from routes.websocket import router as websocket_router
-from routes.sources import router as sources_router
-from routes.sensor_data import router as sensor_data_router
-from routes.simulator import router as simulator_router
-from routes.producers import router as producers_router
-from routes.provisioning import router as provisioning_router
+from routes.alerts import router as alerts_router
 from routes.cluster import router as cluster_router
 from routes.deployment import router as deployment_router
-from routes.jobs import router as jobs_router
+from routes.genie import router as genie_router
+from routes.health import router as health_router
 from routes.industries import router as industries_router
-from routes.user import router as user_router
-from routes.settings import router as settings_router
-from routes.warehouses import router as warehouses_router
-from routes.pipelines import router as pipelines_router
+from routes.intelligence import router as intelligence_router
+from routes.jobs import router as jobs_router
 from routes.lakets import router as lakets_router
 from routes.pipeline_deploy import router as pipeline_deploy_router
-from routes.streaming_latency import router as streaming_latency_router
-from routes.alerts import router as alerts_router
+from routes.pipelines import router as pipelines_router
+from routes.producers import router as producers_router
 from routes.production import router as production_router
-from routes.genie import router as genie_router
-from routes.intelligence import router as intelligence_router
+from routes.provisioning import router as provisioning_router
+from routes.sensor_data import router as sensor_data_router
+from routes.settings import router as settings_router
+from routes.simulator import router as simulator_router
+from routes.sources import router as sources_router
+from routes.streaming_latency import router as streaming_latency_router
+from routes.user import router as user_router
+from routes.warehouses import router as warehouses_router
+from routes.websocket import router as websocket_router
 
 
 def create_api_router() -> APIRouter:

@@ -70,16 +70,16 @@ class WorkspaceConfig:
     uc_schema: str
     lakebase_project: str
     lakebase_endpoint: str
-    pg_host: str         # optional — blank until Lakebase project is provisioned (Task 2)
+    pg_host: str  # optional — blank until Lakebase project is provisioned (Task 2)
     warehouse_id: str
     zerobus_endpoint: str
     app_sp_client_id: str
     industries: list[str]
     # Optional fields — blank ("") when the corresponding env var is not set.
-    secret_scope: str       # SECRET_SCOPE or ZEROBUS_SECRET_SCOPE
-    service_credential: str # UC_SERVICE_CREDENTIAL
+    secret_scope: str  # SECRET_SCOPE or ZEROBUS_SECRET_SCOPE
+    service_credential: str  # UC_SERVICE_CREDENTIAL
     pipelines_project: str  # PIPELINES_LAKEBASE_PROJECT
-    genie_space_id: str     # GENIE_SPACE_ID from genie-space resource (CAN_VIEW)
+    genie_space_id: str  # GENIE_SPACE_ID from genie-space resource (CAN_VIEW)
 
 
 # ---------------------------------------------------------------------------
@@ -88,13 +88,14 @@ class WorkspaceConfig:
 # so monkeypatching env vars in tests takes effect correctly.
 # ---------------------------------------------------------------------------
 
+
 def get_secret_scope() -> str:
     """Return the secret scope name, read from env on every call.
 
     Checks ``SECRET_SCOPE`` first (future canonical name), then falls back to
     ``ZEROBUS_SECRET_SCOPE`` (legacy name).  Returns ``""`` when neither is set.
     """
-    return os.getenv("SECRET_SCOPE") or os.getenv("ZEROBUS_SECRET_SCOPE", "")
+    return os.getenv("SECRET_SCOPE") or os.getenv("ZEROBUS_SECRET_SCOPE") or ""
 
 
 def get_service_credential() -> str:

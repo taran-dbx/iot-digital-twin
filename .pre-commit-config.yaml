@@ -1,0 +1,30 @@
+# pre-commit hooks. Install with:  pre-commit install
+# Run everything once with:        pre-commit run --all-files
+# Generated output (the committed React bundle) is never rewritten by hooks.
+exclude: ^static/dist/
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4 # keep in lockstep with ruff in requirements-dev.txt
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+        # The bundled simulator wheel is a deliberate binary artifact.
+        exclude: ^lib/.*\.whl$
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

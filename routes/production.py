@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -51,7 +51,7 @@ async def list_production_events(
     _user: str = Depends(require_identity),
 ):
     _require_cell(industry)
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
     changes = await production_control_for(state).history(industry, since, db=_backend_db(state))
     return {"industry": industry, "events": [c.to_dict() for c in changes]}
 

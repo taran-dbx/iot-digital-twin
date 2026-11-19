@@ -29,10 +29,7 @@ def _minimal_simulator_wheel(path: Path) -> Path:
         f"{dist}/METADATA": b"Name: iot-data-simulator\nVersion: 0.1.0\n",
         f"{dist}/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
     }
-    lines = [
-        f"{name},{_sha256_record(content)},{len(content)}"
-        for name, content in files.items()
-    ]
+    lines = [f"{name},{_sha256_record(content)},{len(content)}" for name, content in files.items()]
     lines.append(f"{dist}/RECORD,,")
     files[f"{dist}/RECORD"] = ("\n".join(lines) + "\n").encode("utf-8")
     with zipfile.ZipFile(path, "w") as archive:
@@ -42,11 +39,7 @@ def _minimal_simulator_wheel(path: Path) -> Path:
 
 
 def _record_map(archive: zipfile.ZipFile) -> dict[str, tuple[str, str]]:
-    dist_info = next(
-        name
-        for name in archive.namelist()
-        if name.endswith(".dist-info/RECORD")
-    )
+    dist_info = next(name for name in archive.namelist() if name.endswith(".dist-info/RECORD"))
     mapping: dict[str, tuple[str, str]] = {}
     for line in archive.read(dist_info).decode("utf-8").splitlines():
         if not line.strip():
@@ -105,9 +98,14 @@ class TestRuntimeWheelAugmentation:
         finally:
             sys.path.remove(str(extract))
             for module in list(sys.modules):
-                if module == "domain" or module.startswith("domain.") or module == "scenario_engine" or module.startswith("scenario_engine."):
-                    if str(extract) in getattr(sys.modules[module], "__file__", ""):
-                        sys.modules.pop(module, None)
+                ours = (
+                    module == "domain"
+                    or module.startswith("domain.")
+                    or module == "scenario_engine"
+                    or module.startswith("scenario_engine.")
+                )
+                if ours and str(extract) in getattr(sys.modules[module], "__file__", ""):
+                    sys.modules.pop(module, None)
 
     def test_wheel_filename_stays_pip_installable_c7315_smoke(self) -> None:
         """[C7315][smoke] Uploaded artifact keeps the bundled simulator wheel filename."""
@@ -128,9 +126,7 @@ class TestRuntimeWheelAugmentation:
                     if isinstance(child, (ast.Import, ast.ImportFrom)):
                         pytest.fail(f"inline import in {node.name}")
 
-    def test_strips_signed_record_and_quotes_csv_c7315_defect(
-        self, tmp_path: Path
-    ) -> None:
+    def test_strips_signed_record_and_quotes_csv_c7315_defect(self, tmp_path: Path) -> None:
         """[C7315][defect] RECORD.jws/p7s are dropped and RECORD is csv.writer encoded."""
         source = _minimal_simulator_wheel(tmp_path / rws.WHEEL_FILENAME)
         dist = "iot_data_simulator-0.1.0.dist-info"
@@ -147,17 +143,13 @@ class TestRuntimeWheelAugmentation:
             parsed = list(csv.reader(io.StringIO(record)))
             paths = {row[0] for row in parsed if row}
             assert "iot_simulator/odd,name.py" in paths
-            quoted_line = next(
-                line for line in record.splitlines() if "odd,name.py" in line
-            )
+            quoted_line = next(line for line in record.splitlines() if "odd,name.py" in line)
             assert quoted_line.startswith('"iot_simulator/odd,name.py"') or "," in quoted_line
             assert rws.__file__
             src = Path(rws.__file__).read_text(encoding="utf-8")
             assert "csv.writer" in src
 
-    def test_rejects_traversal_and_duplicate_members_c7315_defect(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rejects_traversal_and_duplicate_members_c7315_defect(self, tmp_path: Path) -> None:
         """[C7315][defect] Traversal, duplicates, and extra dist-info trees are rejected."""
         source = tmp_path / rws.WHEEL_FILENAME
         with zipfile.ZipFile(source, "w") as archive:

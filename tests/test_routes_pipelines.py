@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import datetime as _dt
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from databricks.sdk.errors import NotFound
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -63,10 +61,8 @@ class TestLakebaseHealth:
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_shape(self) -> None:
-        latest_at = _dt.datetime(2026, 4, 21, 10, 15, 30, tzinfo=_dt.timezone.utc)
-        db = _mock_db_for_health(
-            row={"rows_5m": 1500, "latest_at": latest_at, "latency_sec": 2.5}
-        )
+        latest_at = _dt.datetime(2026, 4, 21, 10, 15, 30, tzinfo=_dt.UTC)
+        db = _mock_db_for_health(row={"rows_5m": 1500, "latest_at": latest_at, "latency_sec": 2.5})
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
@@ -84,9 +80,7 @@ class TestLakebaseHealth:
 
     @pytest.mark.asyncio
     async def test_no_rows_returns_zeroes(self) -> None:
-        db = _mock_db_for_health(
-            row={"rows_5m": 0, "latest_at": None, "latency_sec": None}
-        )
+        db = _mock_db_for_health(row={"rows_5m": 0, "latest_at": None, "latency_sec": None})
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
@@ -145,25 +139,24 @@ class TestLakebaseHealth:
         state = _state_with_db(_mock_db_for_health())
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.pipelines._is_industry_deployment",
-            AsyncMock(return_value=False),
-        ), patch(
-            "routes.pipelines.get_industry_lakebase",
-            AsyncMock(),
-        ) as resolve_industry:
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
+        with (
+            patch(
+                "routes.pipelines._is_industry_deployment",
+                AsyncMock(return_value=False),
+            ),
+            patch(
+                "routes.pipelines.get_industry_lakebase",
+                AsyncMock(),
+            ) as resolve_industry,
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.get(
                     "/api/pipelines/deployment-1/lakebase-health",
                     params={"industry": "pharmaceutical"},
                 )
 
         assert response.status_code == 404
-        assert response.json()["error"] == (
-            "Realtime industry deployment not found"
-        )
+        assert response.json()["error"] == ("Realtime industry deployment not found")
         resolve_industry.assert_not_awaited()
 
 
@@ -196,11 +189,13 @@ def _pipeline_row(
         "industry": None,
         "sensor_config": "[]",
         "source_type": "lakebase",
-        "source_config": _json.dumps(source_config) if isinstance(source_config, dict) else source_config,
+        "source_config": _json.dumps(source_config)
+        if isinstance(source_config, dict)
+        else source_config,
         "sink_config": "{}",
         "resources": _json.dumps(resources) if isinstance(resources, dict) else resources,
-        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
-        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
+        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
+        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
     }
 
 
@@ -256,12 +251,14 @@ class TestHealLakebase:
             return_value=[{"job": "retention", "job_id": 1, "status": "created"}]
         )
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws), \
-             patch("routes.pipelines.provision_lakebase_role", provision_mock), \
-             patch("routes.pipelines.install_lakets_if_missing", lakets_mock), \
-             patch("routes.pipelines.grant_app_can_use", grant_mock), \
-             patch("routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")), \
-             patch("routes.pipelines.deploy_lakets_ops_jobs", ops_jobs_mock):
+        with (
+            patch("routes.pipelines.WorkspaceClient", return_value=ws),
+            patch("routes.pipelines.provision_lakebase_role", provision_mock),
+            patch("routes.pipelines.install_lakets_if_missing", lakets_mock),
+            patch("routes.pipelines.grant_app_can_use", grant_mock),
+            patch("routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")),
+            patch("routes.pipelines.deploy_lakets_ops_jobs", ops_jobs_mock),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-heal/heal-lakebase")
 
@@ -329,11 +326,13 @@ class TestHealLakebase:
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()), \
-             patch("routes.pipelines.provision_lakebase_role", AsyncMock()), \
-             patch("routes.pipelines.install_lakets_if_missing", AsyncMock()), \
-             patch("routes.pipelines.grant_app_can_use", MagicMock()), \
-             patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])):
+        with (
+            patch("routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()),
+            patch("routes.pipelines.provision_lakebase_role", AsyncMock()),
+            patch("routes.pipelines.install_lakets_if_missing", AsyncMock()),
+            patch("routes.pipelines.grant_app_can_use", MagicMock()),
+            patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-missing/heal-lakebase")
 
@@ -343,17 +342,21 @@ class TestHealLakebase:
     @pytest.mark.asyncio
     async def test_heal_missing_sink_config_returns_400(self) -> None:
         # source_config without lb_project_id should yield 400 with clear error
-        row = _pipeline_row(source_config={"lb_branch_id": "br-main", "lb_database": "databricks_postgres"})
+        row = _pipeline_row(
+            source_config={"lb_branch_id": "br-main", "lb_database": "databricks_postgres"}
+        )
         db = _mock_db_for_heal(row)
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()), \
-             patch("routes.pipelines.provision_lakebase_role", AsyncMock()), \
-             patch("routes.pipelines.install_lakets_if_missing", AsyncMock()), \
-             patch("routes.pipelines.grant_app_can_use", MagicMock()), \
-             patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])):
+        with (
+            patch("routes.pipelines.WorkspaceClient", return_value=_make_ws_mock()),
+            patch("routes.pipelines.provision_lakebase_role", AsyncMock()),
+            patch("routes.pipelines.install_lakets_if_missing", AsyncMock()),
+            patch("routes.pipelines.grant_app_can_use", MagicMock()),
+            patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-heal/heal-lakebase")
 
@@ -373,12 +376,14 @@ class TestHealLakebase:
         provision_mock = AsyncMock(side_effect=RuntimeError("permission denied"))
         lakets_mock = AsyncMock(return_value={"installed": True})
 
-        with patch("routes.pipelines.WorkspaceClient", return_value=ws), \
-             patch("routes.pipelines.provision_lakebase_role", provision_mock), \
-             patch("routes.pipelines.install_lakets_if_missing", lakets_mock), \
-             patch("routes.pipelines.grant_app_can_use", MagicMock()), \
-             patch("routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")), \
-             patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])):
+        with (
+            patch("routes.pipelines.WorkspaceClient", return_value=ws),
+            patch("routes.pipelines.provision_lakebase_role", provision_mock),
+            patch("routes.pipelines.install_lakets_if_missing", lakets_mock),
+            patch("routes.pipelines.grant_app_can_use", MagicMock()),
+            patch("routes.pipelines._app_name", MagicMock(return_value="iot-digital-twin")),
+            patch("routes.pipelines.deploy_lakets_ops_jobs", MagicMock(return_value=[])),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.post("/api/pipelines/pipe-heal/heal-lakebase")
 
@@ -420,8 +425,8 @@ def _delete_pipeline_row(
         "source_config": "{}",
         "sink_config": "{}",
         "resources": _json.dumps(resources),
-        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
-        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.timezone.utc),
+        "created_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
+        "updated_at": _dt.datetime(2026, 4, 21, tzinfo=_dt.UTC),
     }
 
 
@@ -503,18 +508,13 @@ class TestDeletePipelineUcSafety:
 
         assert resp.status_code == 200, resp.text
         ws.tables.delete.assert_not_called()
-        assert any(
-            "ownership" in str(entry).lower()
-            for entry in resp.json()["cleanup_log"]
-        )
+        assert any("ownership" in str(entry).lower() for entry in resp.json()["cleanup_log"])
 
     @pytest.mark.asyncio
     async def test_cleanup_failure_is_surfaced_without_false_success_c7113_defect_regression(
         self,
     ) -> None:
-        db = _mock_db_for_delete(
-            _delete_pipeline_row(resources={"job_id": "42"})
-        )
+        db = _mock_db_for_delete(_delete_pipeline_row(resources={"job_id": "42"}))
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         ws = _make_delete_ws_mock()
@@ -540,9 +540,7 @@ class TestDeletePipelineUcSafety:
     async def test_missing_job_is_idempotent_and_pipeline_delete_completes(
         self,
     ) -> None:
-        db = _mock_db_for_delete(
-            _delete_pipeline_row(resources={"job_id": "42"})
-        )
+        db = _mock_db_for_delete(_delete_pipeline_row(resources={"job_id": "42"}))
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         ws = _make_delete_ws_mock()
@@ -665,7 +663,8 @@ class TestDeletePipelineUcSafety:
         assert body["deleted"] is True
         entries = [e for e in body["cleanup_log"] if isinstance(e, dict)]
         raw_entry = next(
-            e for e in entries
+            e
+            for e in entries
             if e.get("resource") == "UC table iot_factory_abc123.raw.iot_sensor_data"
         )
         assert raw_entry["status"] == "not_found"
@@ -699,7 +698,8 @@ class TestDeletePipelineUcSafety:
         assert body["deleted"] is False
         entries = [e for e in body["cleanup_log"] if isinstance(e, dict)]
         raw_entry = next(
-            e for e in entries
+            e
+            for e in entries
             if e.get("resource") == "UC table iot_factory_abc123.raw.iot_sensor_data"
         )
         assert raw_entry["status"] == "failed"

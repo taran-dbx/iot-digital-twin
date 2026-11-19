@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from services.app_permissions import (
     DEFAULT_APP_NAME,
@@ -55,8 +55,10 @@ class TestGrantAppCanUse:
         with caplog.at_level("WARNING"):
             grant_app_can_use(w, "iot-digital-twin", "sp-app-id-123")
 
-        assert any("403 forbidden" in r.getMessage() or "app" in r.getMessage().lower()
-                   for r in caplog.records)
+        assert any(
+            "403 forbidden" in r.getMessage() or "app" in r.getMessage().lower()
+            for r in caplog.records
+        )
 
     def test_missing_apps_api_does_not_raise(self) -> None:
         # Older SDKs / odd clients: w.apps may raise on access — still non-fatal.

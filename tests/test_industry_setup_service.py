@@ -13,9 +13,7 @@ from services import industry_setup_service as iss
 @pytest.fixture(autouse=True)
 def _mock_shadow_reconciliation(monkeypatch):
     reconcile = AsyncMock(return_value={"status": "already_exists"})
-    monkeypatch.setattr(
-        iss.lakets_service, "reconcile_chronotable_shadow", reconcile
-    )
+    monkeypatch.setattr(iss.lakets_service, "reconcile_chronotable_shadow", reconcile)
     return reconcile
 
 
@@ -38,20 +36,35 @@ async def test_setup_installs_creates_chronotable_and_partitions(tmp_path: Path)
     ws = MagicMock()
 
     enable_sync = AsyncMock(return_value={"status": "created"})
-    with patch.object(iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"), \
-         patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="1.2.3")), \
-         patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=False)), \
-         patch.object(iss.lakets_service, "create_rollup",
-                      new=AsyncMock(return_value={"status": "created"})), \
-         patch.object(iss.lakets_service, "enable_rollup_invalidation",
-                      new=AsyncMock(return_value={"status": "created"})), \
-         patch.object(iss.lakets_service, "enable_lvc",
-                      new=AsyncMock(return_value={"status": "created"})), \
-         patch.object(iss.lakets_service, "reconcile_chronotable_shadow", new=enable_sync), \
-         patch.object(iss.lakets_deploy_service, "deploy_lakets_ops_jobs",
-                      return_value=[{"job": "PM", "job_id": 1, "status": "created"}]):
+    with (
+        patch.object(
+            iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"
+        ),
+        patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="1.2.3")),
+        patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=False)),
+        patch.object(
+            iss.lakets_service, "create_rollup", new=AsyncMock(return_value={"status": "created"})
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_rollup_invalidation",
+            new=AsyncMock(return_value={"status": "created"}),
+        ),
+        patch.object(
+            iss.lakets_service, "enable_lvc", new=AsyncMock(return_value={"status": "created"})
+        ),
+        patch.object(iss.lakets_service, "reconcile_chronotable_shadow", new=enable_sync),
+        patch.object(
+            iss.lakets_deploy_service,
+            "deploy_lakets_ops_jobs",
+            return_value=[{"job": "PM", "job_id": 1, "status": "created"}],
+        ),
+    ):
         result = await iss.setup_lakets_on_branch(
-            "manufacturing", conn=conn, ws=ws, deploy_ops_jobs=True,
+            "manufacturing",
+            conn=conn,
+            ws=ws,
+            deploy_ops_jobs=True,
         )
 
     # CDF shadow prepared: enable_sync called on the sensor_readings ChronoTable
@@ -109,36 +122,44 @@ async def test_setup_configures_sensor_rollup_invalidation_and_lvc_c7224_regress
         }
     )
 
-    with patch.object(
-        iss.lakets_service,
-        "resolve_lakets_source",
-        return_value=tmp_path / "lakets.sql",
-    ), patch.object(
-        iss.lakets_service,
-        "install_lakets",
-        new=AsyncMock(return_value="1.2.3"),
-    ), patch.object(
-        iss.lakets_service,
-        "create_chronotable",
-        new=AsyncMock(return_value=True),
-    ), patch.object(
-        iss.lakets_service,
-        "enable_sync",
-        new=AsyncMock(return_value={"status": "already_exists"}),
-    ), patch.object(
-        iss.lakets_service,
-        "create_rollup",
-        new=create_rollup,
-    ), patch.object(
-        iss.lakets_service,
-        "enable_rollup_invalidation",
-        new=enable_invalidation,
-        create=True,
-    ), patch.object(
-        iss.lakets_service,
-        "enable_lvc",
-        new=enable_lvc,
-        create=True,
+    with (
+        patch.object(
+            iss.lakets_service,
+            "resolve_lakets_source",
+            return_value=tmp_path / "lakets.sql",
+        ),
+        patch.object(
+            iss.lakets_service,
+            "install_lakets",
+            new=AsyncMock(return_value="1.2.3"),
+        ),
+        patch.object(
+            iss.lakets_service,
+            "create_chronotable",
+            new=AsyncMock(return_value=True),
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_sync",
+            new=AsyncMock(return_value={"status": "already_exists"}),
+        ),
+        patch.object(
+            iss.lakets_service,
+            "create_rollup",
+            new=create_rollup,
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_rollup_invalidation",
+            new=enable_invalidation,
+            create=True,
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_lvc",
+            new=enable_lvc,
+            create=True,
+        ),
     ):
         result = await iss.setup_lakets_on_branch(
             "manufacturing",
@@ -184,34 +205,42 @@ async def test_failed_rollup_skips_invalidation_but_keeps_lvc_c7224_regression(
     invalidation = AsyncMock()
     enable_lvc = AsyncMock(return_value={"status": "already_exists"})
 
-    with patch.object(
-        iss.lakets_service,
-        "resolve_lakets_source",
-        return_value=tmp_path / "lakets.sql",
-    ), patch.object(
-        iss.lakets_service,
-        "install_lakets",
-        new=AsyncMock(return_value="1.2.3"),
-    ), patch.object(
-        iss.lakets_service,
-        "create_chronotable",
-        new=AsyncMock(return_value=True),
-    ), patch.object(
-        iss.lakets_service,
-        "create_rollup",
-        new=AsyncMock(return_value={"status": "failed", "error": "definition mismatch"}),
-    ), patch.object(
-        iss.lakets_service,
-        "enable_rollup_invalidation",
-        new=invalidation,
-    ), patch.object(
-        iss.lakets_service,
-        "enable_lvc",
-        new=enable_lvc,
-    ), patch.object(
-        iss.lakets_service,
-        "enable_sync",
-        new=AsyncMock(return_value={"status": "already_exists"}),
+    with (
+        patch.object(
+            iss.lakets_service,
+            "resolve_lakets_source",
+            return_value=tmp_path / "lakets.sql",
+        ),
+        patch.object(
+            iss.lakets_service,
+            "install_lakets",
+            new=AsyncMock(return_value="1.2.3"),
+        ),
+        patch.object(
+            iss.lakets_service,
+            "create_chronotable",
+            new=AsyncMock(return_value=True),
+        ),
+        patch.object(
+            iss.lakets_service,
+            "create_rollup",
+            new=AsyncMock(return_value={"status": "failed", "error": "definition mismatch"}),
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_rollup_invalidation",
+            new=invalidation,
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_lvc",
+            new=enable_lvc,
+        ),
+        patch.object(
+            iss.lakets_service,
+            "enable_sync",
+            new=AsyncMock(return_value={"status": "already_exists"}),
+        ),
     ):
         result = await iss.setup_lakets_on_branch(
             "manufacturing",
@@ -235,17 +264,28 @@ async def test_setup_records_jobs_and_chronotable_in_ledger(tmp_path: Path) -> N
     async def _rec(_db, **kw):
         recorded.append(kw)
 
-    with patch.object(iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"), \
-         patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="1.0")), \
-         patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=False)), \
-         patch.object(iss.lakets_deploy_service, "deploy_lakets_ops_jobs",
-                      return_value=[
-                          {"job": "PM", "job_id": 1, "status": "created"},
-                          {"job": "Rollup", "job_id": 2, "status": "created"},
-                      ]), \
-         patch.object(iss, "record_resource", side_effect=_rec):
+    with (
+        patch.object(
+            iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"
+        ),
+        patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="1.0")),
+        patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=False)),
+        patch.object(
+            iss.lakets_deploy_service,
+            "deploy_lakets_ops_jobs",
+            return_value=[
+                {"job": "PM", "job_id": 1, "status": "created"},
+                {"job": "Rollup", "job_id": 2, "status": "created"},
+            ],
+        ),
+        patch.object(iss, "record_resource", side_effect=_rec),
+    ):
         await iss.setup_lakets_on_branch(
-            "manufacturing", conn=conn, ws=ws, db=MagicMock(), setup_id="s1",
+            "manufacturing",
+            conn=conn,
+            ws=ws,
+            db=MagicMock(),
+            setup_id="s1",
         )
 
     types = [r["resource_type"] for r in recorded]
@@ -260,12 +300,19 @@ async def test_setup_records_jobs_and_chronotable_in_ledger(tmp_path: Path) -> N
 async def test_setup_skips_jobs_when_disabled(tmp_path: Path) -> None:
     conn = _make_conn()
     ws = MagicMock()
-    with patch.object(iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"), \
-         patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="1.0")), \
-         patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=True)), \
-         patch.object(iss.lakets_deploy_service, "deploy_lakets_ops_jobs") as deploy:
+    with (
+        patch.object(
+            iss.lakets_service, "resolve_lakets_source", return_value=tmp_path / "lakets.sql"
+        ),
+        patch.object(iss.lakets_service, "install_lakets", new=AsyncMock(return_value="1.0")),
+        patch.object(iss.lakets_service, "create_chronotable", new=AsyncMock(return_value=True)),
+        patch.object(iss.lakets_deploy_service, "deploy_lakets_ops_jobs") as deploy,
+    ):
         result = await iss.setup_lakets_on_branch(
-            "manufacturing", conn=conn, ws=ws, deploy_ops_jobs=False,
+            "manufacturing",
+            conn=conn,
+            ws=ws,
+            deploy_ops_jobs=False,
         )
     deploy.assert_not_called()
     assert "ops_jobs" not in result

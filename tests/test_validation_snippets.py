@@ -20,11 +20,9 @@ def test_connectivity_probe_checks_both_and_egress():
 
 
 def test_topic_create_uses_msk_iam_oauth():
-    code = snip.topic_create(
-        "b-1:9198", [("iot.x.realtime", 3, 3)], "us-east-1", "iot-rtm-sc"
-    )
+    code = snip.topic_create("b-1:9198", [("iot.x.realtime", 3, 3)], "us-east-1", "iot-rtm-sc")
     assert "OAUTHBEARER" in code
-    assert "AbstractTokenProvider" in code           # kafka-python 3.x subclass
+    assert "AbstractTokenProvider" in code  # kafka-python 3.x subclass
     assert "MSKAuthTokenProvider" in code
     assert "us-east-1" in code
     assert "iot.x.realtime" in code
@@ -32,8 +30,12 @@ def test_topic_create_uses_msk_iam_oauth():
 
 def _rtm_write_test_code() -> str:
     return snip.rtm_write_test(
-        "iot.x.realtime", "b-1:9198", "iot-rtm-sc",
-        project_id="iot-pipelines", branch="x", pg_database="databricks_postgres",
+        "iot.x.realtime",
+        "b-1:9198",
+        "iot-rtm-sc",
+        project_id="iot-pipelines",
+        branch="x",
+        pg_database="databricks_postgres",
         table="sensor_readings",
         checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
         metrics_table_fqn="iot_x.metrics.streaming_metrics",
@@ -72,7 +74,7 @@ def test_rtm_write_test_lands_data_not_noop():
     assert "psycopg2" in code
     assert "class LakebaseWriter" in code
     assert "def process(self, row)" in code
-    assert "row[0]" in code and "row[10]" in code   # positional, not named Row
+    assert "row[0]" in code and "row[10]" in code  # positional, not named Row
     assert "INSERT INTO" in code
     assert "sensor_readings" in code
     # Creds are INJECTED by the harness driver as literals — executors can't call
@@ -80,8 +82,8 @@ def test_rtm_write_test_lands_data_not_noop():
     # .postgres API. So the snippet has NO cluster-side credential resolution; the
     # pg_host/pg_user literals appear and psycopg2 connects with them.
     assert "generate_database_credential" not in code
-    assert "ep-x.database.us-east-1.cloud.databricks.com" in code   # injected pg_host
-    assert "app-user" in code                                       # injected pg_user
+    assert "ep-x.database.us-east-1.cloud.databricks.com" in code  # injected pg_host
+    assert "app-user" in code  # injected pg_user
     assert "psycopg2.connect" in code
 
 
@@ -106,7 +108,7 @@ def test_rtm_write_test_wires_buffered_metrics_listener():
     assert "write_deltalake" not in code
     assert "saveAsTable" not in code
     assert "onQueryProgress" in code
-    assert "iot_x.metrics.streaming_metrics" in code       # metrics table fqn
+    assert "iot_x.metrics.streaming_metrics" in code  # metrics table fqn
     assert '"mode": "realtime"' in code
     assert "oauth-secret-key" in code
     assert "workspace.zerobus.us-east-1.cloud.databricks.com" in code
@@ -141,7 +143,7 @@ def test_rtm_produce_uses_curated_industry_c7245():
     assert "api_version=(2, 8, 1)" in code
     assert "iot.x.realtime" in code
     assert "range(100)" in code
-    assert '"industry": \'manufacturing\'' in code
+    assert "\"industry\": 'manufacturing'" in code
     assert '"metadata": {"source": \'validation\'}' in code
     # Returns the earliest event_time floor so the consumer can drop stale rows.
     assert "_min_ts = time.time()" in code
@@ -152,14 +154,20 @@ def test_rtm_write_test_freshness_filter_drops_stale_rows():
     """With a floor, the consumer must gate rows on event_time >= floor so stale
     prior-run messages (past-dated -> no ChronoTable partition) never INSERT."""
     code = snip.rtm_write_test(
-        "iot.x.realtime", "b-1:9198", "iot-rtm-sc",
-        project_id="iot-pipelines", branch="x", pg_database="databricks_postgres",
+        "iot.x.realtime",
+        "b-1:9198",
+        "iot-rtm-sc",
+        project_id="iot-pipelines",
+        branch="x",
+        pg_database="databricks_postgres",
         table="sensor_readings",
         checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
         metrics_table_fqn="iot_x.metrics.streaming_metrics",
         metrics_table_location="s3://bkt/iot_x/metrics/streaming_metrics/",
         pg_host="ep-x.database.us-east-1.cloud.databricks.com",
-        pg_user="app-user", pg_token="lb-oauth-token", region="us-east-1",
+        pg_user="app-user",
+        pg_token="lb-oauth-token",
+        region="us-east-1",
         min_event_epoch=1751780000.0,
     )
     assert "timestamp_seconds" in code
@@ -182,8 +190,11 @@ def test_remove_path_deletes_checkpoint():
 
 def test_microbatch_write_test_processing_time_trigger():
     code = snip.microbatch_write_test(
-        "iot.x.microbatch", "b-1:9198", "iot-rtm-sc",
-        "iot_x.microbatch.sensor_data", "/Volumes/x/checkpoints/v/validation/microbatch",
+        "iot.x.microbatch",
+        "b-1:9198",
+        "iot-rtm-sc",
+        "iot_x.microbatch.sensor_data",
+        "/Volumes/x/checkpoints/v/validation/microbatch",
     )
     assert 'processingTime="10 seconds"' in code
     assert '"latest"' in code
@@ -203,8 +214,11 @@ def test_microbatch_write_test_wires_metrics_listener_when_given():
     """With per-mode metrics args, micro-batch now captures streaming metrics too
     (previously only rtm_write_test had the listener → micro-batch metrics empty)."""
     code = snip.microbatch_write_test(
-        "iot.x.microbatch", "b-1:9198", "iot-rtm-sc",
-        "iot_x.microbatch.sensor_data", "/Volumes/x/checkpoints/v/validation/microbatch",
+        "iot.x.microbatch",
+        "b-1:9198",
+        "iot-rtm-sc",
+        "iot_x.microbatch.sensor_data",
+        "/Volumes/x/checkpoints/v/validation/microbatch",
         metrics_table_fqn="iot_x.metrics.streaming_metrics_microbatch",
         metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics_microbatch/",
         region="us-east-1",
@@ -219,7 +233,7 @@ def test_microbatch_write_test_wires_metrics_listener_when_given():
     assert "write_deltalake" not in code
     assert "saveAsTable" not in code
     assert "streaming_metrics_microbatch" in code
-    assert '"mode": \'microbatch\'' in code
+    assert "\"mode\": 'microbatch'" in code
     assert "spark.streams.removeListener(_metrics_listener)" in code
     assert 'getattr(stream, "recentProgress", [])' in code
     # Still parses to the SSOT schema + writes the table.
@@ -246,6 +260,8 @@ def test_cdf_verify_keys_on_specific_shadow_table():
 
 
 def test_zerobus_produce_https_prefix_gotcha():
-    code = snip.zerobus_produce("myws.cloud.databricks.com", "ws.zerobus.x", "iot_x.zerobus.iot_sensor_data")
+    code = snip.zerobus_produce(
+        "myws.cloud.databricks.com", "ws.zerobus.x", "iot_x.zerobus.iot_sensor_data"
+    )
     assert "/oidc/v1/token" in code
-    assert 'https://' in code  # https:// prefix is the known gotcha (§1.10)
+    assert "https://" in code  # https:// prefix is the known gotcha (§1.10)

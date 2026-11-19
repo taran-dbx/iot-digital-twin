@@ -51,8 +51,7 @@ TEARDOWN_ORDER_JOB = 50
 TEARDOWN_ORDER_CHRONOTABLE = 35
 
 _CHRONOTABLE_ID_SQL = (
-    "SELECT id FROM lakets._chronotable_registry "
-    "WHERE schema_name = $1 AND table_name = $2"
+    "SELECT id FROM lakets._chronotable_registry WHERE schema_name = $1 AND table_name = $2"
 )
 _ENSURE_PARTITIONS_SQL = "SELECT lakets._ensure_partitions($1, p_future_count := $2)"
 
@@ -105,11 +104,16 @@ async def setup_lakets_on_branch(
 
     # 3. Register as a ChronoTable (15-minute chunks on event_time).
     already = await lakets_service.create_chronotable(
-        conn, table=SENSOR_TABLE, time_col=TIME_COLUMN, chunk=chunk,
+        conn,
+        table=SENSOR_TABLE,
+        time_col=TIME_COLUMN,
+        chunk=chunk,
     )
     _step("create_chronotable", "already_exists" if already else "created")
     await _record(
-        db, setup_id, deployment_id,
+        db,
+        setup_id,
+        deployment_id,
         resource_type="uc_table",  # PG ChronoTable inside the branch
         identifier=f"{branch}.public.{SENSOR_TABLE}",
         parent_ref=branch,
@@ -158,9 +162,7 @@ async def setup_lakets_on_branch(
             error="RollUp creation or validation failed",
         )
     else:
-        invalidation_result = await lakets_service.enable_rollup_invalidation(
-            conn, "sensor_1m"
-        )
+        invalidation_result = await lakets_service.enable_rollup_invalidation(conn, "sensor_1m")
         _step(
             "enable_rollup_invalidation",
             invalidation_result.get("status", "failed"),
@@ -210,9 +212,15 @@ async def setup_lakets_on_branch(
         jobs = lakets_deploy_service.deploy_lakets_ops_jobs(ws, project_id, branch, PG_DATABASE)
         result["ops_jobs"] = jobs
         for job in jobs:
-            _step(f"deploy_job:{job.get('job')}", job.get("status", "unknown"), job_id=job.get("job_id"))
+            _step(
+                f"deploy_job:{job.get('job')}",
+                job.get("status", "unknown"),
+                job_id=job.get("job_id"),
+            )
             await _record(
-                db, setup_id, deployment_id,
+                db,
+                setup_id,
+                deployment_id,
                 resource_type="job",
                 identifier=str(job.get("job_id")),
                 parent_ref=branch,

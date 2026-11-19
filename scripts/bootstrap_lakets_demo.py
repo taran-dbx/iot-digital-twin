@@ -38,8 +38,7 @@ PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
 DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
 DEFAULT_LAKETS_SQL = (
-    "/Users/taranpreetsingh.grover/Documents/Claude Projects/"
-    "Lakebase/timeseries/dist/lakets.sql"
+    "/Users/taranpreetsingh.grover/Documents/Claude Projects/Lakebase/timeseries/dist/lakets.sql"
 )
 
 
@@ -91,7 +90,9 @@ async def main() -> int:
     role_password = secrets_mod.token_urlsafe(24)  # back-compat placeholder
     _print_header("2. provision_lakebase_role (OAuth-native)")
     role_results = await provision_lakebase_role(
-        project_id=PROJECT_ID, branch_id=BRANCH_ID, database=DATABASE,
+        project_id=PROJECT_ID,
+        branch_id=BRANCH_ID,
+        database=DATABASE,
     )
     _print_results(role_results)
 
@@ -101,19 +102,21 @@ async def main() -> int:
 
     # ── Step 3: Option A — autoscale OAuth ────────────────────────────────
     _print_header("3A. provision_lakebase_table + install_lakets + ChronoTable (autoscale)")
-    auto_result = await provision_lakebase_table({
-        "mode": "autoscale",
-        "project_id": PROJECT_ID,
-        "branch_id": BRANCH_ID,
-        "database": DATABASE,
-        "pg_table": "sensor_readings",
-        "lakets_sql_path": lakets_sql_path,
-        "tiering": {
-            "hot": os.getenv("LAKETS_HOT", "1 hour"),
-            "drop": os.getenv("LAKETS_DROP", "7 days"),
-            "chunk": os.getenv("LAKETS_CHUNK", "15 minutes"),
-        },
-    })
+    auto_result = await provision_lakebase_table(
+        {
+            "mode": "autoscale",
+            "project_id": PROJECT_ID,
+            "branch_id": BRANCH_ID,
+            "database": DATABASE,
+            "pg_table": "sensor_readings",
+            "lakets_sql_path": lakets_sql_path,
+            "tiering": {
+                "hot": os.getenv("LAKETS_HOT", "1 hour"),
+                "drop": os.getenv("LAKETS_DROP", "7 days"),
+                "chunk": os.getenv("LAKETS_CHUNK", "15 minutes"),
+            },
+        }
+    )
     _print_results(auto_result)
 
     # ── Step 4: Option B — direct mode with role password ─────────────────
@@ -124,6 +127,7 @@ async def main() -> int:
 
     # Fetch endpoint host for direct-mode connection
     from databricks.sdk import WorkspaceClient
+
     w = WorkspaceClient()
     parent = f"projects/{PROJECT_ID}/branches/{BRANCH_ID}"
     endpoints = list(w.postgres.list_endpoints(parent=parent))
@@ -134,17 +138,20 @@ async def main() -> int:
     pg_host = endpoint.status.hosts.host
 
     from models.sql_ddl import LAKEBASE_ROLE_NAME
+
     _print_header("3B. provision_lakebase_table + install_lakets  (direct)")
-    direct_result = await provision_lakebase_table({
-        "mode": "direct",
-        "host": pg_host,
-        "port": 5432,
-        "user": LAKEBASE_ROLE_NAME,
-        "password": role_password,
-        "database": DATABASE,
-        "pg_table": "sensor_readings",
-        "lakets_sql_path": lakets_sql_path,
-    })
+    direct_result = await provision_lakebase_table(
+        {
+            "mode": "direct",
+            "host": pg_host,
+            "port": 5432,
+            "user": LAKEBASE_ROLE_NAME,
+            "password": role_password,
+            "database": DATABASE,
+            "pg_table": "sensor_readings",
+            "lakets_sql_path": lakets_sql_path,
+        }
+    )
     _print_results(direct_result)
 
     print()

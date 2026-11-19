@@ -32,12 +32,18 @@ from typing import Any
 from services import (
     cdf_config_service,
     cdf_reconciliation_service,
-    industry_catalog_service as cat,
-    industry_setup_service as setup,
-    pipelines_project_service as pps,
     provisioning_service,
     resource_ledger,
     uc_secrets,
+)
+from services import (
+    industry_catalog_service as cat,
+)
+from services import (
+    industry_setup_service as setup,
+)
+from services import (
+    pipelines_project_service as pps,
 )
 from services.industry_catalog_service import APP_SP_OAUTH_SECRET, TEARDOWN_ORDER_SP
 from services.resource_ledger import record_resource
@@ -91,7 +97,8 @@ async def provision_industry(
     _section("app_sp", {"principal": principal})
     if db is not None and setup_id is not None:
         await record_resource(
-            db, setup_id=setup_id,
+            db,
+            setup_id=setup_id,
             resource_type="service_principal",
             identifier=principal or "app-sp",
             teardown_order=TEARDOWN_ORDER_SP,
@@ -100,8 +107,11 @@ async def provision_industry(
 
     # 3. Schema + managed industry-prefixed tables in the pre-existing catalog.
     catalog_result = await cat.provision_industry_catalog(
-        industry, ws=ws, warehouse_id=warehouse_id,
-        db=db, setup_id=setup_id,
+        industry,
+        ws=ws,
+        warehouse_id=warehouse_id,
+        db=db,
+        setup_id=setup_id,
     )
     _section("uc_catalog", catalog_result)
     summary["catalog"] = catalog_result.get("catalog")
@@ -114,7 +124,11 @@ async def provision_industry(
     client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "")
     if catalog and schema and client_secret:
         secret_result = await uc_secrets.put_secret(
-            catalog, schema, APP_SP_OAUTH_SECRET, client_secret, ws=ws,
+            catalog,
+            schema,
+            APP_SP_OAUTH_SECRET,
+            client_secret,
+            ws=ws,
         )
     else:
         secret_result = {
@@ -133,12 +147,17 @@ async def provision_industry(
     if enable_realtime:
         try:
             branch_result = await pps.provision_industry_branch(
-                industry, ws=ws, db=db, setup_id=setup_id,
+                industry,
+                ws=ws,
+                db=db,
+                setup_id=setup_id,
             )
             _section("lakebase_branch", branch_result)
             branch = (branch_result or {}).get("branch")
             if not branch:
-                raise RuntimeError(f"realtime branch provisioning returned no branch: {branch_result!r}")
+                raise RuntimeError(
+                    f"realtime branch provisioning returned no branch: {branch_result!r}"
+                )
             summary["branch"] = branch
 
             # 5b. Register the SINGLE app SP as an OAuth Postgres role on THIS
@@ -154,8 +173,9 @@ async def provision_industry(
                 _section("lakebase_sp_role", sp_role_result)
             except Exception as exc:  # pragma: no cover - best-effort
                 logger.warning(
-                    "App SP Lakebase role registration on branch '%s' failed "
-                    "(non-fatal): %s", branch, exc,
+                    "App SP Lakebase role registration on branch '%s' failed (non-fatal): %s",
+                    branch,
+                    exc,
                 )
                 _section("lakebase_sp_role", {"status": "failed", "error": str(exc)[:200]})
 
@@ -163,12 +183,15 @@ async def provision_industry(
             try:
                 write_mgr = await pps.get_write_conn(branch, ws=ws)
                 lakets_result = await setup.setup_lakets_on_branch(
-                    branch, conn=write_mgr, ws=ws,
+                    branch,
+                    conn=write_mgr,
+                    ws=ws,
                     industry=industry,
                     project_id=branch_result.get("project"),
                     deploy_ops_jobs=deploy_ops_jobs,
                     lakets_sql_path=lakets_sql_path,
-                    db=db, setup_id=setup_id,
+                    db=db,
+                    setup_id=setup_id,
                 )
                 _section("lakets_setup", lakets_result)
             finally:
@@ -182,7 +205,9 @@ async def provision_industry(
             # Postgres API as soon as LakeTS has prepared the lakets_cdf shadow.
             # This is independent of the slow interactive validation cluster.
             if (lakets_result or {}).get("cdf_shadow") not in {
-                "created", "already_exists", "migrated"
+                "created",
+                "already_exists",
+                "migrated",
             }:
                 failure = {
                     "status": "failed",
@@ -259,8 +284,9 @@ async def provision_industry(
                     ) from exc
         except Exception as exc:
             logger.warning(
-                "Realtime Lakebase provisioning for industry '%s' failed "
-                "(non-fatal): %s", industry, exc,
+                "Realtime Lakebase provisioning for industry '%s' failed (non-fatal): %s",
+                industry,
+                exc,
             )
             _section("lakebase_branch", {"status": "failed", "error": str(exc)[:200]})
             if isinstance(exc, _CdfProvisioningError):
@@ -268,8 +294,12 @@ async def provision_industry(
 
     # 6. Grants for the SINGLE app SP on the schema (incl. READ SECRET).
     grants_result = await cat.grant_app_sp(
-        industry, ws=ws, warehouse_id=warehouse_id, principal=principal,
-        db=db, setup_id=setup_id,
+        industry,
+        ws=ws,
+        warehouse_id=warehouse_id,
+        principal=principal,
+        db=db,
+        setup_id=setup_id,
     )
     _section("grants", grants_result)
 

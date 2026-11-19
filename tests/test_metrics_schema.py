@@ -16,9 +16,19 @@ class TestMetricsColumns:
     def test_has_all_typed_latency_percentiles(self) -> None:
         cols = set(ms.metrics_columns())
         for c in (
-            "batch_id", "timestamp", "num_input_rows", "input_rps", "processed_rps",
-            "trigger_ms", "e2e_p50", "e2e_p99", "processing_p50", "processing_p99",
-            "queuing_p50", "queuing_p99", "progress",
+            "batch_id",
+            "timestamp",
+            "num_input_rows",
+            "input_rps",
+            "processed_rps",
+            "trigger_ms",
+            "e2e_p50",
+            "e2e_p99",
+            "processing_p50",
+            "processing_p99",
+            "queuing_p50",
+            "queuing_p99",
+            "progress",
         ):
             assert c in cols, f"missing metrics column {c}"
 
@@ -50,7 +60,9 @@ class TestMetricsDdl:
         )
 
     def test_ddl_is_external_with_location(self) -> None:
-        ddl = ms.metrics_external_table_ddl("iot_spiketest", "s3://taran-shared-interop", "realtime")
+        ddl = ms.metrics_external_table_ddl(
+            "iot_spiketest", "s3://taran-shared-interop", "realtime"
+        )
         assert "CREATE TABLE IF NOT EXISTS iot_spiketest.metrics.streaming_metrics_realtime" in ddl
         assert "USING DELTA" in ddl
         assert "LOCATION 's3://taran-shared-interop/iot-digital-twin/" in ddl

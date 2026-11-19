@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from domain.catalog import AlertRule, list_alert_rules
 from core.state import AppState
+from domain.catalog import AlertRule, list_alert_rules
 from services.alert_engine import AlertEngine, AlertRecord, evaluate_and_emit, fingerprint_for
 
 pytestmark = pytest.mark.asyncio
@@ -97,9 +98,7 @@ class FakeAlertDb:
                 or current_status == "cleared"
                 or (
                     current_status != "cleared"
-                    and not (
-                        current_status == "acknowledged" and proposed_status == "open"
-                    )
+                    and not (current_status == "acknowledged" and proposed_status == "open")
                     and proposed_version >= current_version
                 )
             )
@@ -224,7 +223,7 @@ class TestAlertEngineStateMachine:
 
     async def test_duration_holds_open_until_elapsed_c7403_regression(self) -> None:
         """[C7403][regression] Duration must elapse before an alert opens."""
-        clock = FakeClock(datetime(2026, 10, 13, tzinfo=timezone.utc))
+        clock = FakeClock(datetime(2026, 10, 13, tzinfo=UTC))
         engine = AlertEngine(now_fn=clock)
         rule = _spindle_rule(duration_s=10.0)
         first = await engine.evaluate([_reading(90.0)], [rule], industry="manufacturing")
@@ -239,7 +238,7 @@ class TestAlertEngineStateMachine:
 
     async def test_duration_resets_when_condition_clears_c7403_defect(self) -> None:
         """[C7403][defect] Leaving the band before duration elapses resets pending."""
-        clock = FakeClock(datetime(2026, 10, 13, tzinfo=timezone.utc))
+        clock = FakeClock(datetime(2026, 10, 13, tzinfo=UTC))
         engine = AlertEngine(now_fn=clock)
         rule = _spindle_rule(duration_s=10.0)
         await engine.evaluate([_reading(90.0)], [rule])
@@ -265,7 +264,7 @@ class TestAlertEngineStateMachine:
 
     async def test_catalog_spindle_rule_ignores_noise_spikes_c7415_defect(self) -> None:
         """[C7415][defect][regression] One noisy sample past 60 °C neither opens nor re-opens."""
-        clock = FakeClock(datetime(2026, 10, 20, 13, 18, 30, tzinfo=timezone.utc))
+        clock = FakeClock(datetime(2026, 10, 20, 13, 18, 30, tzinfo=UTC))
         engine = AlertEngine(now_fn=clock)
         rule = _catalog_spindle_rule()
         assert rule.duration_s == 2.0
@@ -291,7 +290,7 @@ class TestAlertEngineStateMachine:
 
     async def test_batches_without_the_sensor_keep_duration_pending_c7415_defect(self) -> None:
         """[C7415][defect] Per-partition batches lacking the spindle reading do not reset the 2 s timer."""
-        clock = FakeClock(datetime(2026, 10, 20, 13, 38, 50, tzinfo=timezone.utc))
+        clock = FakeClock(datetime(2026, 10, 20, 13, 38, 50, tzinfo=UTC))
         engine = AlertEngine(now_fn=clock)
         rule = _catalog_spindle_rule()
         other = _reading(2.0, sensor_id="mfg-sns-cnc_1_vibration")
@@ -308,7 +307,7 @@ class TestAlertEngineStateMachine:
 
     async def test_reopen_refreshes_opened_at_in_lakebase_c7416_defect(self) -> None:
         """[C7416][defect] A re-opened alert reports when this heat event started, not the first one."""
-        first_open = datetime(2026, 10, 20, 13, 13, 49, tzinfo=timezone.utc)
+        first_open = datetime(2026, 10, 20, 13, 13, 49, tzinfo=UTC)
         clock = FakeClock(first_open)
         engine = AlertEngine(now_fn=clock)
         db = FakeAlertDb()
@@ -532,10 +531,7 @@ class TestAlertEngineStateMachine:
         joined = "\n".join(sqls)
         assert "INSERT INTO alert" in joined
         assert "INSERT INTO alert_event" in joined
-        assert any(
-            "INSERT INTO alert" in sql and "INSERT INTO alert_event" in sql
-            for sql in sqls
-        )
+        assert any("INSERT INTO alert" in sql and "INSERT INTO alert_event" in sql for sql in sqls)
         assert db.by_fp
         assert db.events
 
@@ -543,9 +539,7 @@ class TestAlertEngineStateMachine:
         """[C7407][defect] After restart, in-memory/SSE ids match Lakebase fingerprint identity."""
         db = FakeAlertDb()
         first = AlertEngine()
-        opened = await first.evaluate(
-            [_reading(85.0)], [_spindle_rule()], db=db, pipeline_id="p1"
-        )
+        opened = await first.evaluate([_reading(85.0)], [_spindle_rule()], db=db, pipeline_id="p1")
         persisted_id = opened[0].alert.id
         assert db.by_id[persisted_id]["fingerprint"] == opened[0].alert.fingerprint
 
@@ -557,9 +551,7 @@ class TestAlertEngineStateMachine:
         listed = await restarted.list_alerts(db=db, status="open")
         assert listed[0].id == persisted_id
 
-        await first.evaluate(
-            [_reading(50.0)], [_spindle_rule()], db=db, pipeline_id="p1"
-        )
+        await first.evaluate([_reading(50.0)], [_spindle_rule()], db=db, pipeline_id="p1")
         third = AlertEngine()
         reopened = await third.evaluate(
             [_reading(90.0)], [_spindle_rule()], db=db, pipeline_id="p1"
@@ -578,9 +570,7 @@ class TestAlertEngineStateMachine:
         ack = await engine.acknowledge(alert_id, user="ops@example.com", db=db)
         assert ack is not None
         assert db.by_id[alert_id]["status"] == "acknowledged"
-        compact = " ".join(
-            sql for kind, sql in db.calls if kind == "fetchrow"
-        ).lower()
+        compact = " ".join(sql for kind, sql in db.calls if kind == "fetchrow").lower()
         assert "version" in compact
         assert "acknowledged" in compact
 
@@ -634,9 +624,7 @@ class TestAlertEngineStateMachine:
         alerts = await engine.list_alerts()
         assert len(alerts) == 1
         ack_task = engine.acknowledge(alerts[0].id, user="ops@example.com")
-        update_task = engine.evaluate(
-            [_reading(95.0)], [rule], pipeline_id="p-lock"
-        )
+        update_task = engine.evaluate([_reading(95.0)], [rule], pipeline_id="p-lock")
         ack, updated = await asyncio.gather(ack_task, update_task)
         assert engine.get_alert_sync(alerts[0].id) is not None
         assert len(await engine.list_alerts()) == 1

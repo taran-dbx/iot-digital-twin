@@ -59,7 +59,11 @@ def _put_sync(ws: Any, catalog: str, schema: str, name: str, value: str) -> dict
                 FieldMask(["value"]),
             )
         except Exception as update_exc:
-            return {"resource": f"UC secret '{fqn}'", "status": "failed", "error": str(update_exc)[:200]}
+            return {
+                "resource": f"UC secret '{fqn}'",
+                "status": "failed",
+                "error": str(update_exc)[:200],
+            }
         return {"resource": f"UC secret '{fqn}'", "status": "updated"}
 
 
@@ -71,7 +75,12 @@ def _get_sync(ws: Any, catalog: str, schema: str, name: str) -> str:
 
 
 async def put_secret(
-    catalog: str, schema: str, name: str, value: str, *, ws: Any | None = None,
+    catalog: str,
+    schema: str,
+    name: str,
+    value: str,
+    *,
+    ws: Any | None = None,
 ) -> dict:
     """Create or update the UC secret ``{catalog}.{schema}.{name}`` (idempotent).
 
@@ -82,7 +91,11 @@ async def put_secret(
 
 
 async def get_secret(
-    catalog: str, schema: str, name: str, *, ws: Any | None = None,
+    catalog: str,
+    schema: str,
+    name: str,
+    *,
+    ws: Any | None = None,
 ) -> str:
     """Return the value of the UC secret ``{catalog}.{schema}.{name}``."""
     ws = ws or _new_ws()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 DIST = Path(__file__).parents[1] / "static" / "dist"
 
 
@@ -30,9 +29,10 @@ def test_realtime_lakebase_writer_retries_recovery_with_exponential_backoff():
     assert "def _flush_with_backoff(self):" in writer
     assert "_lb_time.sleep(delay)" in writer
     assert "min(self.BACKOFF_BASE_S * (2 ** (attempt - 1))" in writer
-    assert writer.count(
-        "execute_values(self.cur, self.sql, self.buffer, template=_INSERT_TEMPLATE)"
-    ) == 2
+    assert (
+        writer.count("execute_values(self.cur, self.sql, self.buffer, template=_INSERT_TEMPLATE)")
+        == 2
+    )
 
 
 CLIENT_SRC = Path(__file__).parents[1] / "client" / "src"
@@ -48,7 +48,12 @@ def test_manufacturing_view_has_no_invented_metrics_c7230():
     kpis = _source("components", "cell", "cell-kpis.tsx")
     model = _source("components", "cell", "use-cell-model.ts")
 
-    for invented in ('OEE:"oee"', 'Utilization:"utilization"', 'Production:"throughput"', "/1250)*100"):
+    for invented in (
+        'OEE:"oee"',
+        'Utilization:"utilization"',
+        'Production:"throughput"',
+        "/1250)*100",
+    ):
         assert invented not in bundle
     for label in (
         "Spindle 3 temperature",
@@ -213,22 +218,14 @@ def test_gallery_renders_from_catalog_without_admin_fallback_c7262():
     expensive path and is what made ``/industries`` hang.
     """
     bundle = _bundle()
-    admin_api = (
-        Path(__file__).parents[1] / "client" / "src" / "lib" / "admin-api.ts"
-    ).read_text(encoding="utf-8")
+    admin_api = (Path(__file__).parents[1] / "client" / "src" / "lib" / "admin-api.ts").read_text(
+        encoding="utf-8"
+    )
     gallery = (
-        Path(__file__).parents[1]
-        / "client"
-        / "src"
-        / "pages"
-        / "industry-gallery-page.tsx"
+        Path(__file__).parents[1] / "client" / "src" / "pages" / "industry-gallery-page.tsx"
     ).read_text(encoding="utf-8")
     dashboard = (
-        Path(__file__).parents[1]
-        / "client"
-        / "src"
-        / "pages"
-        / "mode-dashboard-page.tsx"
+        Path(__file__).parents[1] / "client" / "src" / "pages" / "mode-dashboard-page.tsx"
     ).read_text(encoding="utf-8")
 
     assert "listPipelineRuntime" in gallery
@@ -258,12 +255,12 @@ def test_legacy_pipeline_pages_are_unreachable_c7263():
     pipeline_card = (
         root / "client" / "src" / "components" / "industry" / "pipeline-card.tsx"
     ).read_text(encoding="utf-8")
-    setup_page = (
-        root / "client" / "src" / "pages" / "industry-setup-page.tsx"
-    ).read_text(encoding="utf-8")
-    gallery = (
-        root / "client" / "src" / "pages" / "industry-gallery-page.tsx"
-    ).read_text(encoding="utf-8")
+    setup_page = (root / "client" / "src" / "pages" / "industry-setup-page.tsx").read_text(
+        encoding="utf-8"
+    )
+    gallery = (root / "client" / "src" / "pages" / "industry-gallery-page.tsx").read_text(
+        encoding="utf-8"
+    )
 
     retired_modules = (
         "pipeline-detail-page",
@@ -305,17 +302,15 @@ def test_legacy_pipeline_pages_are_unreachable_c7263():
     assert "/pipelines/" not in pipeline_card
     assert "navigate(`/i/${resolvedIndustryId}/${mode.id}/dashboard`)" in setup_page
     assert "/pipelines/${industryId}/dashboard" not in gallery
-    assert 'navigate(`/setup-validate?industry=${encodeURIComponent(industry.id)}`)' in pipeline_card
+    assert (
+        "navigate(`/setup-validate?industry=${encodeURIComponent(industry.id)}`)" in pipeline_card
+    )
 
 
 def test_mode_dashboard_passes_industry_only_for_industry_first_c7263() -> None:
     """Industry query params follow industry-first ids, not leftover legacy pipeline ids."""
     page = (
-        Path(__file__).resolve().parents[1]
-        / "client"
-        / "src"
-        / "pages"
-        / "mode-dashboard-page.tsx"
+        Path(__file__).resolve().parents[1] / "client" / "src" / "pages" / "mode-dashboard-page.tsx"
     ).read_text(encoding="utf-8")
     assert "isIndustryFirst ? industryId : undefined" in page
 
@@ -323,9 +318,9 @@ def test_mode_dashboard_passes_industry_only_for_industry_first_c7263() -> None:
 def test_runtime_is_loaded_once_then_polled_only_while_starting_c7264():
     """[C7264][defect][regression] Settled pipeline cards do not keep polling."""
     root = Path(__file__).parents[1]
-    setup_page = (
-        root / "client" / "src" / "pages" / "industry-setup-page.tsx"
-    ).read_text(encoding="utf-8")
+    setup_page = (root / "client" / "src" / "pages" / "industry-setup-page.tsx").read_text(
+        encoding="utf-8"
+    )
     pipeline_card = (
         root / "client" / "src" / "components" / "industry" / "pipeline-card.tsx"
     ).read_text(encoding="utf-8")

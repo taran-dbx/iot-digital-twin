@@ -76,9 +76,7 @@ def _wait_operation(
         if not operation_name:
             raise RuntimeError("CDF operation did not return an operation name")
         if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"CDF operation {operation_name} did not finish within {timeout_s}s"
-            )
+            raise TimeoutError(f"CDF operation {operation_name} did not finish within {timeout_s}s")
         time.sleep(poll_s)
         current = ws.api_client.do("GET", _path(operation_name))
     error = current.get("error")
@@ -99,9 +97,7 @@ def get_cdf_config(
     """Return one CDF config, or ``None`` when it does not exist."""
     client = ws or _new_ws()
     try:
-        return client.api_client.do(
-            "GET", _path(config_name(parent, cdf_config_id))
-        )
+        return client.api_client.do("GET", _path(config_name(parent, cdf_config_id)))
     except Exception as exc:
         if _is_not_found(exc):
             return None

@@ -34,9 +34,7 @@ os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-STATE_FILE = Path(
-    os.getenv("E2E_STATE_FILE", "/tmp/pharma_e2e_state.json")
-)
+STATE_FILE = Path(os.getenv("E2E_STATE_FILE", "/tmp/pharma_e2e_state.json"))
 
 INDUSTRY = "pharmaceutical"
 WAREHOUSE_ID = os.getenv("E2E_WAREHOUSE_ID", "31df823c0f824066")  # lakets-demo-wh (RUNNING)
@@ -63,8 +61,8 @@ def _pp(label, obj):
 
 
 async def _db():
-    from services.app_backend_db import build_app_backend_manager
     from models import app_schema
+    from services.app_backend_db import build_app_backend_manager
 
     db = build_app_backend_manager()
     await db.initialize()
@@ -120,7 +118,10 @@ async def stage_provision():
     db = await _db()
     try:
         summary = await industry_provisioning_service.provision_industry(
-            INDUSTRY, setup_id, db=db, warehouse_id=WAREHOUSE_ID,
+            INDUSTRY,
+            setup_id,
+            db=db,
+            warehouse_id=WAREHOUSE_ID,
         )
         # Compact section statuses.
         for sec in summary.get("sections", []):
@@ -128,8 +129,10 @@ async def stage_provision():
             res = sec["result"]
             print(f"\n--- phase: {phase} ---")
             print(json.dumps(res, indent=1, default=str)[:2500])
-        print("\nKEY IDS:", {k: summary.get(k) for k in
-                             ("catalog", "metrics_table", "branch", "sp_principal")})
+        print(
+            "\nKEY IDS:",
+            {k: summary.get(k) for k in ("catalog", "metrics_table", "branch", "sp_principal")},
+        )
 
         # Ledger counts by type.
         rows = await resource_ledger.list_resources(db, setup_id)
@@ -147,8 +150,9 @@ async def stage_provision():
 # ---------------------------------------------------------------------------
 async def stage_verify_provision():
     from databricks.sdk import WorkspaceClient
-    from services.dbsql_service import execute_dbsql
+
     from services import pipelines_project_service as pps
+    from services.dbsql_service import execute_dbsql
 
     w = WorkspaceClient()
     out: dict = {}
@@ -166,7 +170,8 @@ async def stage_verify_provision():
         out["volumes_error"] = str(e)[:300]
     try:
         m = await execute_dbsql(
-            "DESCRIBE TABLE iot_pharmaceutical.metrics.streaming_metrics", WAREHOUSE_ID)
+            "DESCRIBE TABLE iot_pharmaceutical.metrics.streaming_metrics", WAREHOUSE_ID
+        )
         out["metrics_cols"] = m["row_count"]
     except Exception as e:
         out["metrics_error"] = str(e)[:300]
@@ -178,7 +183,7 @@ async def stage_verify_provision():
 
     # Lakebase branch + chronotable + partitions.
     try:
-        b = w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
+        w.postgres.get_branch(name="projects/iot-pipelines/branches/pharmaceutical")
         out["branch"] = "exists"
     except Exception as e:
         out["branch_error"] = str(e)[:200]
@@ -186,16 +191,19 @@ async def stage_verify_provision():
     conn = None
     try:
         conn = await pps.get_write_conn("pharmaceutical", ws=w)
-        out["lakets_version"] = await conn.fetchval(
-            "SELECT value FROM lakets._meta WHERE key='version'"
-        ) if await _has_lakets(conn) else "?"
+        out["lakets_version"] = (
+            await conn.fetchval("SELECT value FROM lakets._meta WHERE key='version'")
+            if await _has_lakets(conn)
+            else "?"
+        )
         out["chronotables"] = await conn.fetchval(
-            "SELECT count(*) FROM lakets._chronotable_registry")
+            "SELECT count(*) FROM lakets._chronotable_registry"
+        )
         out["sensor_readings_partitions"] = await conn.fetchval(
             "SELECT count(*) FROM pg_inherits i JOIN pg_class p ON p.oid=i.inhparent "
-            "WHERE p.relname='sensor_readings'")
-        out["sensor_readings_count"] = await conn.fetchval(
-            "SELECT count(*) FROM sensor_readings")
+            "WHERE p.relname='sensor_readings'"
+        )
+        out["sensor_readings_count"] = await conn.fetchval("SELECT count(*) FROM sensor_readings")
     except Exception as e:
         out["lakebase_error"] = str(e)[:400]
     finally:
@@ -207,9 +215,12 @@ async def stage_verify_provision():
 
 async def _has_lakets(conn) -> bool:
     try:
-        return bool(await conn.fetchval(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema='lakets' AND table_name='_meta'"))
+        return bool(
+            await conn.fetchval(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema='lakets' AND table_name='_meta'"
+            )
+        )
     except Exception:
         return False
 
@@ -218,9 +229,10 @@ async def _has_lakets(conn) -> bool:
 # Stage: validate microbatch-only (fully green) via the integrated driver
 # ---------------------------------------------------------------------------
 async def stage_validate_mb():
+    from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo, validation_service
     from services import validation_state_machine as sm
-    from databricks.sdk import WorkspaceClient
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -237,8 +249,10 @@ async def stage_validate_mb():
         # it via the same helper provision_cluster now uses.
         if st.get("mb_cluster_id"):
             from services import validation_steps as vs
+
             await vs._install_cluster_libraries(
-                w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES)
+                w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES
+            )
             state["cluster_id"] = st["mb_cluster_id"]
             state = sm.set_step(state, "provision_cluster", sm.PASSED)
         await pipeline_setup_repo.update_setup(db, setup_id, validation_state=state)
@@ -264,9 +278,10 @@ async def stage_validate_mb():
 # Stage: validate realtime lane (through read_back) via the integrated driver
 # ---------------------------------------------------------------------------
 async def stage_validate_rt():
+    from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo, validation_service
     from services import validation_state_machine as sm
-    from databricks.sdk import WorkspaceClient
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -278,8 +293,10 @@ async def stage_validate_rt():
         # Reuse the already-running validation cluster if we have one.
         if st.get("mb_cluster_id"):
             from services import validation_steps as vs
+
             await vs._install_cluster_libraries(
-                w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES)
+                w, st["mb_cluster_id"], vs.VALIDATION_CLUSTER_LIBRARIES
+            )
             state["cluster_id"] = st["mb_cluster_id"]
             # Mark provision_cluster passed so the driver reuses the cluster.
             state = sm.set_step(state, "provision_cluster", sm.PASSED)
@@ -319,6 +336,7 @@ async def stage_probe_landing():
     readable via the read replica.
     """
     from databricks.sdk import WorkspaceClient
+
     from services import pipelines_project_service as pps
 
     w = WorkspaceClient()
@@ -329,23 +347,34 @@ async def stage_probe_landing():
         wconn = await pps.get_write_conn("pharmaceutical", ws=w)
         # Insert a few sensor rows at 'now' (inside the pre-created window).
         from models.sensor_schema import insert_columns
+
         cols = insert_columns()
-        placeholders = ", ".join(f"${i+1}" for i in range(len(cols)))
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
         # Build values: sensor_name, industry, value, unit, sensor_type,
         # event_time (now), min, max, nominal, fault_active, metadata(jsonb), source
         import datetime as dt
-        now = dt.datetime.now(dt.timezone.utc)
+
+        now = dt.datetime.now(dt.UTC)
         inserted = 0
         for i in range(5):
             await wconn.execute(
                 f"INSERT INTO sensor_readings ({', '.join(cols)}) VALUES ({placeholders})",
-                f"reactor_temp_{i}", "pharmaceutical", 72.5 + i, "C", "temperature",
-                now, 60.0, 90.0, 75.0, False, json.dumps({"line": "A"}), "e2e",
+                f"reactor_temp_{i}",
+                "pharmaceutical",
+                72.5 + i,
+                "C",
+                "temperature",
+                now,
+                60.0,
+                90.0,
+                75.0,
+                False,
+                json.dumps({"line": "A"}),
+                "e2e",
             )
             inserted += 1
         out["inserted"] = inserted
-        out["chronotable_count"] = await wconn.fetchval(
-            "SELECT count(*) FROM sensor_readings")
+        out["chronotable_count"] = await wconn.fetchval("SELECT count(*) FROM sensor_readings")
     except Exception as e:
         out["write_error"] = f"{type(e).__name__}: {e}"[:400]
     finally:
@@ -355,8 +384,7 @@ async def stage_probe_landing():
     # Read back via replica.
     try:
         rconn = await pps.get_read_conn("pharmaceutical", ws=w)
-        out["replica_count"] = await rconn.fetchval(
-            "SELECT count(*) FROM sensor_readings")
+        out["replica_count"] = await rconn.fetchval("SELECT count(*) FROM sensor_readings")
     except Exception as e:
         out["read_error"] = f"{type(e).__name__}: {e}"[:400]
     finally:
@@ -370,7 +398,7 @@ async def stage_probe_landing():
 # Stage: deploy microbatch (demonstrates gate, then deploys)
 # ---------------------------------------------------------------------------
 def _producer_notebook(topic: str) -> str:
-    return f'''
+    return f"""
 import os, json, time, random
 from kafka import KafkaProducer
 from kafka.net.sasl.oauth import AbstractTokenProvider
@@ -421,13 +449,14 @@ while True:
     if i % 20 == 0:
         print(f"produced {{i*len(sensors)}} records")
     time.sleep(1)
-'''
+"""
 
 
 def _microbatch_consumer_notebook(topic: str, delta_table: str, checkpoint: str) -> str:
     from models.sensor_schema import kafka_parse_schema
+
     schema_src = kafka_parse_schema()
-    return f'''
+    return f"""
 from pyspark.sql.types import (StructType, StringType, DoubleType, BooleanType,
                                MapType, LongType, IntegerType)
 from pyspark.sql import functions as F
@@ -466,14 +495,14 @@ q = (parsed.writeStream
    .trigger(processingTime="10 seconds")
    .toTable(DELTA))
 q.awaitTermination()
-'''
+"""
 
 
 async def stage_deploy_mb():
     from services import deployment_service, pipeline_setup_repo, validation_service
+    from services import industry_catalog_service as cat
     from services import validation_state_machine as sm
     from services.dbsql_service import execute_dbsql
-    from services import industry_catalog_service as cat
 
     st = _load_state()
     setup_id = st["setup_id"]
@@ -482,8 +511,7 @@ async def stage_deploy_mb():
         catalog = cat.catalog_name(INDUSTRY)
         topic = "iot.pharmaceutical.microbatch"
         delta = f"{catalog}.microbatch.sensor_data_deploy"
-        checkpoint = (f"/Volumes/{catalog}/checkpoints/stream_checkpoints/"
-                      f"deploy/microbatch")
+        checkpoint = f"/Volumes/{catalog}/checkpoints/stream_checkpoints/deploy/microbatch"
 
         # Drop any prior deploy target so schema is clean.
         try:
@@ -507,8 +535,11 @@ async def stage_deploy_mb():
 
         # Deploy WITHOUT gate_override — the fix must let this proceed.
         result = await deployment_service.deploy_pipeline(
-            db, setup_id, "microbatch",
-            consumer_notebook=consumer_nb, producer_notebook=producer_nb,
+            db,
+            setup_id,
+            "microbatch",
+            consumer_notebook=consumer_nb,
+            producer_notebook=producer_nb,
         )
         print("\nGATE (no override): PASSED — deploy_pipeline proceeded WITHOUT gate_override")
         _pp("DEPLOY microbatch result", result)
@@ -540,16 +571,20 @@ async def stage_deploy_status():
 # ---------------------------------------------------------------------------
 async def stage_teardown():
     """Run teardown exactly as the admin DELETE path wires it, then report."""
-    from services import teardown_service, resource_ledger, pipeline_setup_repo
+    from services import pipeline_setup_repo, resource_ledger, teardown_service
 
     st = _load_state()
     setup_id = st["setup_id"]
     db = await _db()
     try:
         before = await resource_ledger.list_resources(db, setup_id)
-        _pp("LEDGER before teardown (type -> count)",
-            {t: sum(1 for r in before if r["resource_type"] == t)
-             for t in {r["resource_type"] for r in before}})
+        _pp(
+            "LEDGER before teardown (type -> count)",
+            {
+                t: sum(1 for r in before if r["resource_type"] == t)
+                for t in {r["resource_type"] for r in before}
+            },
+        )
 
         # Exact wiring copied from routes/industries_admin.delete_pipeline
         # (FIXED path — per-type deleters registry, not job-only):
@@ -557,6 +592,7 @@ async def stage_teardown():
         deleters = None
         try:
             from services import resource_deleters
+
             deleters = resource_deleters.make_all_deleters(
                 warehouse_id=setup.get("warehouse_id"),
             )
@@ -571,15 +607,23 @@ async def stage_teardown():
             summary[key] = summary.get(key, 0) + 1
         _pp("TEARDOWN step actions (admin-path FIXED deleters)", summary)
         _pp("TEARDOWN summary counts", result["summary"])
-        print("teardown success:", result["success"],
-              "deleted_setup:", result["deleted_setup"])
+        print("teardown success:", result["success"], "deleted_setup:", result["deleted_setup"])
         # Show deleted vs skipped vs failed detail.
-        deleted = [(s["resource_type"], s["identifier"]) for s in result["steps"]
-                   if s["action"] == "deleted"]
-        skipped = [(s["resource_type"], s["identifier"], s.get("reason", "")[:80])
-                   for s in result["steps"] if s["action"] == "skipped"]
-        failed = [(s["resource_type"], s["identifier"], s.get("error", ""))
-                  for s in result["steps"] if s["action"] == "failed"]
+        deleted = [
+            (s["resource_type"], s["identifier"])
+            for s in result["steps"]
+            if s["action"] == "deleted"
+        ]
+        skipped = [
+            (s["resource_type"], s["identifier"], s.get("reason", "")[:80])
+            for s in result["steps"]
+            if s["action"] == "skipped"
+        ]
+        failed = [
+            (s["resource_type"], s["identifier"], s.get("error", ""))
+            for s in result["steps"]
+            if s["action"] == "failed"
+        ]
         _pp("DELETED in cloud", deleted)
         _pp("SKIPPED (intentional)", skipped)
         _pp("FAILED (surfaced — setup kept)", failed)
@@ -593,6 +637,7 @@ async def stage_cleanup_cloud():
     Kafka topics (DeleteTopic denied).
     """
     from databricks.sdk import WorkspaceClient
+
     from services.dbsql_service import execute_dbsql
 
     w = WorkspaceClient()
@@ -623,11 +668,12 @@ async def stage_cleanup_cloud():
 
 async def stage_verify_gone():
     from databricks.sdk import WorkspaceClient
+
     from services import pipeline_setup_repo
 
     w = WorkspaceClient()
     out: dict = {}
-    st = _load_state()
+    _load_state()
 
     # setup row gone?
     db = await _db()
@@ -652,9 +698,11 @@ async def stage_verify_gone():
         jobs = [j.job_id for j in w.jobs.list(name=jn)]
         out[f"job:{jn}"] = jobs or "gone"
     # LakeTS ops jobs (named by branch)
-    lakets_jobs = [j.settings.name for j in w.jobs.list()
-                   if j.settings and j.settings.name
-                   and "pharmaceutical" in j.settings.name.lower()]
+    lakets_jobs = [
+        j.settings.name
+        for j in w.jobs.list()
+        if j.settings and j.settings.name and "pharmaceutical" in j.settings.name.lower()
+    ]
     out["any_pharma_jobs"] = lakets_jobs or "none"
     _pp("VERIFY nothing remains", out)
 

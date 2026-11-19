@@ -26,8 +26,7 @@ async def _table_exists(conn, table: str) -> bool:
     schema = await _current_schema(conn)
     return bool(
         await conn.fetchval(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = $1 AND table_name = $2",
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2",
             schema,
             table,
         )
@@ -113,23 +112,17 @@ async def test_pipeline_setup_has_per_mode_config_column(app_backend_conn) -> No
 
 async def test_deployment_fk_cascade_and_unique(app_backend_conn) -> None:
     await app_schema.ensure_app_schema(app_backend_conn)
-    assert await _fk_delete_rule(
-        app_backend_conn, "pipeline_deployment", "setup_id"
-    ) == "CASCADE"
-    assert await _has_unique(
-        app_backend_conn, "pipeline_deployment", {"setup_id", "mode"}
-    )
+    assert await _fk_delete_rule(app_backend_conn, "pipeline_deployment", "setup_id") == "CASCADE"
+    assert await _has_unique(app_backend_conn, "pipeline_deployment", {"setup_id", "mode"})
 
 
 async def test_resource_fks(app_backend_conn) -> None:
     await app_schema.ensure_app_schema(app_backend_conn)
-    assert await _fk_delete_rule(
-        app_backend_conn, "provisioned_resource", "setup_id"
-    ) == "CASCADE"
+    assert await _fk_delete_rule(app_backend_conn, "provisioned_resource", "setup_id") == "CASCADE"
     # deployment_id FK is present and nullable.
-    assert await _fk_delete_rule(
-        app_backend_conn, "provisioned_resource", "deployment_id"
-    ) is not None
+    assert (
+        await _fk_delete_rule(app_backend_conn, "provisioned_resource", "deployment_id") is not None
+    )
     schema = await _current_schema(app_backend_conn)
     nullable = await app_backend_conn.fetchval(
         "SELECT is_nullable FROM information_schema.columns "
@@ -149,8 +142,7 @@ async def test_delete_setup_cascades_to_children(app_backend_conn) -> None:
         "pharmaceutical",
     )
     dep_id = await conn.fetchval(
-        "INSERT INTO pipeline_deployment (setup_id, mode) VALUES ($1, $2) "
-        "RETURNING id",
+        "INSERT INTO pipeline_deployment (setup_id, mode) VALUES ($1, $2) RETURNING id",
         setup_id,
         "realtime",
     )

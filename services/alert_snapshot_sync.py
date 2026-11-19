@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from core.workspace_config import get_genie_space_id, get_uc_catalog, get_uc_schema
 from services import intelligence_catalog_service as ics
@@ -112,7 +113,7 @@ class AlertSnapshotSynchronizer:
         )
         if generation == self._dirty_generation:
             self.dirty = False
-        self.last_sync_at = datetime.now(timezone.utc).isoformat()
+        self.last_sync_at = datetime.now(UTC).isoformat()
         self.last_error = None
         self.retrying = False
         return result
@@ -134,7 +135,7 @@ class AlertSnapshotSynchronizer:
         provision = await provision_reference_tables()
         sync = await ics.sync_reference_data(alerts=rows)
         self.mark_clean_if_generation(generation)
-        self.last_sync_at = datetime.now(timezone.utc).isoformat()
+        self.last_sync_at = datetime.now(UTC).isoformat()
         self.last_error = None
         self.retrying = False
         return {"provision": provision, "sync": sync}
@@ -160,7 +161,7 @@ class AlertSnapshotSynchronizer:
                         timeout=backoff,
                     )
                     return
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     backoff = min(backoff * 2, max_backoff)
                     continue
         else:
@@ -180,7 +181,7 @@ class AlertSnapshotSynchronizer:
                     timeout=self.interval_s,
                 )
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
 

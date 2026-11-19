@@ -25,7 +25,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from models.sql_ddl import LAKETS_VERSION_CHECK_SQL
 
@@ -36,7 +36,7 @@ _CLONE_TIMEOUT_SEC = 60
 _DIST_RELPATH = Path("dist") / "lakets.sql"
 
 
-async def get_installed_version(pool: Any) -> Optional[str]:
+async def get_installed_version(pool: Any) -> str | None:
     """Return the latest installed LakeTS version, or None if not installed."""
     try:
         return await pool.fetchval(LAKETS_VERSION_CHECK_SQL)
@@ -45,7 +45,7 @@ async def get_installed_version(pool: Any) -> Optional[str]:
         return None
 
 
-def resolve_lakets_source(explicit_path: Optional[str] = None) -> Path:
+def resolve_lakets_source(explicit_path: str | None = None) -> Path:
     """Resolve a path to ``lakets.sql`` from arg, env, or git clone.
 
     Raises:
@@ -75,14 +75,10 @@ def resolve_lakets_source(explicit_path: Optional[str] = None) -> Path:
             raise
         resolved = clone_dir / _DIST_RELPATH
         if not resolved.exists():
-            raise FileNotFoundError(
-                f"Cloned repo {git_url} does not contain {_DIST_RELPATH}"
-            )
+            raise FileNotFoundError(f"Cloned repo {git_url} does not contain {_DIST_RELPATH}")
         return resolved
 
-    raise RuntimeError(
-        "LakeTS source not configured — set LAKETS_SQL_PATH or LAKETS_GIT_URL"
-    )
+    raise RuntimeError("LakeTS source not configured — set LAKETS_SQL_PATH or LAKETS_GIT_URL")
 
 
 def _git_clone(url: str, dest: Path) -> None:
@@ -198,8 +194,12 @@ async def install_lakets_if_missing(
 
     try:
         conn = await asyncpg.connect(
-            host=pg_host, database=database,
-            user=pg_user, password=pg_token, port=5432, ssl="require",
+            host=pg_host,
+            database=database,
+            user=pg_user,
+            password=pg_token,
+            port=5432,
+            ssl="require",
         )
     except Exception as exc:
         result["error"] = f"connect failed: {exc}"[:200]
@@ -262,12 +262,9 @@ async def install_lakets_if_missing(
 # ChronoTable + tier-policy helpers (Phase 2)
 # ---------------------------------------------------------------------------
 _CHRONOTABLE_PROBE_SQL = (
-    "SELECT id FROM lakets._chronotable_registry "
-    "WHERE schema_name = $1 AND table_name = $2"
+    "SELECT id FROM lakets._chronotable_registry WHERE schema_name = $1 AND table_name = $2"
 )
-_CHRONOTABLE_CREATE_SQL = (
-    "SELECT lakets.create_chronotable($1, $2, $3::interval, $4)"
-)
+_CHRONOTABLE_CREATE_SQL = "SELECT lakets.create_chronotable($1, $2, $3::interval, $4)"
 _POLICY_PROBE_SQL = (
     "SELECT p.id FROM lakets._policy_registry p "
     "JOIN lakets._chronotable_registry c ON p.chronotable_id = c.id "
@@ -298,11 +295,19 @@ async def create_chronotable(
         return True
 
     new_id = await pool.fetchval(
-        _CHRONOTABLE_CREATE_SQL, table, time_col, _interval_to_timedelta(chunk), schema,
+        _CHRONOTABLE_CREATE_SQL,
+        table,
+        time_col,
+        _interval_to_timedelta(chunk),
+        schema,
     )
     logger.info(
         "ChronoTable %s.%s created (id=%s, time=%s, chunk=%s)",
-        schema, table, new_id, time_col, chunk,
+        schema,
+        table,
+        new_id,
+        time_col,
+        chunk,
     )
     return False
 
@@ -328,22 +333,34 @@ async def apply_tier_policy(
         raise ValueError(f"hot ({hot}) must be less than drop ({drop})")
 
     existing_id = await pool.fetchval(
-        _POLICY_PROBE_SQL, schema, table, "tiered_retention",
+        _POLICY_PROBE_SQL,
+        schema,
+        table,
+        "tiered_retention",
     )
     if existing_id is not None:
         logger.info(
             "Tiered retention policy on %s.%s already exists (id=%s)",
-            schema, table, existing_id,
+            schema,
+            table,
+            existing_id,
         )
         return True
 
     new_id = await pool.fetchval(
-        _TIERED_RETENTION_APPLY_SQL, table,
-        _interval_to_timedelta(hot), _interval_to_timedelta(drop), schema,
+        _TIERED_RETENTION_APPLY_SQL,
+        table,
+        _interval_to_timedelta(hot),
+        _interval_to_timedelta(drop),
+        schema,
     )
     logger.info(
         "Tiered retention policy applied on %s.%s (id=%s, hot=%s, drop=%s)",
-        schema, table, new_id, hot, drop,
+        schema,
+        table,
+        new_id,
+        hot,
+        drop,
     )
     return False
 
@@ -356,12 +373,8 @@ async def apply_tier_policy(
 # The toolkit takes a full SELECT in ``p_query``; this helper builds that query
 # from a high-level ``aggregates`` spec so callers don't hand-roll SQL.
 # ---------------------------------------------------------------------------
-_ROLLUP_PROBE_SQL = (
-    "SELECT id, query_text FROM lakets._rollup_registry WHERE name = $1"
-)
-_ROLLUP_CREATE_SQL = (
-    "SELECT lakets.create_rollup($1, $2, $3::interval, $4, $5)"
-)
+_ROLLUP_PROBE_SQL = "SELECT id, query_text FROM lakets._rollup_registry WHERE name = $1"
+_ROLLUP_CREATE_SQL = "SELECT lakets.create_rollup($1, $2, $3::interval, $4, $5)"
 
 
 # Aggregate function names the rollup editor offers as bare strings. A bare
@@ -438,17 +451,11 @@ def _build_rollup_query(
     else:
         agg_sql = ", ".join(_aggregate_to_sql(a, value_column) for a in aggregates)
 
-    dimensions = [
-        _validate_sql_identifier(column) for column in (group_columns or [])
-    ]
+    dimensions = [_validate_sql_identifier(column) for column in (group_columns or [])]
     bucket_expr = f"lakets.time_bucket('{bucket}'::interval, {time_col}) AS bucket"
     select_list = ", ".join([bucket_expr, *dimensions, agg_sql])
     group_by = ", ".join(["bucket", *dimensions])
-    return (
-        f"SELECT {select_list} "
-        f"FROM {schema}.{table} "
-        f"GROUP BY {group_by}"
-    )
+    return f"SELECT {select_list} FROM {schema}.{table} GROUP BY {group_by}"
 
 
 def _normalize_sql(sql: str) -> str:
@@ -464,10 +471,7 @@ def _rollup_mismatch_result(resource: str, name: str) -> dict:
     return {
         "resource": resource,
         "status": "failed",
-        "error": (
-            f"existing RollUp {name} definition mismatch; "
-            "drop or migrate it explicitly"
-        ),
+        "error": (f"existing RollUp {name} definition mismatch; drop or migrate it explicitly"),
     }
 
 
@@ -508,8 +512,12 @@ async def create_rollup(
         _validate_sql_identifier(value_column)
         _interval_seconds(bucket)
         query = _build_rollup_query(
-            table=table, schema=schema, bucket=bucket,
-            time_col=time_col, aggregates=aggregates, value_column=value_column,
+            table=table,
+            schema=schema,
+            bucket=bucket,
+            time_col=time_col,
+            aggregates=aggregates,
+            value_column=value_column,
             group_columns=group_columns,
         )
         existing = await pool.fetchrow(_ROLLUP_PROBE_SQL, name)
@@ -530,10 +538,7 @@ async def create_rollup(
         logger.info("RollUp %s created (id=%s)", name, rollup_id)
         return {"resource": resource, "status": "created"}
     except Exception as exc:
-        if any(
-            hint in str(exc).lower()
-            for hint in ("already exists", "duplicate", "unique")
-        ):
+        if any(hint in str(exc).lower() for hint in ("already exists", "duplicate", "unique")):
             try:
                 existing = await pool.fetchrow(_ROLLUP_PROBE_SQL, name)
                 if existing is not None and _rollup_definition_matches(
@@ -572,9 +577,7 @@ FROM (
     WHERE r.name = $1
 ) probes
 """
-_ENABLE_ROLLUP_INVALIDATION_SQL = (
-    "SELECT lakets.enable_rollup_invalidation($1)"
-)
+_ENABLE_ROLLUP_INVALIDATION_SQL = "SELECT lakets.enable_rollup_invalidation($1)"
 _LVC_PROBE_SQL = """
 SELECT l.id, l.key_columns, l.value_columns, l.enabled
 FROM lakets._lvc_registry l
@@ -588,9 +591,7 @@ async def enable_rollup_invalidation(pool: Any, name: str) -> dict:
     """Enable invalidation triggers for a registered RollUp. Never raises."""
     resource = f"LakeTS invalidation {name}"
     try:
-        already_enabled = bool(
-            await pool.fetchval(_ROLLUP_INVALIDATION_PROBE_SQL, name)
-        )
+        already_enabled = bool(await pool.fetchval(_ROLLUP_INVALIDATION_PROBE_SQL, name))
         # The vendored function uses CREATE OR REPLACE for parent invalidation
         # triggers and every active partition's touch trigger. Calling it on
         # every setup also repairs partitions created after the previous run.
@@ -618,9 +619,7 @@ async def enable_lvc(
         _validate_sql_identifier(schema)
         _validate_sql_identifier(table)
         validated_keys = [_validate_sql_identifier(column) for column in key_columns]
-        validated_values = [
-            _validate_sql_identifier(column) for column in value_columns
-        ]
+        validated_values = [_validate_sql_identifier(column) for column in value_columns]
         if not validated_keys:
             raise ValueError("key_columns must not be empty")
 
@@ -654,10 +653,7 @@ async def enable_lvc(
         )
         return {"resource": resource, "status": "created"}
     except Exception as exc:
-        if any(
-            hint in str(exc).lower()
-            for hint in ("already enabled", "duplicate", "unique")
-        ):
+        if any(hint in str(exc).lower() for hint in ("already enabled", "duplicate", "unique")):
             try:
                 existing = await pool.fetchrow(_LVC_PROBE_SQL, schema, table)
                 if existing is not None:
@@ -687,13 +683,22 @@ async def enable_lvc(
 # Approximate ordering of Postgres interval strings for client-side validation.
 # LakeTS enforces the same rule server-side — this just fails fast with a clearer error.
 _UNIT_SECONDS = {
-    "second": 1, "seconds": 1, "sec": 1,
-    "minute": 60, "minutes": 60, "min": 60,
-    "hour": 3600, "hours": 3600,
-    "day": 86400, "days": 86400,
-    "week": 604800, "weeks": 604800,
-    "month": 2592000, "months": 2592000,  # approximate — 30 days
-    "year": 31536000, "years": 31536000,  # approximate — 365 days
+    "second": 1,
+    "seconds": 1,
+    "sec": 1,
+    "minute": 60,
+    "minutes": 60,
+    "min": 60,
+    "hour": 3600,
+    "hours": 3600,
+    "day": 86400,
+    "days": 86400,
+    "week": 604800,
+    "weeks": 604800,
+    "month": 2592000,
+    "months": 2592000,  # approximate — 30 days
+    "year": 31536000,
+    "years": 31536000,  # approximate — 365 days
 }
 
 
@@ -734,9 +739,7 @@ _SHADOW_STATE_SQL = (
 )
 _LEGACY_SENSOR_SHADOW = "_shadow_sensor_readings"
 _CDF_BACKFILL_MARKER = "lakets-cdf-backfill-complete:v1"
-_LEGACY_SHADOW_EXISTS_SQL = (
-    "SELECT to_regclass('lakets_cdf._shadow_sensor_readings') IS NOT NULL"
-)
+_LEGACY_SHADOW_EXISTS_SQL = "SELECT to_regclass('lakets_cdf._shadow_sensor_readings') IS NOT NULL"
 _TARGET_MIGRATION_STATE_SQL = """
 SELECT
     obj_description(to_regclass($1), 'pg_class') = $2 AS backfill_complete,
@@ -872,14 +875,9 @@ async def reconcile_chronotable_shadow(
     try:
         for identifier in (shadow_table, table, schema, shadow_schema):
             _validate_sql_identifier(identifier)
-        if (
-            schema != "public"
-            or table != "sensor_readings"
-            or shadow_schema != "lakets_cdf"
-        ):
+        if schema != "public" or table != "sensor_readings" or shadow_schema != "lakets_cdf":
             raise RuntimeError(
-                "online CDF migration only supports append-only "
-                "public.sensor_readings"
+                "online CDF migration only supports append-only public.sensor_readings"
             )
         state = await pool.fetchrow(_SHADOW_STATE_SQL, schema, table)
         if state is None:
@@ -887,8 +885,7 @@ async def reconcile_chronotable_shadow(
         previous_shadow = state.get("shadow_table_name")
         if previous_shadow not in (None, _LEGACY_SENSOR_SHADOW, shadow_table):
             raise RuntimeError(
-                f"{schema}.{table} is already bound to unexpected shadow "
-                f"{previous_shadow!r}"
+                f"{schema}.{table} is already bound to unexpected shadow {previous_shadow!r}"
             )
 
         target_relation = f"{shadow_schema}.{shadow_table}"
@@ -914,21 +911,16 @@ async def reconcile_chronotable_shadow(
                 }
 
         if not await pool.fetchval(_SENSOR_ID_INVARIANT_SQL):
-            raise RuntimeError(
-                "public.sensor_readings must have an immutable, non-null BIGINT id"
-            )
+            raise RuntimeError("public.sensor_readings must have an immutable, non-null BIGINT id")
         legacy_exists = bool(await pool.fetchval(_LEGACY_SHADOW_EXISTS_SQL))
         if legacy_exists and not await pool.fetchval(_LEGACY_SCHEMA_MATCH_SQL):
-            raise RuntimeError(
-                "legacy CDF shadow columns do not match public.sensor_readings"
-            )
+            raise RuntimeError("legacy CDF shadow columns do not match public.sensor_readings")
         copy_sources = []
         if legacy_exists:
             copy_sources.append(f"{shadow_schema}.{_LEGACY_SENSOR_SHADOW}")
         copy_sources.append(f"{schema}.{table}")
         await pool.execute(
-            f"SELECT lakets._build_shadow_table("
-            f"'{schema}', '{table}', '{shadow_table}')"
+            f"SELECT lakets._build_shadow_table('{schema}', '{table}', '{shadow_table}')"
         )
         await pool.execute(f"COMMENT ON TABLE {target_relation} IS NULL")
         migration_state = await pool.fetchrow(
@@ -938,12 +930,9 @@ async def reconcile_chronotable_shadow(
             target_index,
         )
         if not migration_state or not migration_state.get("index_valid"):
+            await pool.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {shadow_schema}.{target_index}")
             await pool.execute(
-                f"DROP INDEX CONCURRENTLY IF EXISTS {shadow_schema}.{target_index}"
-            )
-            await pool.execute(
-                f"CREATE UNIQUE INDEX CONCURRENTLY {target_index} "
-                f"ON {target_relation} (id)"
+                f"CREATE UNIQUE INDEX CONCURRENTLY {target_index} ON {target_relation} (id)"
             )
             migration_state = await pool.fetchrow(
                 _TARGET_MIGRATION_STATE_SQL,
@@ -1014,9 +1003,7 @@ FROM {schema}.{table} AS source_rows
 ON CONFLICT (id) DO NOTHING
 """
         )
-        await pool.execute(
-            f"COMMENT ON TABLE {target_relation} IS '{_CDF_BACKFILL_MARKER}'"
-        )
+        await pool.execute(f"COMMENT ON TABLE {target_relation} IS '{_CDF_BACKFILL_MARKER}'")
         completed = await pool.fetchrow(
             _TARGET_MIGRATION_STATE_SQL,
             target_relation,
@@ -1037,9 +1024,7 @@ ON CONFLICT (id) DO NOTHING
             "copy_sources": copy_sources,
         }
     except Exception as exc:
-        logger.warning(
-            "CDF shadow reconciliation failed for %s.%s: %s", schema, table, exc
-        )
+        logger.warning("CDF shadow reconciliation failed for %s.%s: %s", schema, table, exc)
         return {
             "resource": resource,
             "status": "failed",
@@ -1057,9 +1042,7 @@ _CURRENT_DATABASE_SQL = "SELECT current_database()"
 _WAL2DELTA_AVAILABLE_SQL = (
     "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'wal2delta')"
 )
-_WAL2DELTA_INSTALLED_SQL = (
-    "SELECT extversion FROM pg_extension WHERE extname = 'wal2delta'"
-)
+_WAL2DELTA_INSTALLED_SQL = "SELECT extversion FROM pg_extension WHERE extname = 'wal2delta'"
 _LAKETS_SYNC_PRESENT_SQL = (
     "SELECT EXISTS ("
     " SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid "
@@ -1091,7 +1074,7 @@ async def check_lakehouse_sync_readiness(pool: Any) -> dict:
             "error": str(exc)[:200],
         }
 
-    database_compatible = (current_db == _REQUIRED_DATABASE)
+    database_compatible = current_db == _REQUIRED_DATABASE
     wal2delta_installed = wal2delta_version is not None
 
     # Lakehouse Sync is a Databricks-managed feature — the wal2delta extension
@@ -1401,6 +1384,8 @@ SELECT (SELECT max(event_time) FROM public.sensor_readings) AS hot_latest,
        END AS wal_lag_bytes
 FROM cdf_state c
 """
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, str)):
         return value
@@ -1453,29 +1438,33 @@ async def _partition_dashboard(pool: Any) -> tuple[dict, dict]:
         for row in rows
     ]
     first = rows[0]
-    partitions = _dashboard_value({
-        "timeline": timeline,
-        "counts": {
-            "active": int(first["active_count"] or 0),
-            "tiered": int(first["tiered_count"] or 0),
-            "dropped": int(first["dropped_count"] or 0),
-            "total": int(first["total_count"]),
-        },
-    })
+    partitions = _dashboard_value(
+        {
+            "timeline": timeline,
+            "counts": {
+                "active": int(first["active_count"] or 0),
+                "tiered": int(first["tiered_count"] or 0),
+                "dropped": int(first["dropped_count"] or 0),
+                "total": int(first["total_count"]),
+            },
+        }
+    )
 
     current = next((row for row in rows if row["is_current"]), None)
     if current is None:
         return partitions, _dashboard_value(None, "No current partition covers now()")
-    return partitions, _dashboard_value({
-        "name": current["name"],
-        "range_start": current["range_start"],
-        "range_end": current["range_end"],
-        "phase": current["phase"],
-        "status": current["status"],
-        "row_count": current["live_row_count"],
-        "size_bytes": current["live_size_bytes"],
-        "age_seconds": current["age_seconds"],
-    })
+    return partitions, _dashboard_value(
+        {
+            "name": current["name"],
+            "range_start": current["range_start"],
+            "range_end": current["range_end"],
+            "phase": current["phase"],
+            "status": current["status"],
+            "row_count": current["live_row_count"],
+            "size_bytes": current["live_size_bytes"],
+            "age_seconds": current["age_seconds"],
+        }
+    )
 
 
 async def _tiering_dashboard(pool: Any) -> dict:
@@ -1501,10 +1490,10 @@ async def _tiering_dashboard(pool: Any) -> dict:
         )
 
     tiering["policy"] = {
-            "type": row["policy_type"],
-            "config": row["policy"],
-            "enabled": row["enabled"],
-            "last_run_at": row["last_run_at"],
+        "type": row["policy_type"],
+        "config": row["policy"],
+        "enabled": row["enabled"],
+        "last_run_at": row["last_run_at"],
     }
     if not row["enabled"]:
         return _dashboard_value(
@@ -1533,27 +1522,29 @@ async def _rollup_dashboard(pool: Any) -> dict:
         return _dashboard_error("Rollup", exc)
     if row is None:
         return _dashboard_value(None, "RollUp sensor_1m is not registered")
-    return _dashboard_value({
-        "name": row["name"],
-        "table": row["rollup_table"],
-        "bucket": row["bucket"],
-        "watermark": row["watermark"],
-        "last_refreshed_at": row["last_refreshed_at"],
-        "refresh_age_seconds": row["refresh_age_seconds"],
-        "pending_invalidations": int(row["pending_invalidations"] or 0),
-        "series": [
-            {
-                "bucket": sample["bucket"],
-                "sensor_name": sample["sensor_name"],
-                "sample_count": int(sample["sample_count"] or 0),
-                "avg_value": sample["avg_value"],
-                "min_value": sample["min_value"],
-                "max_value": sample["max_value"],
-                "stddev_value": sample["stddev_value"],
-            }
-            for sample in series
-        ],
-    })
+    return _dashboard_value(
+        {
+            "name": row["name"],
+            "table": row["rollup_table"],
+            "bucket": row["bucket"],
+            "watermark": row["watermark"],
+            "last_refreshed_at": row["last_refreshed_at"],
+            "refresh_age_seconds": row["refresh_age_seconds"],
+            "pending_invalidations": int(row["pending_invalidations"] or 0),
+            "series": [
+                {
+                    "bucket": sample["bucket"],
+                    "sensor_name": sample["sensor_name"],
+                    "sample_count": int(sample["sample_count"] or 0),
+                    "avg_value": sample["avg_value"],
+                    "min_value": sample["min_value"],
+                    "max_value": sample["max_value"],
+                    "stddev_value": sample["stddev_value"],
+                }
+                for sample in series
+            ],
+        }
+    )
 
 
 async def _timed_aggregate_count(
@@ -1574,10 +1565,14 @@ async def _timed_aggregate_count(
     elapsed_ms = (time.perf_counter() - started) * 1000
     if row is None:
         return None, elapsed_ms, "Aggregate query returned no result"
-    return {
-        "aggregate_rows": int(row["aggregate_rows"]),
-        "source_rows": int(row["source_rows"]),
-    }, elapsed_ms, None
+    return (
+        {
+            "aggregate_rows": int(row["aggregate_rows"]),
+            "source_rows": int(row["source_rows"]),
+        },
+        elapsed_ms,
+        None,
+    )
 
 
 async def _query_comparison_dashboard(pool: Any) -> dict:
@@ -1587,13 +1582,9 @@ async def _query_comparison_dashboard(pool: Any) -> dict:
     )
     raw_stats, raw_ms, raw_error = raw_probe
     rollup_stats, rollup_ms, rollup_error = rollup_probe
-    raw_aggregate_rows = (
-        raw_stats["aggregate_rows"] if raw_stats is not None else None
-    )
+    raw_aggregate_rows = raw_stats["aggregate_rows"] if raw_stats is not None else None
     raw_source_rows = raw_stats["source_rows"] if raw_stats is not None else None
-    rollup_rows = (
-        rollup_stats["aggregate_rows"] if rollup_stats is not None else None
-    )
+    rollup_rows = rollup_stats["aggregate_rows"] if rollup_stats is not None else None
     reduction = None
     if raw_source_rows and rollup_rows is not None:
         reduction = round((1 - (rollup_rows / raw_source_rows)) * 100, 2)
@@ -1622,30 +1613,28 @@ async def _data_quality_dashboard(pool: Any) -> dict:
         return _dashboard_error("Data quality", exc)
     if row is None or not row["sensor_count"]:
         return _dashboard_value(None, "No readings in the 30-minute lookback window")
-    return _dashboard_value({
-        "window_minutes": 30,
-        "sensor_count": int(row["sensor_count"]),
-        "expected_bucket_count": int(row["expected_bucket_count"]),
-        "observed_bucket_count": int(row["observed_bucket_count"]),
-        "observed_buckets": int(row["observed_bucket_count"]),
-        "missing_bucket_count": int(row["missing_bucket_count"]),
-        "missing_bucket_percentage": float(row["missing_bucket_percentage"]),
-        "gapfilled_count": None,
-        "gapfilled_reason": "No LOCF or gapfill query was executed",
-        "missing_sample_percentage": None,
-        "missing_sample_reason": (
-            "Expected sensor sampling rate is not configured"
-        ),
-    })
+    return _dashboard_value(
+        {
+            "window_minutes": 30,
+            "sensor_count": int(row["sensor_count"]),
+            "expected_bucket_count": int(row["expected_bucket_count"]),
+            "observed_bucket_count": int(row["observed_bucket_count"]),
+            "observed_buckets": int(row["observed_bucket_count"]),
+            "missing_bucket_count": int(row["missing_bucket_count"]),
+            "missing_bucket_percentage": float(row["missing_bucket_percentage"]),
+            "gapfilled_count": None,
+            "gapfilled_reason": "No LOCF or gapfill query was executed",
+            "missing_sample_percentage": None,
+            "missing_sample_reason": ("Expected sensor sampling rate is not configured"),
+        }
+    )
 
 
 async def _lvc_dashboard(pool: Any) -> dict:
     try:
         registry = await pool.fetchrow(_LVC_REGISTRY_DASHBOARD_SQL)
         if registry is None:
-            return _dashboard_value(
-                None, "LVC is not enabled for public.sensor_readings"
-            )
+            return _dashboard_value(None, "LVC is not enabled for public.sensor_readings")
         if registry["cache_table_name"] != "_lvc_sensor_readings":
             return _dashboard_value(
                 None,
@@ -1654,24 +1643,22 @@ async def _lvc_dashboard(pool: Any) -> dict:
         cache = await pool.fetchrow(_LVC_CACHE_DASHBOARD_SQL)
         if cache is None:
             return _dashboard_value(None, "LVC cache statistics are unavailable")
-        return _dashboard_value({
-            "enabled": bool(registry["enabled"]),
-            "cache_table": registry["cache_table_name"],
-            "key_columns": list(registry["key_columns"] or []),
-            "value_columns": list(registry["value_columns"] or []),
-            "cached_series": (
-                int(cache["cached_series"])
-                if cache["cached_series"] is not None
-                else None
-            ),
-            "source_event_time": cache["source_event_time"],
-            "cache_event_time": cache["cache_event_time"],
-            "cache_updated_at": cache["cache_updated_at"],
-            "source_to_cache_event_lag_seconds": cache[
-                "source_to_cache_event_lag_seconds"
-            ],
-            "cache_update_age_seconds": cache["cache_update_age_seconds"],
-        })
+        return _dashboard_value(
+            {
+                "enabled": bool(registry["enabled"]),
+                "cache_table": registry["cache_table_name"],
+                "key_columns": list(registry["key_columns"] or []),
+                "value_columns": list(registry["value_columns"] or []),
+                "cached_series": (
+                    int(cache["cached_series"]) if cache["cached_series"] is not None else None
+                ),
+                "source_event_time": cache["source_event_time"],
+                "cache_event_time": cache["cache_event_time"],
+                "cache_updated_at": cache["cache_updated_at"],
+                "source_to_cache_event_lag_seconds": cache["source_to_cache_event_lag_seconds"],
+                "cache_update_age_seconds": cache["cache_update_age_seconds"],
+            }
+        )
     except Exception as exc:
         return _dashboard_error("LVC", exc)
 
@@ -1700,23 +1687,15 @@ async def _cdf_dashboard(pool: Any) -> dict:
         reasons.append("No CDF shadow is registered")
 
     hot_to_shadow_lag = None
-    if isinstance(row["hot_latest"], _dt.datetime) and isinstance(
-        shadow_latest, _dt.datetime
-    ):
-        hot_to_shadow_lag = (
-            row["hot_latest"] - shadow_latest
-        ).total_seconds()
+    if isinstance(row["hot_latest"], _dt.datetime) and isinstance(shadow_latest, _dt.datetime):
+        hot_to_shadow_lag = (row["hot_latest"] - shadow_latest).total_seconds()
     value = {
         "hot_latest": row["hot_latest"],
         "shadow_latest": shadow_latest,
         "hot_to_shadow_event_lag_seconds": hot_to_shadow_lag,
         "sync_enabled": bool(row["sync_enabled"]),
         "shadow_table": row["shadow_table_name"],
-        "wal_lag_bytes": (
-            int(row["wal_lag_bytes"])
-            if row["wal_lag_bytes"] is not None
-            else None
-        ),
+        "wal_lag_bytes": (int(row["wal_lag_bytes"]) if row["wal_lag_bytes"] is not None else None),
     }
     if row["committed_lsn"] is None:
         reasons.append("CDF streaming WAL position is unavailable")
@@ -1759,16 +1738,18 @@ async def get_dashboard(pool: Any) -> dict:
         partitions = partition_sections
         current_partition = partition_sections.copy()
 
-    return _json_safe({
-        "partitions": partitions,
-        "current_partition": current_partition,
-        "tiering": tiering,
-        "rollup": rollup,
-        "query_comparison": query_comparison,
-        "data_quality": data_quality,
-        "lvc": lvc,
-        "cdf": cdf,
-    })
+    return _json_safe(
+        {
+            "partitions": partitions,
+            "current_partition": current_partition,
+            "tiering": tiering,
+            "rollup": rollup,
+            "query_comparison": query_comparison,
+            "data_quality": data_quality,
+            "lvc": lvc,
+            "cdf": cdf,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

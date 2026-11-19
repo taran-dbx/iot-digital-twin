@@ -17,7 +17,6 @@ import pytest
 
 from models import sensor_schema as ss
 
-
 # ---------------------------------------------------------------------------
 # Canonical field expectations — mirror the ``SensorRecord`` in the
 # ``iot_data_simulator`` wheel (11 fields).
@@ -158,15 +157,11 @@ class TestKafkaParseSchema:
     def test_timestamp_parsed_as_double_epoch(self) -> None:
         # Raw Kafka JSON carries epoch seconds; the transform to TIMESTAMPTZ
         # happens at insert time, so the parse schema keeps ``timestamp`` DOUBLE.
-        line = next(
-            ln for ln in ss.kafka_parse_schema().splitlines() if '"timestamp"' in ln
-        )
+        line = next(ln for ln in ss.kafka_parse_schema().splitlines() if '"timestamp"' in ln)
         assert "DoubleType" in line
 
     def test_metadata_parsed_as_map(self) -> None:
-        line = next(
-            ln for ln in ss.kafka_parse_schema().splitlines() if '"metadata"' in ln
-        )
+        line = next(ln for ln in ss.kafka_parse_schema().splitlines() if '"metadata"' in ln)
         assert "MapType" in line
 
     def test_add_lines_match_record_field_order(self) -> None:
@@ -237,7 +232,7 @@ class TestSqlDdlDerivedFromSsot:
     def test_sensor_readings_ddl_matches_ssot(self) -> None:
         from models import sql_ddl
 
-        assert sql_ddl.SENSOR_READINGS_DDL == ss.pg_chronotable_ddl("{table_name}")
+        assert ss.pg_chronotable_ddl("{table_name}") == sql_ddl.SENSOR_READINGS_DDL
 
     def test_sensor_readings_ddl_now_has_the_missing_four_columns(self) -> None:
         from models import sql_ddl
@@ -264,11 +259,7 @@ class TestSqlDdlDerivedFromSsot:
 # from the field-map, this test fails.
 # ---------------------------------------------------------------------------
 NOTEBOOK_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client"
-    / "src"
-    / "lib"
-    / "notebook-template.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "notebook-template.ts"
 )
 
 

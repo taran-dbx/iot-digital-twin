@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from databricks.sdk.errors import NotFound
 
@@ -62,7 +63,7 @@ def _parse_s3_url(location: str) -> tuple[str, str]:
     """Split an ``s3://bucket/key/prefix`` URL into ``(bucket, prefix)``."""
     if not location or not location.startswith("s3://"):
         raise ValueError(f"not an s3:// URL: {location!r}")
-    rest = location[len("s3://"):]
+    rest = location[len("s3://") :]
     bucket, _, prefix = rest.partition("/")
     return bucket, prefix
 
@@ -176,9 +177,7 @@ def make_all_deleters(
                 "branch is deleted (not a UC table)"
             )
         if not res.get("_ownership_verified"):
-            raise SkipResource(
-                "UC table pipeline ownership is unverified — preserving table"
-            )
+            raise SkipResource("UC table pipeline ownership is unverified — preserving table")
         try:
             _ws().tables.delete(full_name=res["identifier"])
         except NotFound:
@@ -188,15 +187,11 @@ def make_all_deleters(
         # EXTERNAL Delta table: drop the UC object AND delete its S3 objects
         # (otherwise the data files are orphaned in the shared bucket).
         if not res.get("_ownership_verified"):
-            raise SkipResource(
-                "metrics table pipeline ownership is unverified — preserving table"
-            )
+            raise SkipResource("metrics table pipeline ownership is unverified — preserving table")
         try:
             _ws().tables.delete(full_name=res["identifier"])
         except NotFound:
-            logger.info(
-                "Metrics table %s already absent during teardown", res["identifier"]
-            )
+            logger.info("Metrics table %s already absent during teardown", res["identifier"])
         location = (res.get("metadata") or {}).get("location")
         if location:
             try:
@@ -210,12 +205,15 @@ def make_all_deleters(
                 logger.warning(
                     "teardown: boto3 unavailable (%s) — dropped UC table '%s' but "
                     "could not delete S3 objects under %s (left orphaned)",
-                    exc, res.get("identifier"), location,
+                    exc,
+                    res.get("identifier"),
+                    location,
                 )
         else:
             logger.warning(
                 "teardown: metrics_table '%s' has no S3 location in metadata — "
-                "S3 objects may be orphaned", res.get("identifier"),
+                "S3 objects may be orphaned",
+                res.get("identifier"),
             )
 
     async def del_grant(res: dict) -> None:
@@ -241,16 +239,12 @@ def make_all_deleters(
         md = res.get("metadata") or {}
         name = res.get("identifier") or ""
         if md.get("endpoint_type") == "READ_WRITE" or name.endswith("/primary"):
-            raise SkipResource(
-                "primary endpoint is auto-removed when its branch is deleted"
-            )
+            raise SkipResource("primary endpoint is auto-removed when its branch is deleted")
         _ws().postgres.delete_endpoint(name=name)
         logger.info("teardown: deleted Lakebase endpoint %s", name)
 
     async def del_lakebase_project(res: dict) -> None:
-        raise SkipResource(
-            "shared iot-pipelines project — never torn down per-industry"
-        )
+        raise SkipResource("shared iot-pipelines project — never torn down per-industry")
 
     # --- Identity / secrets ------------------------------------------------
     async def del_service_principal(res: dict) -> None:
@@ -352,10 +346,10 @@ def _grant_to_revoke(grant_sql: str) -> str:
     """Turn a recorded ``GRANT ... TO <p>`` statement into its ``REVOKE`` form."""
     revoke = grant_sql.strip()
     if revoke.upper().startswith("GRANT "):
-        revoke = "REVOKE " + revoke[len("GRANT "):]
+        revoke = "REVOKE " + revoke[len("GRANT ") :]
     # ``GRANT <privs> ON <obj> TO <p>`` → ``REVOKE <privs> ON <obj> FROM <p>``.
     # Replace the last " TO " so object names containing "TO" are unaffected.
     idx = revoke.rfind(" TO ")
     if idx != -1:
-        revoke = revoke[:idx] + " FROM " + revoke[idx + len(" TO "):]
+        revoke = revoke[:idx] + " FROM " + revoke[idx + len(" TO ") :]
     return revoke

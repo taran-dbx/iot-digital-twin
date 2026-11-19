@@ -25,7 +25,6 @@ import logging
 from typing import Any
 
 from core.workspace_config import get_secret_scope
-
 from services import lakets_service
 from services.provisioning_service import (
     ensure_streaming_sp,
@@ -95,9 +94,7 @@ def _check_project_health(w: Any, project_id: str, branch_id: str) -> str | None
     return None
 
 
-async def _open_pipeline_connection(
-    w: Any, project_id: str, branch_id: str, database: str
-) -> Any:
+async def _open_pipeline_connection(w: Any, project_id: str, branch_id: str, database: str) -> Any:
     """Open an asyncpg connection to the pipeline's Lakebase endpoint.
 
     Resolves host + OAuth token the same way ``provision_lakebase_table`` does,
@@ -117,8 +114,12 @@ async def _open_pipeline_connection(
     cred = w.postgres.generate_database_credential(endpoint=endpoints[0].name)
 
     return await asyncpg.connect(
-        host=pg_host, database=database, user=pg_user,
-        password=cred.token, port=5432, ssl="require",
+        host=pg_host,
+        database=database,
+        user=pg_user,
+        password=cred.token,
+        port=5432,
+        ssl="require",
     )
 
 
@@ -144,7 +145,9 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
     table_name = (params.get("table_name") or "sensor_readings").strip()
     secret_scope = (params.get("secret_scope") or get_secret_scope()).strip()
     tiering = params.get("tiering")
-    retention = params.get("retention")
+    # ``params["retention"]`` (the UI drop-after interval) is intentionally not
+    # read here: no plain-retention LakeTS policy is wired up yet. Hot-store
+    # retention is enforced by the tiering policy's ``drop`` interval.
     rollups = params.get("rollups") or []
 
     w = _new_ws()
@@ -162,16 +165,10 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
     # ── (b) Create the Lakebase project + branch (only when requested) ─────
     if create_new_project:
         try:
-            proj_results = await provision_lakebase_project_and_branch(
-                lb_project_id, lb_branch_id
-            )
-            steps.append(
-                _ok_step("provision_lakebase_project_and_branch", proj_results)
-            )
+            proj_results = await provision_lakebase_project_and_branch(lb_project_id, lb_branch_id)
+            steps.append(_ok_step("provision_lakebase_project_and_branch", proj_results))
         except Exception as exc:
-            logger.warning(
-                "provision_lakebase_project_and_branch failed (non-fatal): %s", exc
-            )
+            logger.warning("provision_lakebase_project_and_branch failed (non-fatal): %s", exc)
             steps.append(_failed_step("provision_lakebase_project_and_branch", exc))
 
     # ── Pre-flight: confirm the Lakebase project's endpoints are reachable ──
@@ -229,9 +226,7 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
     if rollups:
         conn = None
         try:
-            conn = await _open_pipeline_connection(
-                w, lb_project_id, lb_branch_id, lb_database
-            )
+            conn = await _open_pipeline_connection(w, lb_project_id, lb_branch_id, lb_database)
         except Exception as exc:
             logger.warning("rollup connection failed (non-fatal): %s", exc)
             steps.append(_failed_step("create_rollup", exc))
@@ -267,9 +262,7 @@ async def setup_pipeline_lakebase(state: Any, params: dict) -> dict:
                             }
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "create_rollup '%s' failed (non-fatal): %s", name, exc
-                        )
+                        logger.warning("create_rollup '%s' failed (non-fatal): %s", name, exc)
                         steps.append(_failed_step("create_rollup", exc))
             finally:
                 try:

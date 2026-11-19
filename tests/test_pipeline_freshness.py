@@ -153,9 +153,7 @@ class TestFlowingLookup:
         async def run_sql(sql: str) -> dict:
             return {"data": [{"1": 1}]}
 
-        result = await pf.flowing_lookup(
-            None, setup, deployments, {"j1": True}, run_sql=run_sql
-        )
+        result = await pf.flowing_lookup(None, setup, deployments, {"j1": True}, run_sql=run_sql)
         assert result == {"microbatch": True}
 
     @pytest.mark.asyncio

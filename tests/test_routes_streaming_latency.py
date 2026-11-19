@@ -49,6 +49,7 @@ def _dbsql_result(data: list[dict[str, Any]]) -> dict[str, Any]:
 class TestStreamingLatency:
     async def test_happy_path_returns_latest_kpis_and_series(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -56,25 +57,40 @@ class TestStreamingLatency:
         # Newest-first rows (as returned by ORDER BY timestamp DESC).
         rows = [
             {
-                "batch_id": 42, "timestamp": "2026-07-06T10:05:00.000+00:00",
-                "num_input_rows": 1000, "input_rps": 500.0, "processed_rps": 480.0,
-                "trigger_ms": 2000.0, "e2e_p50": 120.0, "e2e_p99": 350.0,
-                "processing_p50": 40.0, "processing_p99": 90.0,
-                "queuing_p50": 15.0, "queuing_p99": 60.0,
+                "batch_id": 42,
+                "timestamp": "2026-07-06T10:05:00.000+00:00",
+                "num_input_rows": 1000,
+                "input_rps": 500.0,
+                "processed_rps": 480.0,
+                "trigger_ms": 2000.0,
+                "e2e_p50": 120.0,
+                "e2e_p99": 350.0,
+                "processing_p50": 40.0,
+                "processing_p99": 90.0,
+                "queuing_p50": 15.0,
+                "queuing_p99": 60.0,
             },
             {
-                "batch_id": 41, "timestamp": "2026-07-06T10:04:00.000+00:00",
-                "num_input_rows": 900, "input_rps": 450.0, "processed_rps": 470.0,
-                "trigger_ms": 1900.0, "e2e_p50": 110.0, "e2e_p99": 300.0,
-                "processing_p50": 38.0, "processing_p99": 88.0,
-                "queuing_p50": 12.0, "queuing_p99": 55.0,
+                "batch_id": 41,
+                "timestamp": "2026-07-06T10:04:00.000+00:00",
+                "num_input_rows": 900,
+                "input_rps": 450.0,
+                "processed_rps": 470.0,
+                "trigger_ms": 1900.0,
+                "e2e_p50": 110.0,
+                "e2e_p99": 300.0,
+                "processing_p50": 38.0,
+                "processing_p99": 88.0,
+                "queuing_p50": 12.0,
+                "queuing_p99": 55.0,
             },
         ]
         exec_mock = AsyncMock(return_value=_dbsql_result(rows))
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
@@ -122,22 +138,46 @@ class TestStreamingLatency:
         # The newest batch has a null e2e_p50 (idle trigger) — the KPI should
         # surface the most recent NON-null value from an earlier row.
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         rows = [
-            {"batch_id": 2, "timestamp": "t2", "num_input_rows": None, "input_rps": None,
-             "processed_rps": None, "trigger_ms": None, "e2e_p50": None, "e2e_p99": None,
-             "processing_p50": None, "processing_p99": None, "queuing_p50": None, "queuing_p99": None},
-            {"batch_id": 1, "timestamp": "t1", "num_input_rows": 500, "input_rps": 250.0,
-             "processed_rps": 240.0, "trigger_ms": 1000.0, "e2e_p50": 99.0, "e2e_p99": 199.0,
-             "processing_p50": 30.0, "processing_p99": 70.0, "queuing_p50": 10.0, "queuing_p99": 40.0},
+            {
+                "batch_id": 2,
+                "timestamp": "t2",
+                "num_input_rows": None,
+                "input_rps": None,
+                "processed_rps": None,
+                "trigger_ms": None,
+                "e2e_p50": None,
+                "e2e_p99": None,
+                "processing_p50": None,
+                "processing_p99": None,
+                "queuing_p50": None,
+                "queuing_p99": None,
+            },
+            {
+                "batch_id": 1,
+                "timestamp": "t1",
+                "num_input_rows": 500,
+                "input_rps": 250.0,
+                "processed_rps": 240.0,
+                "trigger_ms": 1000.0,
+                "e2e_p50": 99.0,
+                "e2e_p99": 199.0,
+                "processing_p50": 30.0,
+                "processing_p99": 70.0,
+                "queuing_p50": 10.0,
+                "queuing_p99": 40.0,
+            },
         ]
         exec_mock = AsyncMock(return_value=_dbsql_result(rows))
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy&mode=microbatch"
@@ -151,14 +191,16 @@ class TestStreamingLatency:
 
     async def test_no_rows_returns_nulled_payload(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(return_value=_dbsql_result([]))
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
@@ -177,6 +219,7 @@ class TestStreamingLatency:
 
     async def test_missing_table_returns_nulled_payload_not_500(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -186,10 +229,11 @@ class TestStreamingLatency:
                 f"`{_UC_CATALOG}`.`{_UC_SCHEMA}`.`pharmaceutical_metrics` cannot be found"
             )
         )
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
@@ -203,14 +247,16 @@ class TestStreamingLatency:
 
     async def test_other_query_error_degrades_gracefully_not_500(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(side_effect=Exception("connection reset by peer"))
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=microbatch"
@@ -223,6 +269,7 @@ class TestStreamingLatency:
 
     async def test_invalid_mode_returns_400(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -235,22 +282,27 @@ class TestStreamingLatency:
 
     async def test_invalid_industry_returns_400(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=%21%21%21&mode=realtime")
+                resp = await client.get(
+                    "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=%21%21%21&mode=realtime"
+                )
         assert resp.status_code == 400
 
     async def test_no_warehouse_returns_400(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
-        ), patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(
                     "/api/latency/streaming?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&mode=realtime"
@@ -265,30 +317,38 @@ class TestStreamingLatency:
 class TestZerobusLatency:
     async def test_happy_path_derives_freshness_throughput_errors(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
 
-        summary = _dbsql_result([
-            {
-                "last_commit_time": "2026-07-06T10:05:00.000+00:00",
-                "committed_records_total": 600,
-                "committed_bytes_total": 120000,
-                "recent_error_count": 2,
-                "seconds_since_commit": 12.0,
-            }
-        ])
-        errors = _dbsql_result([
-            {"error_message": "transient ack timeout"},
-            {"error_message": "retry succeeded"},
-        ])
+        summary = _dbsql_result(
+            [
+                {
+                    "last_commit_time": "2026-07-06T10:05:00.000+00:00",
+                    "committed_records_total": 600,
+                    "committed_bytes_total": 120000,
+                    "recent_error_count": 2,
+                    "seconds_since_commit": 12.0,
+                }
+            ]
+        )
+        errors = _dbsql_result(
+            [
+                {"error_message": "transient ack timeout"},
+                {"error_message": "retry succeeded"},
+            ]
+        )
         exec_mock = AsyncMock(side_effect=[summary, errors])
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&minutes=60")
+                resp = await client.get(
+                    "/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical&minutes=60"
+                )
 
         expected_table = f"{_UC_CATALOG}.{_UC_SCHEMA}.pharmaceutical_zerobus"
         assert resp.status_code == 200
@@ -308,16 +368,20 @@ class TestZerobusLatency:
 
     async def test_no_rows_returns_zeroed_payload(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         exec_mock = AsyncMock(side_effect=[_dbsql_result([]), _dbsql_result([])])
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy")
+                resp = await client.get(
+                    "/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy"
+                )
 
         assert resp.status_code == 200
         body = resp.json()
@@ -329,6 +393,7 @@ class TestZerobusLatency:
 
     async def test_system_tables_inaccessible_degrades_not_500(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
@@ -337,12 +402,15 @@ class TestZerobusLatency:
                 "INSUFFICIENT_PERMISSIONS: cannot access system.lakeflow.zerobus_ingest"
             )
         )
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical")
+                resp = await client.get(
+                    "/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical"
+                )
 
         assert resp.status_code == 200
         body = resp.json()
@@ -355,25 +423,31 @@ class TestZerobusLatency:
         # A window with committed records but a null MAX(commit_time) edge case
         # still counts as data present.
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
-        summary = _dbsql_result([
-            {
-                "last_commit_time": None,
-                "committed_records_total": 30,
-                "committed_bytes_total": 900,
-                "recent_error_count": 0,
-                "seconds_since_commit": None,
-            }
-        ])
+        summary = _dbsql_result(
+            [
+                {
+                    "last_commit_time": None,
+                    "committed_records_total": 30,
+                    "committed_bytes_total": 900,
+                    "recent_error_count": 0,
+                    "seconds_since_commit": None,
+                }
+            ]
+        )
         exec_mock = AsyncMock(side_effect=[summary, _dbsql_result([])])
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")
-        ), patch("routes.streaming_latency.execute_dbsql", exec_mock), \
-           patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="wh-1")),
+            patch("routes.streaming_latency.execute_dbsql", exec_mock),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy&minutes=30")
+                resp = await client.get(
+                    "/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=energy&minutes=30"
+                )
 
         assert resp.status_code == 200
         body = resp.json()
@@ -384,22 +458,29 @@ class TestZerobusLatency:
 
     async def test_invalid_industry_returns_400(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
         with patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=%21%21%21")
+                resp = await client.get(
+                    "/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=%21%21%21"
+                )
         assert resp.status_code == 400
 
     async def test_no_warehouse_returns_400(self) -> None:
         import os
+
         state = _state()
         app = _build_app(state)
         transport = ASGITransport(app=app)
-        with patch(
-            "routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")
-        ), patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}):
+        with (
+            patch("routes.streaming_latency.resolve_warehouse_id", AsyncMock(return_value="")),
+            patch.dict(os.environ, {"UC_CATALOG": _UC_CATALOG, "UC_SCHEMA": _UC_SCHEMA}),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get("/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical")
+                resp = await client.get(
+                    "/api/latency/zerobus?pipeline_id=00000000-0000-4000-8000-000000000001&industry=pharmaceutical"
+                )
         assert resp.status_code == 400

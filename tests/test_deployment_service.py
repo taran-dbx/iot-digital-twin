@@ -10,8 +10,8 @@ integration test.
 from __future__ import annotations
 
 import base64
-import os
 import inspect
+import os
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
@@ -86,9 +86,7 @@ def _mock_cdf_reconciliation(monkeypatch):
         AsyncMock(return_value={"status": "updated"}),
     )
     reconcile = AsyncMock(return_value={"status": "streaming"})
-    monkeypatch.setattr(
-        ds.cdf_reconciliation_service, "reconcile_realtime_cdf", reconcile
-    )
+    monkeypatch.setattr(ds.cdf_reconciliation_service, "reconcile_realtime_cdf", reconcile)
     return reconcile
 
 
@@ -118,13 +116,9 @@ class TestConsumerCredentialNormalization:
         monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
         monkeypatch.setenv("UC_SCHEMA", "configured-schema")
-        source = (
-            '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
-        )
+        source = '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
 
-        with pytest.raises(
-            ds.RuntimeOAuthCredentialError, match="DATABRICKS_CLIENT_ID"
-        ):
+        with pytest.raises(ds.RuntimeOAuthCredentialError, match="DATABRICKS_CLIENT_ID"):
             ds._normalize_consumer_credentials(source)
 
     def test_rejects_unrecognized_legacy_secret_syntax_c7215(self, monkeypatch):
@@ -320,9 +314,10 @@ class TestSparkTasks:
         assert keys == ["rtm_consumer", "data_producer"]
         consumer = tasks[0]
         assert consumer.notebook_task.notebook_path == "/c"
-        assert consumer.new_cluster.spark_conf[
-            "spark.databricks.streaming.realTimeMode.enabled"
-        ] == "true"
+        assert (
+            consumer.new_cluster.spark_conf["spark.databricks.streaming.realTimeMode.enabled"]
+            == "true"
+        )
         assert consumer.new_cluster.num_workers == 2
         # producer is a single-node cluster
         assert tasks[1].new_cluster.num_workers == 0
@@ -372,9 +367,7 @@ class TestDeployPipeline:
         db = _db(setup, {"id": "dep-1", "mode": "realtime"})
         w = _ws()
         with pytest.raises(ds.DeployGateError):
-            await ds.deploy_pipeline(
-                db, "setup-1", "realtime", consumer_notebook="nb", w=w
-            )
+            await ds.deploy_pipeline(db, "setup-1", "realtime", consumer_notebook="nb", w=w)
         w.jobs.create.assert_not_called()
 
     @pytest.mark.asyncio
@@ -431,7 +424,9 @@ class TestDeployPipeline:
         producer = w.workspace.import_.call_args_list[1].kwargs
         source = base64.b64decode(producer["content"]).decode()
         folder = producer["path"].rsplit("/", 1)[0]
-        assert source == f'PRODUCTION_CONTROL_FILE = "{folder}/production_control/pharmaceutical.json"'
+        assert (
+            source == f'PRODUCTION_CONTROL_FILE = "{folder}/production_control/pharmaceutical.json"'
+        )
 
     @pytest.mark.asyncio
     async def test_fully_green_microbatch_deploys_without_override(self):
@@ -473,9 +468,7 @@ class TestDeployPipeline:
         setup = {**BASE_SETUP, "validation_state": _all_passed("zerobus")}
         db = _db(setup, {"id": "dep-zb", "mode": "zerobus"})
         w = _ws()
-        result = await ds.deploy_pipeline(
-            db, "setup-1", "zerobus", producer_notebook="# zb", w=w
-        )
+        result = await ds.deploy_pipeline(db, "setup-1", "zerobus", producer_notebook="# zb", w=w)
         assert result["serverless"] is True
         assert result["tasks"] == ["zerobus_producer"]
         _, kwargs = w.jobs.create.call_args
@@ -497,13 +490,13 @@ class TestDeployPipeline:
         w.jobs.cancel_all_runs.side_effect = lambda **_kwargs: calls.append("cancel")
         w.jobs.reset.side_effect = lambda **_kwargs: calls.append("reset")
 
-        result = await ds.deploy_pipeline(
-            db, "setup-1", "realtime", consumer_notebook="# c", w=w
-        )
+        result = await ds.deploy_pipeline(db, "setup-1", "realtime", consumer_notebook="# c", w=w)
         assert result["job_id"] == 999
         assert result["action"] == "updated"
         assert calls == ["pause", "cancel", "reset"]
-        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "PAUSED"
+        assert (
+            w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "PAUSED"
+        )
         w.jobs.reset.assert_called_once()
         w.jobs.create.assert_not_called()
 
@@ -525,9 +518,7 @@ class TestDeployPipeline:
 # ---------------------------------------------------------------------------
 class TestLifecycle:
     @pytest.mark.asyncio
-    async def test_realtime_deploy_stops_before_job_on_cdf_failure_c7239(
-        self, monkeypatch
-    ):
+    async def test_realtime_deploy_stops_before_job_on_cdf_failure_c7239(self, monkeypatch):
         """Realtime job mutation is blocked by CDF failure [C7239][defect][regression]."""
         setup = {**BASE_SETUP, "validation_state": _all_passed("realtime")}
         db = _db(setup, {"id": "dep-rt", "mode": "realtime"})
@@ -546,17 +537,13 @@ class TestLifecycle:
             ds.cdf_reconciliation_service.RealtimeCdfError,
             match="exact shadow",
         ):
-            await ds.deploy_pipeline(
-                db, "setup-1", "realtime", consumer_notebook="# consumer", w=w
-            )
+            await ds.deploy_pipeline(db, "setup-1", "realtime", consumer_notebook="# consumer", w=w)
 
         w.workspace.import_.assert_not_called()
         w.jobs.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_realtime_start_reconciles_then_unpauses_c7240(
-        self, _mock_cdf_reconciliation
-    ):
+    async def test_realtime_start_reconciles_then_unpauses_c7240(self, _mock_cdf_reconciliation):
         """Start cannot unpause before CDF readiness [C7240][smoke][regression]."""
         db = _db(
             BASE_SETUP,
@@ -567,11 +554,12 @@ class TestLifecycle:
 
         result = await ds.start_deployment(db, "setup-1", "realtime", w=w)
 
-        _mock_cdf_reconciliation.assert_awaited_once_with(
-            db, "setup-1", ws=w
-        )
+        _mock_cdf_reconciliation.assert_awaited_once_with(db, "setup-1", ws=w)
         ds.uc_secrets.put_secret.assert_awaited_once()
-        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "UNPAUSED"
+        assert (
+            w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value
+            == "UNPAUSED"
+        )
         w.jobs.run_now.assert_not_called()
         assert result["cdf"]["status"] == "streaming"
 
@@ -579,7 +567,10 @@ class TestLifecycle:
         w = _ws()
         out = ds.start_pipeline(4242, w=w)
         assert out["state"] == "STARTING"
-        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "UNPAUSED"
+        assert (
+            w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value
+            == "UNPAUSED"
+        )
         w.jobs.run_now.assert_not_called()
 
     def test_start_run_once_uses_run_now(self):
@@ -598,7 +589,9 @@ class TestLifecycle:
         assert out["state"] == "STOPPED"
         assert out["paused"] is True
         assert calls == ["pause", "cancel"]
-        assert w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "PAUSED"
+        assert (
+            w.jobs.update.call_args.kwargs["new_settings"].continuous.pause_status.value == "PAUSED"
+        )
         w.jobs.cancel_all_runs.assert_called_once_with(job_id=4242)
 
     def test_status_running(self):
@@ -705,12 +698,8 @@ class TestLifecycle:
         w.jobs.update.assert_not_called()
         w.jobs.cancel_all_runs.assert_called_once_with(job_id=4242)
         assert w.workspace.delete.call_count == 2
-        w.workspace.delete.assert_any_call(
-            path="/Workspace/consumer", recursive=False
-        )
-        w.workspace.delete.assert_any_call(
-            path="/Workspace/producer", recursive=False
-        )
+        w.workspace.delete.assert_any_call(path="/Workspace/consumer", recursive=False)
+        w.workspace.delete.assert_any_call(path="/Workspace/producer", recursive=False)
 
     @pytest.mark.asyncio
     async def test_job_deleter_is_idempotent_when_job_is_already_gone(self):

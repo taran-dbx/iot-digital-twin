@@ -29,12 +29,10 @@ from models import metrics_schema as ms
 # TypeScript source guards
 # ---------------------------------------------------------------------------
 NOTEBOOK_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client" / "src" / "lib" / "notebook-template.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "notebook-template.ts"
 )
 PRODUCER_TS = (
-    Path(__file__).resolve().parent.parent
-    / "client" / "src" / "lib" / "data-producer-notebook.ts"
+    Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "data-producer-notebook.ts"
 )
 
 _ts_skip = pytest.mark.skipif(

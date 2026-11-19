@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
@@ -25,7 +25,9 @@ async def get_sources(state: AppState = Depends(get_app_state)):
 
 
 @router.put("/api/sources/{name}/config")
-async def update_source_config(name: str, request: Request, state: AppState = Depends(get_app_state)):
+async def update_source_config(
+    name: str, request: Request, state: AppState = Depends(get_app_state)
+):
     """Mutate a source's SinkConfig at runtime."""
     if name not in state.sources:
         return JSONResponse(status_code=404, content={"error": f"Unknown source: {name}"})

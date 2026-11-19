@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 import traceback
 from typing import Any
@@ -47,16 +46,18 @@ async def list_node_types():
             else:
                 storage_label = "EBS-only"
 
-            node_types.append({
-                "node_type_id": nt.node_type_id,
-                "num_cores": getattr(nt, "num_cores", 0) or 0,
-                "memory_mb": getattr(nt, "memory_mb", 0) or 0,
-                "num_gpus": getattr(nt, "num_gpus", 0) or 0,
-                "category": getattr(nt, "category", "General Purpose") or "General Purpose",
-                "description": getattr(nt, "description", nt.node_type_id) or nt.node_type_id,
-                "is_deprecated": False,
-                "storage_label": storage_label,
-            })
+            node_types.append(
+                {
+                    "node_type_id": nt.node_type_id,
+                    "num_cores": getattr(nt, "num_cores", 0) or 0,
+                    "memory_mb": getattr(nt, "memory_mb", 0) or 0,
+                    "num_gpus": getattr(nt, "num_gpus", 0) or 0,
+                    "category": getattr(nt, "category", "General Purpose") or "General Purpose",
+                    "description": getattr(nt, "description", nt.node_type_id) or nt.node_type_id,
+                    "is_deprecated": False,
+                    "storage_label": storage_label,
+                }
+            )
 
         node_types.sort(key=lambda n: (n["category"], n["num_cores"], n["memory_mb"]))
 
@@ -81,10 +82,12 @@ async def list_spark_versions():
             key_lower = (sv.key or "").lower()
             if "photon" in key_lower or "-ml-" in key_lower or "cpu-ml" in key_lower:
                 continue
-            versions.append({
-                "key": sv.key,
-                "name": sv.name,
-            })
+            versions.append(
+                {
+                    "key": sv.key,
+                    "name": sv.name,
+                }
+            )
 
         versions.sort(key=lambda v: v["key"], reverse=True)
         versions = versions[:2]
@@ -124,7 +127,12 @@ async def provision_cluster(request: Request, state: AppState = Depends(get_app_
 
     try:
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.compute import AwsAttributes, AzureAttributes, DataSecurityMode, EbsVolumeType
+        from databricks.sdk.service.compute import (
+            AwsAttributes,
+            AzureAttributes,
+            DataSecurityMode,
+            EbsVolumeType,
+        )
 
         cloud = detect_cloud()
         no_spot_kwargs: dict[str, Any] = {}
@@ -155,7 +163,9 @@ async def provision_cluster(request: Request, state: AppState = Depends(get_app_
 
         pipeline_id = body.get("pipeline_id")
         if pipeline_id:
-            await track_resource(state.db, state.db_available, pipeline_id, "cluster_id", cluster_id)
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "cluster_id", cluster_id
+            )
 
         return {"cluster_id": cluster_id, "state": "PENDING"}
 
@@ -234,7 +244,9 @@ async def test_source_connectivity(request: Request):
     sasl_password = connection.get("sasl_password")
 
     if not bootstrap or not topic:
-        return JSONResponse(status_code=422, content={"error": "bootstrap_servers and topic are required"})
+        return JSONResponse(
+            status_code=422, content={"error": "bootstrap_servers and topic are required"}
+        )
 
     # If only UC service credential is provided (no plain-text creds for SASL),
     # we cannot resolve the credential outside of Spark
@@ -244,18 +256,20 @@ async def test_source_connectivity(request: Request):
             return {
                 "success": False,
                 "error": "UC service credentials can only be resolved on a Spark cluster. "
-                         "Use 'Run on Cluster' to test connectivity with UC service credentials.",
+                "Use 'Run on Cluster' to test connectivity with UC service credentials.",
                 "suggestion": "run_on_cluster",
             }
         return JSONResponse(
             status_code=422,
-            content={"error": "SASL authentication requires sasl_username and sasl_password, "
-                     "or a UC service credential (testable only via 'Run on Cluster')."},
+            content={
+                "error": "SASL authentication requires sasl_username and sasl_password, "
+                "or a UC service credential (testable only via 'Run on Cluster')."
+            },
         )
 
     try:
-        from iot_simulator.sinks.kafka import KafkaSink
         from iot_simulator.models import SensorRecord
+        from iot_simulator.sinks.kafka import KafkaSink
 
         sink = KafkaSink(
             bootstrap_servers=bootstrap,
@@ -300,7 +314,9 @@ async def test_source_connectivity(request: Request):
     except ImportError:
         return JSONResponse(
             status_code=500,
-            content={"error": "iot_simulator[kafka] is not installed. Install with: pip install iot-data-simulator[kafka]"},
+            content={
+                "error": "iot_simulator[kafka] is not installed. Install with: pip install iot-data-simulator[kafka]"
+            },
         )
     except Exception as exc:
         logger.error("Source connectivity test failed: %s\n%s", exc, traceback.format_exc())

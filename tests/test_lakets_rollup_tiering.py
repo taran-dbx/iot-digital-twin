@@ -261,9 +261,7 @@ class TestRollupInvalidation:
 
         assert result["status"] == "already_exists"
         assert pool.fetchval.await_count == 2
-        assert "lakets.enable_rollup_invalidation" in (
-            pool.fetchval.await_args_list[1].args[0]
-        )
+        assert "lakets.enable_rollup_invalidation" in (pool.fetchval.await_args_list[1].args[0])
 
 
 class TestEnableLvc:

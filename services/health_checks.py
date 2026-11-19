@@ -50,20 +50,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from models.sensor_schema import ID_COLUMN_NAME, insert_columns
-from services import deployment_repo, deployment_service, pipeline_setup_repo
-from services import pipeline_view as pv
-from services import industry_catalog_service as cat
 from services import cdf_reconciliation_service as cdf
+from services import deployment_repo, deployment_service, pipeline_setup_repo
+from services import industry_catalog_service as cat
+from services import pipeline_view as pv
 from services import pipelines_project_service as pps
-from services.uc_ident import sql_fqn, sql_ident
 from services.provisioning_service import (
     SHARED_STREAMING_SP_ID_KEY,
     SHARED_STREAMING_SP_SECRET_KEY,
     SHARED_STREAMING_SP_SECRET_SCOPE,
 )
+from services.uc_ident import sql_fqn, sql_ident
 
 logger = logging.getLogger("iot_digital_twin.services.health_checks")
 
@@ -193,7 +194,8 @@ async def check_uc_catalog(
         missing = [s for s in expected_schemas if s not in present]
         if missing:
             return _result(
-                UC_CATALOG_CHECK, FAIL,
+                UC_CATALOG_CHECK,
+                FAIL,
                 f"catalog {catalog} missing schemas: {', '.join(missing)}",
             )
         return _result(UC_CATALOG_CHECK, PASS, f"catalog {catalog} + all schemas present")
@@ -226,9 +228,7 @@ async def check_delta_tables(
             if mode in _MODE_TABLES
         }
     else:
-        expected = {
-            _MODE_TABLES[m] for m in (enabled_modes or []) if m in _MODE_TABLES
-        }
+        expected = {_MODE_TABLES[m] for m in (enabled_modes or []) if m in _MODE_TABLES}
     if not expected:
         return _result(DELTA_TABLES_CHECK, SKIP, "no Delta-backed modes enabled")
     try:
@@ -242,11 +242,13 @@ async def check_delta_tables(
             # pipeline run — before that they legitimately don't exist. That is
             # "not yet created", not a health failure, so surface it as SKIP.
             return _result(
-                DELTA_TABLES_CHECK, SKIP,
+                DELTA_TABLES_CHECK,
+                SKIP,
                 f"not yet created (written on first pipeline run): {', '.join(missing)}",
             )
         return _result(
-            DELTA_TABLES_CHECK, PASS,
+            DELTA_TABLES_CHECK,
+            PASS,
             f"{len(expected)} Delta table(s) present for {', '.join(sorted(enabled_modes))}",
         )
     except Exception as exc:
@@ -275,7 +277,8 @@ async def check_checkpoint_volume(
         names = {r.get("volume_name") for r in _rows(res)}
         if cat.CHECKPOINT_VOLUME not in names:
             return _result(
-                CHECKPOINT_VOLUME_CHECK, FAIL,
+                CHECKPOINT_VOLUME_CHECK,
+                FAIL,
                 f"{catalog}.{schema}.{cat.CHECKPOINT_VOLUME} not found",
             )
         return _result(CHECKPOINT_VOLUME_CHECK, PASS, "stream_checkpoints volume present")
@@ -338,18 +341,18 @@ async def check_metrics_recent(
             if _is_missing_table(exc):
                 empty.append(mode)
             else:
-                return _result(
-                    METRICS_TABLE_CHECK, FAIL, f"{fqn} metrics check failed: {exc}"
-                )
+                return _result(METRICS_TABLE_CHECK, FAIL, f"{fqn} metrics check failed: {exc}")
     if have and not empty:
         return _result(METRICS_TABLE_CHECK, PASS, f"metrics rows: {', '.join(have)}")
     if have:
         return _result(
-            METRICS_TABLE_CHECK, PASS,
+            METRICS_TABLE_CHECK,
+            PASS,
             f"metrics rows: {', '.join(have)}; none yet for {', '.join(empty)}",
         )
     return _result(
-        METRICS_TABLE_CHECK, SKIP,
+        METRICS_TABLE_CHECK,
+        SKIP,
         f"no metrics rows yet for {', '.join(empty)} (populated once each mode streams)",
     )
 
@@ -369,11 +372,13 @@ async def check_lakebase_endpoints(branch: str, ws: Any) -> dict:
         inactive = [f"{k}={v}" for k, v in states.items() if v not in pps._ACTIVE_STATES]
         if inactive:
             return _result(
-                LAKEBASE_ENDPOINTS_CHECK, FAIL,
+                LAKEBASE_ENDPOINTS_CHECK,
+                FAIL,
                 f"endpoints not active: {', '.join(inactive)}",
             )
         return _result(
-            LAKEBASE_ENDPOINTS_CHECK, PASS,
+            LAKEBASE_ENDPOINTS_CHECK,
+            PASS,
             f"branch {branch}: primary/replica {states}",
         )
     except Exception as exc:
@@ -389,8 +394,7 @@ def _expected_chronotable_columns() -> set[str]:
 
 
 _REGISTERED_SQL = (
-    "SELECT count(*) FROM lakets._chronotable_registry "
-    "WHERE schema_name = $1 AND table_name = $2"
+    "SELECT count(*) FROM lakets._chronotable_registry WHERE schema_name = $1 AND table_name = $2"
 )
 # Forward partitions: active chunks whose range extends past now(), joined to the
 # ChronoTable registry so we count THIS table's future partitions only.
@@ -402,8 +406,7 @@ _FORWARD_PARTITIONS_SQL = (
     "AND cm.status = 'active' AND cm.range_end > now()"
 )
 _COLUMNS_SQL = (
-    "SELECT column_name FROM information_schema.columns "
-    "WHERE table_schema = $1 AND table_name = $2"
+    "SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2"
 )
 
 
@@ -413,7 +416,8 @@ async def check_chronotable(conn: Any, *, table: str = CHRONOTABLE) -> dict:
         registered = await conn.fetchval(_REGISTERED_SQL, CHRONOTABLE_SCHEMA, table)
         if not registered:
             return _result(
-                CHRONOTABLE_CHECK, FAIL,
+                CHRONOTABLE_CHECK,
+                FAIL,
                 f"{CHRONOTABLE_SCHEMA}.{table} is not a registered LakeTS ChronoTable",
             )
 
@@ -422,7 +426,8 @@ async def check_chronotable(conn: Any, *, table: str = CHRONOTABLE) -> dict:
         window_end = (prow or {}).get("window_end")
         if forward <= 0:
             return _result(
-                CHRONOTABLE_CHECK, FAIL,
+                CHRONOTABLE_CHECK,
+                FAIL,
                 f"{table} has no forward partitions (next chunk overdue)",
             )
 
@@ -431,17 +436,20 @@ async def check_chronotable(conn: Any, *, table: str = CHRONOTABLE) -> dict:
         missing = _expected_chronotable_columns() - actual
         if missing:
             return _result(
-                CHRONOTABLE_CHECK, FAIL,
+                CHRONOTABLE_CHECK,
+                FAIL,
                 f"{table} columns drift from SSOT (missing: {', '.join(sorted(missing))})",
             )
         return _result(
-            CHRONOTABLE_CHECK, PASS,
+            CHRONOTABLE_CHECK,
+            PASS,
             f"{table}: ChronoTable OK, {forward} forward partitions (to {window_end}), columns match SSOT",
         )
     except Exception as exc:
         if _is_missing_relation(exc):
             return _result(
-                CHRONOTABLE_CHECK, SKIP,
+                CHRONOTABLE_CHECK,
+                SKIP,
                 "not provisioned — LakeTS ChronoTable not set up on this branch yet",
             )
         return _result(CHRONOTABLE_CHECK, FAIL, f"chronotable check failed: {exc}")
@@ -463,7 +471,7 @@ _WAL2DELTA_SQL = (
 def _shadow_match(table_name: Any, shadow: str, qualified: str) -> bool:
     """True when ``table_name`` is THIS pipeline's shadow row (§1.10.3)."""
     tn = str(table_name)
-    return tn == shadow or tn == qualified or tn.endswith("." + shadow)
+    return tn in (shadow, qualified) or tn.endswith("." + shadow)
 
 
 async def check_cdf_sync(
@@ -493,14 +501,16 @@ async def check_cdf_sync(
         second = await _snap()
         if not second:
             return _result(
-                CDF_SYNC_CHECK, FAIL,
+                CDF_SYNC_CHECK,
+                FAIL,
                 f"{qualified} not found in wal2delta.tables — enable managed Lakebase CDF sync",
             )
         streaming = [t for t, (s, _) in second.items() if str(s).upper() == "STREAMING"]
         if not streaming:
             statuses = {t: s for t, (s, _) in second.items()}
             return _result(
-                CDF_SYNC_CHECK, FAIL,
+                CDF_SYNC_CHECK,
+                FAIL,
                 f"{qualified} present but not STREAMING (status={statuses}) — "
                 "sync is starting or needs write activity on the source table",
             )
@@ -509,12 +519,15 @@ async def check_cdf_sync(
         # sync (no realtime traffic during the check window) is still a PASS — we
         # note whether it advanced rather than failing on an idle sync.
         advanced = [t for t in streaming if first.get(t, (None, None))[1] != second[t][1]]
-        note = "STREAMING + advancing" if advanced else "STREAMING (idle — no new writes during check)"
+        note = (
+            "STREAMING + advancing" if advanced else "STREAMING (idle — no new writes during check)"
+        )
         return _result(CDF_SYNC_CHECK, PASS, f"{qualified} {note}")
     except Exception as exc:
         if _is_missing_relation(exc):
             return _result(
-                CDF_SYNC_CHECK, SKIP,
+                CDF_SYNC_CHECK,
+                SKIP,
                 "not provisioned — managed CDF sync not set up on this branch yet",
             )
         return _result(CDF_SYNC_CHECK, FAIL, f"cdf check failed: {exc}")
@@ -538,7 +551,8 @@ async def check_grants(catalog: str | None, ws: Any, *, principal: str | None = 
         principals = {getattr(a, "principal", None) for a in assignments}
         if principal not in principals:
             return _result(
-                GRANTS_CHECK, FAIL,
+                GRANTS_CHECK,
+                FAIL,
                 f"app SP {principal} has no grants on catalog {catalog}",
             )
         return _result(GRANTS_CHECK, PASS, f"app SP {principal} granted on {catalog}")
@@ -559,7 +573,8 @@ async def check_secrets(
         missing = [k for k in required_keys if k not in keys]
         if missing:
             return _result(
-                SECRETS_CHECK, FAIL,
+                SECRETS_CHECK,
+                FAIL,
                 f"scope {scope} missing secrets: {', '.join(missing)}",
             )
         return _result(SECRETS_CHECK, PASS, f"scope {scope}: {len(required_keys)} secrets present")
@@ -611,9 +626,7 @@ async def check_jobs(
         broken_tasks = [
             task
             for task in runtime.get("tasks") or []
-            if deployment_service.task_state_is_broken(
-                task.get("life_cycle"), task.get("result")
-            )
+            if deployment_service.task_state_is_broken(task.get("life_cycle"), task.get("result"))
         ]
         if runtime.get("degraded") or broken_tasks:
             detail = runtime.get("detail")
@@ -640,7 +653,8 @@ async def check_cluster_state(cluster_id: str | None, ws: Any) -> dict:
     """
     if not cluster_id:
         return _result(
-            CLUSTER_STATE_CHECK, SKIP,
+            CLUSTER_STATE_CHECK,
+            SKIP,
             "no interactive cluster provisioned (spin one via the e2e test)",
             cluster_state=None,
         )
@@ -649,13 +663,15 @@ async def check_cluster_state(cluster_id: str | None, ws: Any) -> dict:
         raw = getattr(info, "state", None)
         state = getattr(raw, "value", None) or (raw if isinstance(raw, str) else "UNKNOWN")
         return _result(
-            CLUSTER_STATE_CHECK, PASS,
+            CLUSTER_STATE_CHECK,
+            PASS,
             f"interactive cluster {cluster_id} is {state}",
             cluster_state=state,
         )
     except Exception as exc:
         return _result(
-            CLUSTER_STATE_CHECK, SKIP,
+            CLUSTER_STATE_CHECK,
+            SKIP,
             f"cluster state unavailable: {exc}",
             cluster_state="UNKNOWN",
         )
@@ -675,9 +691,12 @@ def check_kafka_topic(industry: str, enabled_modes: list[str]) -> dict:
     the Apps egress), so this check belongs to the opt-in interactive end-to-end
     test (``topics_created`` step), not the fast Tier-1 API sweep.
     """
-    topics = [f"iot.{industry}.{m}" for m in (enabled_modes or []) if m in ("realtime", "microbatch")]
+    topics = [
+        f"iot.{industry}.{m}" for m in (enabled_modes or []) if m in ("realtime", "microbatch")
+    ]
     return _result(
-        KAFKA_TOPIC_CHECK, SKIP,
+        KAFKA_TOPIC_CHECK,
+        SKIP,
         (
             "topic existence needs MSK-IAM (cluster-only via dbutils.credentials); "
             f"verified by the interactive e2e test for {topics or 'no Kafka modes'}"
@@ -739,9 +758,7 @@ async def gather_checks(
         )
     )
     if has_kafka_modes:
-        checks.append(
-            await check_checkpoint_volume(catalog, run_sql, schema=schema)
-        )
+        checks.append(await check_checkpoint_volume(catalog, run_sql, schema=schema))
         checks.append(
             await check_metrics_recent(
                 enabled,
@@ -792,13 +809,9 @@ async def gather_checks(
 
     # --- Jobs ---------------------------------------------------------------
     selected_deployments = [
-        deployment
-        for deployment in deployments
-        if deployment.get("mode") in enabled_set
+        deployment for deployment in deployments if deployment.get("mode") in enabled_set
     ]
-    checks.append(
-        await check_jobs(selected_deployments, job_status=job_status, ws=ws)
-    )
+    checks.append(await check_jobs(selected_deployments, job_status=job_status, ws=ws))
 
     # --- Interactive cluster (informational, Kafka modes only) ---------------
     cluster_state = None
@@ -855,6 +868,7 @@ async def run_api_health_checks(
                 return await execute_dbsql(sql, warehouse_id)
 
     if open_read_conn is None:
+
         async def open_read_conn(branch: str) -> Any:  # noqa: A001 - local binding
             return await pps.get_read_conn(branch, ws=ws)
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = REPO_ROOT / "static" / "dist"
 APP_PY = REPO_ROOT / "app.py"
@@ -145,12 +144,8 @@ def test_observer_requires_same_origin_get_c7226_smoke_regression() -> None:
 def test_dashboard_fetch_is_lazy_until_open_c7226_smoke_regression() -> None:
     """[C7226][smoke][regression] Do not load telemetry behind a hidden drawer."""
     source = _source()
-    observe_body = source.split("function observeLakeTs", 1)[1].split(
-        "function element", 1
-    )[0]
-    open_body = source.split("function openDrawer", 1)[1].split(
-        "function closeDrawer", 1
-    )[0]
+    observe_body = source.split("function observeLakeTs", 1)[1].split("function element", 1)[0]
+    open_body = source.split("function openDrawer", 1)[1].split("function closeDrawer", 1)[0]
 
     assert "if (!drawer.hidden)" in observe_body
     assert "requestDashboard(false)" in observe_body
@@ -164,10 +159,7 @@ def test_manual_refresh_bypasses_timer_throttle_c7226_smoke_regression() -> None
 
     assert "requestDashboard(true)" in source
     assert "requestDashboard(false)" in source
-    assert (
-        "!forceRefresh && lastRequestStartedAt && elapsed < REFRESH_INTERVAL_MS"
-        in source
-    )
+    assert "!forceRefresh && lastRequestStartedAt && elapsed < REFRESH_INTERVAL_MS" in source
 
 
 def test_drawer_is_modal_and_traps_focus_c7226_smoke_regression() -> None:
@@ -190,18 +182,14 @@ def test_fetch_wrapper_guards_capture_and_returns_original_c7228_usability_regre
     """[C7228][usability][regression] Never let capture/clone disturb React fetch."""
     source = _source()
 
-    wrapper = source.split("window.fetch = function", 1)[1].split(
-        "function isCurrentTarget", 1
-    )[0]
+    wrapper = source.split("window.fetch = function", 1)[1].split("function isCurrentTarget", 1)[0]
     assert "try {" in wrapper
     assert "observeLakeTs(observed)" in wrapper
     assert "captureChartRows(response, observed)" in wrapper
     assert "} catch (_error) {" in wrapper
     assert wrapper.index("} catch (_error) {") < wrapper.index("return response;")
 
-    capture = source.split("function captureChartRows", 1)[1].split(
-        "function observeLakeTs", 1
-    )[0]
+    capture = source.split("function captureChartRows", 1)[1].split("function observeLakeTs", 1)[0]
     assert "cloned = response.clone();" in capture
     assert "} catch (_error) {" in capture
     assert "return;" in capture
@@ -209,7 +197,9 @@ def test_fetch_wrapper_guards_capture_and_returns_original_c7228_usability_regre
     assert "chartRows[observed.chartType] = payload.rows.slice()" in capture
 
 
-def test_focused_charts_share_sensor_and_replace_only_valid_data_c7228_usability_regression() -> None:
+def test_focused_charts_share_sensor_and_replace_only_valid_data_c7228_usability_regression() -> (
+    None
+):
     """[C7228][usability][regression] Synchronize one focused sensor safely."""
     source = _source()
 
@@ -231,9 +221,7 @@ def test_focused_overlay_appends_before_hiding_native_c7228_usability_regression
     """[C7228][usability][regression] Hide native only after a valid overlay mounts."""
     source = _source()
 
-    enhance = source.split("function enhanceCard", 1)[1].split(
-        "function restoreSelectFocus", 1
-    )[0]
+    enhance = source.split("function enhanceCard", 1)[1].split("function restoreSelectFocus", 1)[0]
     build_index = enhance.index("buildFocusedOverlay(chartType, rows)")
     hide_index = enhance.index('classList.add("lakets-focused-react-chart")')
     append_index = enhance.index("card.append(overlay)")
@@ -267,11 +255,11 @@ def test_numeric_rows_reject_missing_values_strictly_c7228_usability_regression(
     """[C7228][usability][regression] Exclude null/empty values before plotting."""
     source = _source()
 
-    numeric = source.split("function numericChartRows", 1)[1].split(
-        "function createFocusedSvg", 1
-    )[0]
-    assert 'String(row.sensor_name) !== selectedSensor' in numeric
-    assert "rawValue === null || rawValue === undefined || rawValue === \"\"" in numeric
+    numeric = source.split("function numericChartRows", 1)[1].split("function createFocusedSvg", 1)[
+        0
+    ]
+    assert "String(row.sensor_name) !== selectedSensor" in numeric
+    assert 'rawValue === null || rawValue === undefined || rawValue === ""' in numeric
     assert "if (!Number.isFinite(numericValue)) {" in numeric
     # No coercion of missing values to zero anywhere in the reader.
     assert "|| 0" not in numeric
@@ -317,23 +305,15 @@ def test_partition_strip_is_bounded_and_inventory_is_lazy_c7228_usability_regres
 
     assert "PHASE_STRIP_SEGMENTS = 48" in source
     assert "const segments = Math.min(total, PHASE_STRIP_SEGMENTS)" in source
-    assert "linear-gradient(to right, ${stops.join(\", \")})" in source
+    assert 'linear-gradient(to right, ${stops.join(", ")})' in source
     assert '"Current partition ±3"' in source
-    assert (
-        'String(partition.phase).toLowerCase() === "current"'
-        in source
-    )
-    assert (
-        'String(partition.status).toLowerCase() === "active"'
-        not in source
-    )
+    assert 'String(partition.phase).toLowerCase() === "current"' in source
+    assert 'String(partition.status).toLowerCase() === "active"' not in source
     assert "String(partition.name) === String(currentPartition.name)" in source
     assert "Math.max(anchor - 3, 0)" in source
     assert "Math.min(anchor + 4, partitions.length)" in source
     # Full inventory rows only build when the <details> first opens.
-    inventory = source.split("function buildInventory", 1)[1].split(
-        "function partitionRow", 1
-    )[0]
+    inventory = source.split("function buildInventory", 1)[1].split("function partitionRow", 1)[0]
     assert 'inventory.addEventListener("toggle"' in inventory
     assert "if (!inventory.open || built) {" in inventory
     assert "built = true;" in inventory
@@ -351,15 +331,13 @@ def test_status_region_and_focus_trap_are_accessible_c7228_usability_regression(
     assert "function setStatus(message)" in source
 
     # Focus trap includes summary and form fields.
-    trap = source.split("function handleKeyDown", 1)[1].split(
-        "function clearRefreshTimer", 1
-    )[0]
+    trap = source.split("function handleKeyDown", 1)[1].split("function clearRefreshTimer", 1)[0]
     assert "summary" in trap
     assert "input:not([disabled])" in trap
     assert "textarea:not([disabled])" in trap
 
     # inert has a fallback when unsupported.
-    assert 'supportsInert' in source
+    assert "supportsInert" in source
     assert 'appRoot.setAttribute("inert", "")' in source
     assert 'appRoot.setAttribute("aria-hidden", "true")' in source
     assert 'appRoot.style.pointerEvents = "none"' in source
@@ -405,9 +383,7 @@ def test_health_entry_is_pipeline_scoped_c7229_defect_regression() -> None:
     assert "document.body.append(drawer)" in source
     assert "document.body.append(launcher" not in source
     assert "if (!target || !contextSection.isConnected)" in source
-    assert "position: fixed" not in css.split(
-        ".lakets-obs-launcher {", 1
-    )[1].split("}", 1)[0]
+    assert "position: fixed" not in css.split(".lakets-obs-launcher {", 1)[1].split("}", 1)[0]
     assert ".lakets-obs-context {" in css
     assert "border-left: 4px solid var(--lakets-obs-accent)" in css
 
@@ -433,14 +409,9 @@ def test_operations_metrics_are_semantically_separate_c7229_usability_regression
     """[C7229][usability][regression] Keep LakeTS operations outside business KPIs."""
     source = _source()
 
-    context = source.split("function mount()", 1)[1].split(
-        "function openDrawer", 1
-    )[0]
+    context = source.split("function mount()", 1)[1].split("function openDrawer", 1)[0]
     assert '"Operations / LakeTS health"' in context
-    assert (
-        '"Operational freshness, storage, rollup, and data-quality telemetry."'
-        in context
-    )
+    assert '"Operational freshness, storage, rollup, and data-quality telemetry."' in context
     assert '"aria-labelledby"' in context
     assert "contextSection.append(contextCopy, launcher)" in context
     assert "drawer.append(header, statusRegion, content, note)" in context

@@ -39,24 +39,56 @@ mutated, per the immutability rule.
 from __future__ import annotations
 
 import copy
-from typing import Iterable
+from collections.abc import Iterable
 
 __all__ = [
-    "PENDING", "RUNNING", "PASSED", "FAILED", "WAITING_ADMIN", "STEP_STATUSES",
-    "COMMON_STEPS", "MODE_STEPS", "MODE_ORDER", "TERMINAL_STEPS",
-    "WAITING_ADMIN_STEPS", "CLEANUP_STEP", "SEP",
-    "step_key", "bare_step", "mode_of", "is_terminal",
-    "build_sequence", "initial_state", "reconcile_modes", "get_step", "set_step",
-    "mark_running", "next_runnable_step", "retry_from", "mark_cdf_enabled",
+    "PENDING",
+    "RUNNING",
+    "PASSED",
+    "FAILED",
+    "WAITING_ADMIN",
+    "STEP_STATUSES",
+    "COMMON_STEPS",
+    "MODE_STEPS",
+    "MODE_ORDER",
+    "TERMINAL_STEPS",
+    "WAITING_ADMIN_STEPS",
+    "CLEANUP_STEP",
+    "SEP",
+    "step_key",
+    "bare_step",
+    "mode_of",
+    "is_terminal",
+    "build_sequence",
+    "initial_state",
+    "reconcile_modes",
+    "get_step",
+    "set_step",
+    "mark_running",
+    "next_runnable_step",
+    "retry_from",
+    "mark_cdf_enabled",
     "reset_legacy_cdf_park",
-    "current_step", "derive_phase",
-    "PROVISION_CLUSTER_STEP", "PROVISIONING_CLUSTER_STATES",
-    "PHASE_PROVISIONING", "PHASE_VALIDATING", "PHASE_WAITING_ADMIN",
-    "PHASE_PASSED", "PHASE_FAILED",
-    "validation_step_keys", "outstanding_steps", "is_gate_open",
-    "data_purged", "gate_status",
-    "mode_required_keys", "mode_outstanding_steps", "is_mode_gate_open",
-    "mode_data_purged", "mode_gate_status", "multi_mode_gate_status",
+    "current_step",
+    "derive_phase",
+    "PROVISION_CLUSTER_STEP",
+    "PROVISIONING_CLUSTER_STATES",
+    "PHASE_PROVISIONING",
+    "PHASE_VALIDATING",
+    "PHASE_WAITING_ADMIN",
+    "PHASE_PASSED",
+    "PHASE_FAILED",
+    "validation_step_keys",
+    "outstanding_steps",
+    "is_gate_open",
+    "data_purged",
+    "gate_status",
+    "mode_required_keys",
+    "mode_outstanding_steps",
+    "is_mode_gate_open",
+    "mode_data_purged",
+    "mode_gate_status",
+    "multi_mode_gate_status",
 ]
 
 # --- Step statuses ---------------------------------------------------------
@@ -121,9 +153,7 @@ PROVISION_CLUSTER_STEP = "provision_cluster"
 
 # Databricks Clusters-API states that mean the cluster is still coming up (not
 # yet usable) — the UI treats these as the ``provisioning_cluster`` phase.
-PROVISIONING_CLUSTER_STATES: frozenset[str] = frozenset(
-    {"PENDING", "RESTARTING", "RESIZING"}
-)
+PROVISIONING_CLUSTER_STATES: frozenset[str] = frozenset({"PENDING", "RESTARTING", "RESIZING"})
 
 # Coarse UI phases surfaced by :func:`derive_phase` (spec §1.12; used by the
 # ``validate/state`` poll so a running validation never "looks frozen").
@@ -219,9 +249,7 @@ def reconcile_modes(state: dict, enabled_modes: Iterable[str]) -> dict:
 
     previous_run_ids = state.get("run_ids") or {}
     reconciled["run_ids"] = {
-        key: run_id
-        for key, run_id in previous_run_ids.items()
-        if key in reconciled["steps"]
+        key: run_id for key, run_id in previous_run_ids.items() if key in reconciled["steps"]
     }
     return reconciled
 
@@ -368,8 +396,7 @@ def derive_phase(state: dict, *, cluster_state: str | None = None) -> str:
     ``validating``.
     """
     steps = state.get("steps", {})
-    if any((steps.get(k) or {}).get("status") == FAILED
-           for k in validation_step_keys(state)):
+    if any((steps.get(k) or {}).get("status") == FAILED for k in validation_step_keys(state)):
         return PHASE_FAILED
     if is_gate_open(state):
         return PHASE_PASSED
@@ -393,10 +420,7 @@ def validation_step_keys(state: dict) -> list[str]:
 
 def outstanding_steps(state: dict) -> list[str]:
     """Return non-terminal steps that are not yet ``passed``."""
-    return [
-        k for k in validation_step_keys(state)
-        if state["steps"][k]["status"] != PASSED
-    ]
+    return [k for k in validation_step_keys(state) if state["steps"][k]["status"] != PASSED]
 
 
 def is_gate_open(state: dict) -> bool:
@@ -438,10 +462,7 @@ def _key_status(state: dict, key: str) -> str:
     reports every required step as outstanding rather than raising.
     """
     rec = (state or {}).get("steps")
-    if isinstance(rec, dict):
-        value = rec.get(key)
-    else:
-        value = (state or {}).get(key)
+    value = rec.get(key) if isinstance(rec, dict) else (state or {}).get(key)
     if isinstance(value, dict):
         return value.get("status", PENDING)
     return value or PENDING

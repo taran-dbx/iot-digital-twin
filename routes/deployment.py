@@ -34,10 +34,12 @@ from services.runtime_wheel_service import (
 try:
     from services.lakets_deploy_service import deploy_lakets_ops_jobs  # type: ignore
 except ImportError:  # pragma: no cover — transitional fallback
+
     def deploy_lakets_ops_jobs(*_args: Any, **_kwargs: Any) -> list[dict]:  # type: ignore[no-redef]
         raise RuntimeError(
             "deploy_lakets_ops_jobs is not yet available in services.lakets_deploy_service"
         )
+
 
 logger = logging.getLogger("iot_digital_twin.routes.deployment")
 
@@ -50,9 +52,12 @@ async def upload_wheel(user_email: str = Depends(get_current_user)):
     try:
         local_wheel = bundled_wheel_path()
         if not local_wheel.exists():
-            return JSONResponse(status_code=404, content={
-                "error": f"Wheel not found at {local_wheel}. Ensure lib/{WHEEL_FILENAME} is packaged with the app.",
-            })
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": f"Wheel not found at {local_wheel}. Ensure lib/{WHEEL_FILENAME} is packaged with the app.",
+                },
+            )
 
         w = WorkspaceClient()
         me = w.current_user.me()
@@ -97,10 +102,11 @@ async def submit_connectivity_test(request: Request, user_email: str = Depends(g
 
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
-        from databricks.sdk.service.workspace import ImportFormat, Language
-        from databricks.sdk.service.jobs import SubmitTask, NotebookTask, Source, JobEnvironment
         from databricks.sdk.service.compute import Environment
+        from databricks.sdk.service.jobs import JobEnvironment, NotebookTask, Source, SubmitTask
+        from databricks.sdk.service.workspace import ImportFormat, Language
 
         w = WorkspaceClient()
         me = w.current_user.me()
@@ -161,8 +167,14 @@ async def get_connectivity_test_status(run_id: int, user_email: str = Depends(ge
         w = WorkspaceClient()
         run = w.jobs.get_run(run_id=run_id)
 
-        life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else "UNKNOWN"
-        result_state = run.state.result_state.value if run.state and run.state.result_state else None
+        life_cycle = (
+            run.state.life_cycle_state.value
+            if run.state and run.state.life_cycle_state
+            else "UNKNOWN"
+        )
+        result_state = (
+            run.state.result_state.value if run.state and run.state.result_state else None
+        )
         state_message = run.state.state_message if run.state else ""
 
         if life_cycle in ("PENDING", "QUEUED", "RUNNING", "BLOCKED"):
@@ -191,7 +203,10 @@ async def get_connectivity_test_status(run_id: int, user_email: str = Depends(ge
                         nb_result = {"raw": output.notebook_output.result}
             except Exception as out_err:
                 logger.warning("Could not get run output: %s", out_err)
-                nb_result = {"success": True, "message": "Run completed but output could not be retrieved."}
+                nb_result = {
+                    "success": True,
+                    "message": "Run completed but output could not be retrieved.",
+                }
 
             # Clean up the temp notebook
             if run.tasks and run.tasks[0].notebook_task:
@@ -214,7 +229,9 @@ async def get_connectivity_test_status(run_id: int, user_email: str = Depends(ge
 
 
 @router.post("/api/cluster/{cluster_id}/validate")
-async def validate_on_cluster(cluster_id: str, request: Request, user_email: str = Depends(get_current_user)):
+async def validate_on_cluster(
+    cluster_id: str, request: Request, user_email: str = Depends(get_current_user)
+):
     """Upload a notebook and execute it on the given cluster for validation.
 
     The notebook is written to a temporary workspace path, then executed
@@ -230,10 +247,9 @@ async def validate_on_cluster(cluster_id: str, request: Request, user_email: str
     if not notebook_content:
         return JSONResponse(status_code=422, content={"error": "'notebook' content is required"})
 
-
-
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.workspace import ImportFormat, Language
 
@@ -253,44 +269,44 @@ async def validate_on_cluster(cluster_id: str, request: Request, user_email: str
         # with a time-bounded check so the command execution API returns
         # instead of blocking forever.
         _await_block = (
-            'try:\n'
+            "try:\n"
             '    print("[SSS] Streaming query started \u2014 awaiting termination \u2026")\n'
-            '    query.awaitTermination()\n'
-            'except Exception as e:\n'
+            "    query.awaitTermination()\n"
+            "except Exception as e:\n"
             '    print(f"[SSS] Streaming query failed: {e}")\n'
-            '    import traceback\n'
-            '    traceback.print_exc()\n'
-            '    raise'
+            "    import traceback\n"
+            "    traceback.print_exc()\n"
+            "    raise"
         )
         _validation_block = (
-            'import time as _t\n'
-            '# Give Kafka admin client a longer window to drain on stop — when\n'
-            '# brokers are unreachable (e.g. placeholder/demo values), the default\n'
-            '# 15 s stop timeout surfaces as a Py4J TimeoutException and breaks\n'
-            '# validation even though the stream started successfully.\n'
+            "import time as _t\n"
+            "# Give Kafka admin client a longer window to drain on stop — when\n"
+            "# brokers are unreachable (e.g. placeholder/demo values), the default\n"
+            "# 15 s stop timeout surfaces as a Py4J TimeoutException and breaks\n"
+            "# validation even though the stream started successfully.\n"
             'spark.conf.set("spark.sql.streaming.stopTimeout", "60000")\n'
-            '_deadline = _t.time() + 20\n'
-            '_batch_seen = False\n'
-            'while _t.time() < _deadline:\n'
-            '    for _q in spark.streams.active:\n'
+            "_deadline = _t.time() + 20\n"
+            "_batch_seen = False\n"
+            "while _t.time() < _deadline:\n"
+            "    for _q in spark.streams.active:\n"
             '        if _q.lastProgress and _q.lastProgress.get("numInputRows", 0) > 0:\n'
-            '            _batch_seen = True\n'
-            '    if _batch_seen:\n'
-            '        break\n'
-            '    _t.sleep(2)\n'
-            'for _q in spark.streams.active:\n'
+            "            _batch_seen = True\n"
+            "    if _batch_seen:\n"
+            "        break\n"
+            "    _t.sleep(2)\n"
+            "for _q in spark.streams.active:\n"
             '    _status = "active" if _q.isActive else "DEAD"\n'
             '    _rows = _q.lastProgress.get("numInputRows", 0) if _q.lastProgress else 0\n'
             '    print(f"Stream {_q.name}: {_status}, rows_processed={_rows}")\n'
-            '    if not _q.isActive:\n'
+            "    if not _q.isActive:\n"
             '        raise RuntimeError(f"Stream {_q.name} died: {_q.exception()}")\n'
-            '    # Stop failures are ignored — we care that the stream *started*,\n'
-            '    # not that it can cleanly drain an unreachable source.\n'
-            '    try:\n'
-            '        _q.stop()\n'
-            '    except Exception as _stop_exc:\n'
+            "    # Stop failures are ignored — we care that the stream *started*,\n"
+            "    # not that it can cleanly drain an unreachable source.\n"
+            "    try:\n"
+            "        _q.stop()\n"
+            "    except Exception as _stop_exc:\n"
             '        print(f"Stream {_q.name} did not stop cleanly (ignored): {type(_stop_exc).__name__}")\n'
-            'if not spark.streams.active and not _batch_seen:\n'
+            "if not spark.streams.active and not _batch_seen:\n"
             '    print("Warning: No streaming queries found after timeout")\n'
             'print("Validation OK \\u2014 streaming queries started and processed data successfully")'
         )
@@ -337,7 +353,10 @@ async def validate_on_cluster(cluster_id: str, request: Request, user_email: str
             logger.error("validate_on_cluster error:\n%s", error)
         logger.info(
             "validate_on_cluster status=%s has_error=%s output_len=%s notebook=%s",
-            status, error is not None, len(str(output)), notebook_path,
+            status,
+            error is not None,
+            len(str(output)),
+            notebook_path,
         )
 
         try:
@@ -443,7 +462,11 @@ def _coerce_json_dict(raw: Any) -> dict:
 
 
 @router.post("/api/cluster/deploy-job")
-async def deploy_job(request: Request, user_email: str = Depends(get_current_user), state: AppState = Depends(get_app_state)):
+async def deploy_job(
+    request: Request,
+    user_email: str = Depends(get_current_user),
+    state: AppState = Depends(get_app_state),
+):
     """Create a Databricks job with a job cluster and optionally start it.
 
     The notebook is uploaded to the workspace, then a job is created with
@@ -464,26 +487,33 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
     if not cluster_config.get("spark_version") or not cluster_config.get("worker_node_type"):
         return JSONResponse(
             status_code=422,
-            content={"error": "'cluster_config' must include 'spark_version' and 'worker_node_type'"},
+            content={
+                "error": "'cluster_config' must include 'spark_version' and 'worker_node_type'"
+            },
         )
 
     try:
         import base64
+
         from databricks.sdk import WorkspaceClient
+        from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode
+        from databricks.sdk.service.jobs import (
+            Continuous,
+            JobSettings,
+            NotebookTask,
+            PauseStatus,
+        )
         from databricks.sdk.service.jobs import (
             Task as JobTaskSettings,
-            NotebookTask,
-            Continuous,
-            PauseStatus,
-            JobSettings,
         )
-        from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode
 
         w = WorkspaceClient()
 
         me = w.current_user.me()
         username = me.user_name or "unknown"
-        notebook_path = f"/Workspace/Users/{username}/.iot-digital-twin/sss_pipeline_{int(time.time())}"
+        notebook_path = (
+            f"/Workspace/Users/{username}/.iot-digital-twin/sss_pipeline_{int(time.time())}"
+        )
 
         from databricks.sdk.service.workspace import ImportFormat, Language
 
@@ -505,7 +535,9 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
         # Upload producer notebook if provided
         producer_notebook_path = None
         if producer_notebook_content:
-            producer_notebook_path = f"/Workspace/Users/{username}/.iot-digital-twin/data_producer_{int(time.time())}"
+            producer_notebook_path = (
+                f"/Workspace/Users/{username}/.iot-digital-twin/data_producer_{int(time.time())}"
+            )
             w.workspace.import_(
                 path=producer_notebook_path,
                 content=base64.b64encode(producer_notebook_content.encode()).decode(),
@@ -522,6 +554,7 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
         spark_conf["spark.databricks.streaming.realTimeMode.enabled"] = "true"
 
         from databricks.sdk.service.compute import AwsAttributes, AzureAttributes, EbsVolumeType
+
         cloud = detect_cloud()
         no_spot_kwargs: dict[str, Any] = {}
         if cloud == "aws":
@@ -533,9 +566,6 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
             )
         elif cloud == "azure":
             no_spot_kwargs["azure_attributes"] = AzureAttributes(first_on_demand=num_workers + 1)
-
-        from databricks.sdk.service.jobs import Source, JobEnvironment as JE
-        from databricks.sdk.service.compute import Environment
 
         tasks = [
             JobTaskSettings(
@@ -589,11 +619,16 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
         if not existing_job_id and pipeline_id and state.db_available and state.db:
             try:
                 import json as _json
+
                 row = await state.db.fetchrow(
                     "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id
                 )
                 if row:
-                    res = _json.loads(row["resources"]) if isinstance(row["resources"], str) else (row["resources"] or {})
+                    res = (
+                        _json.loads(row["resources"])
+                        if isinstance(row["resources"], str)
+                        else (row["resources"] or {})
+                    )
                     existing_job_id = res.get("job_id")
             except Exception:
                 pass
@@ -634,7 +669,9 @@ async def deploy_job(request: Request, user_email: str = Depends(get_current_use
 
         if pipeline_id:
             await track_resource(state.db, state.db_available, pipeline_id, "job_id", str(job_id))
-            await track_resource(state.db, state.db_available, pipeline_id, "notebook_path", notebook_path)
+            await track_resource(
+                state.db, state.db_available, pipeline_id, "notebook_path", notebook_path
+            )
 
         response: dict[str, Any] = {
             "job_id": job_id,

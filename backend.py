@@ -13,8 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import asyncpg
 from databricks.sdk import WorkspaceClient
@@ -24,18 +24,12 @@ logger = logging.getLogger("iot_digital_twin.backend")
 
 # Bounded pool waits so a hung Lakebase endpoint cannot pin app workers forever
 # (proxy upstream timeouts were ~10m with no asyncpg command/connect limits).
-LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(
-    os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10")
-)
+LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10"))
 # DDL/CDF migrations can legitimately exceed dashboard probe budgets. Routes
 # apply shorter per-request wait_for deadlines; this pool-level ceiling is the
 # final guard for long-running provisioning statements.
-LAKEBASE_COMMAND_TIMEOUT_SECONDS = float(
-    os.getenv("LAKEBASE_COMMAND_TIMEOUT_SECONDS", "120")
-)
-LAKEBASE_SDK_TIMEOUT_SECONDS = float(
-    os.getenv("LAKEBASE_SDK_TIMEOUT_SECONDS", "8")
-)
+LAKEBASE_COMMAND_TIMEOUT_SECONDS = float(os.getenv("LAKEBASE_COMMAND_TIMEOUT_SECONDS", "120"))
+LAKEBASE_SDK_TIMEOUT_SECONDS = float(os.getenv("LAKEBASE_SDK_TIMEOUT_SECONDS", "8"))
 
 
 def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, str]:
@@ -58,9 +52,7 @@ def _get_lakebase_credentials(endpoint_name: str | None = None) -> tuple[str, st
         raise RuntimeError("LAKEBASE_ENDPOINT env var not set")
 
     pg_user = (
-        os.getenv("PGUSER")
-        or os.getenv("DATABRICKS_CLIENT_ID")
-        or w.current_user.me().user_name
+        os.getenv("PGUSER") or os.getenv("DATABRICKS_CLIENT_ID") or w.current_user.me().user_name
     )
     cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
     return pg_user, cred.token
@@ -127,7 +119,10 @@ class LakebaseConnectionManager:
         )
         logger.info(
             "Lakebase pool created — host=%s db=%s user=%s static=%s",
-            self._pg_host, self._pg_database, self._pg_user, self._uses_static_creds,
+            self._pg_host,
+            self._pg_database,
+            self._pg_user,
+            self._uses_static_creds,
         )
 
         if not self._uses_static_creds:
@@ -215,20 +210,19 @@ class LakebaseConnectionManager:
         Returns the COUNT(*) seen on this same connection immediately after
         insert, inside the same transaction, for verification.
         """
-        async with self.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(query, args)
-                # In-transaction sanity check. If this returns 0 after an INSERT,
-                # the INSERT statement is a no-op (e.g., WHERE clause false,
-                # wrong table, trigger drops rows).
-                try:
-                    # Match the INSERT target — assumes INSERT INTO sensor_readings
-                    if "sensor_readings" in query.lower():
-                        n = await conn.fetchval("SELECT COUNT(*) FROM sensor_readings")
-                        return int(n or 0)
-                except Exception:
-                    pass
-                return -1
+        async with self.acquire() as conn, conn.transaction():
+            await conn.executemany(query, args)
+            # In-transaction sanity check. If this returns 0 after an INSERT,
+            # the INSERT statement is a no-op (e.g., WHERE clause false,
+            # wrong table, trigger drops rows).
+            try:
+                # Match the INSERT target — assumes INSERT INTO sensor_readings
+                if "sensor_readings" in query.lower():
+                    n = await conn.fetchval("SELECT COUNT(*) FROM sensor_readings")
+                    return int(n or 0)
+            except Exception:
+                pass
+            return -1
 
     async def ensure_pipelines_table(self) -> None:
         """Create the pipelines table if it does not exist.
@@ -260,9 +254,7 @@ class LakebaseConnectionManager:
                 "CREATE INDEX IF NOT EXISTS idx_pipelines_user ON pipelines (user_email)"
             )
         except asyncpg.InsufficientPrivilegeError:
-            logger.info(
-                "pipelines table exists (owned by another role) — skipping DDL, DML OK"
-            )
+            logger.info("pipelines table exists (owned by another role) — skipping DDL, DML OK")
         logger.info("Ensured pipelines table exists")
 
     async def ensure_user_settings_table(self) -> None:
@@ -280,9 +272,7 @@ class LakebaseConnectionManager:
             """
             await self.execute(ddl)
         except asyncpg.InsufficientPrivilegeError:
-            logger.info(
-                "user_settings table exists (owned by another role) — skipping DDL, DML OK"
-            )
+            logger.info("user_settings table exists (owned by another role) — skipping DDL, DML OK")
         logger.info("Ensured user_settings table exists")
 
     async def ensure_source_bindings_table(self) -> None:

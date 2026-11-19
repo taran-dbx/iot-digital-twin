@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import uuid
+from collections.abc import AsyncGenerator
 from dataclasses import replace
 from pathlib import Path
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
 
 # ---------------------------------------------------------------------------
 # Conditionally pre-mock databricks.sdk to prevent architecture-mismatch
@@ -36,6 +36,7 @@ def _pre_mock_sdk() -> None:
     """Inject lightweight mocks only when the real SDK cannot be imported."""
     try:
         import databricks.sdk.service.jobs  # noqa: F401
+
         # Real SDK is available — do not override anything.
         return
     except Exception:
@@ -130,6 +131,7 @@ def mock_app_state(mock_db: MagicMock) -> AppState:
 def _build_test_app(state: AppState):
     """Create a minimal FastAPI app wired to the given AppState."""
     from fastapi import FastAPI
+
     from routes.health import router as health_router
 
     test_app = FastAPI()
@@ -163,9 +165,7 @@ def mock_ws_client() -> MagicMock:
     ws.current_user = MagicMock()
     ws.current_user.me = MagicMock(return_value=MagicMock(user_name="test@example.com"))
     ws.postgres = MagicMock()
-    ws.postgres.generate_database_credential = MagicMock(
-        return_value=MagicMock(token="mock-token")
-    )
+    ws.postgres.generate_database_credential = MagicMock(return_value=MagicMock(token="mock-token"))
     return ws
 
 
@@ -178,9 +178,7 @@ def mock_ws_client() -> MagicMock:
 # teardown, so nothing pollutes ``production``.  The fixture ``pytest.skip``s
 # when the project is unreachable (no creds / offline CI) so the mocked unit
 # tests still run everywhere.
-APP_BACKEND_ENDPOINT = (
-    "projects/iot-app-backend/branches/production/endpoints/primary"
-)
+APP_BACKEND_ENDPOINT = "projects/iot-app-backend/branches/production/endpoints/primary"
 
 
 @pytest_asyncio.fixture()

@@ -8,21 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any
 
 import httpx
 
 from models.sql_ddl import (
-    SENSOR_READINGS_DDL,
+    LAKEBASE_ROLE_ID,
     MATVIEW_1M_DDL,
     MATVIEW_5M_DDL,
     MATVIEW_INDEX_DDL,
-    LAKEBASE_ROLE_NAME,
-    LAKEBASE_ROLE_ID,
+    SENSOR_READINGS_DDL,
 )
 from services import lakets_service
-from services.app_permissions import grant_app_can_use, _app_name
+from services.app_permissions import _app_name, grant_app_can_use
 
 logger = logging.getLogger("iot_digital_twin.services.provisioning")
 
@@ -35,17 +33,14 @@ def _is_missing_metastore_storage(exc: Exception) -> bool:
     on a workspace whose metastore has no default managed-storage URL.
     """
     msg = str(exc).lower()
-    return (
-        "metastore storage root" in msg
-        or "default storage" in msg
-        or "managed location" in msg
-    )
+    return "metastore storage root" in msg or "default storage" in msg or "managed location" in msg
 
 
 async def provision_secrets_scope(scope_name: str) -> dict:
     """Create a UC secret scope (idempotent)."""
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         try:
             w.secrets.create_scope(scope=scope_name)
@@ -55,7 +50,11 @@ async def provision_secrets_scope(scope_name: str) -> dict:
                 return {"resource": f"Secret scope '{scope_name}'", "status": "already_exists"}
             raise
     except Exception as exc:
-        return {"resource": f"Secret scope '{scope_name}'", "status": "failed", "error": str(exc)[:200]}
+        return {
+            "resource": f"Secret scope '{scope_name}'",
+            "status": "failed",
+            "error": str(exc)[:200],
+        }
 
 
 def _is_sp_credential_skippable(exc: Exception) -> bool:
@@ -89,7 +88,11 @@ def _find_sp_by_display_name(w: Any, display_name: str) -> Any | None:
 
 
 def _create_sp_and_oauth_secret(
-    w: Any, sp_name: str, scope_name: str, id_key: str, secret_key: str,
+    w: Any,
+    sp_name: str,
+    scope_name: str,
+    id_key: str,
+    secret_key: str,
 ) -> tuple[str, str]:
     """Create a service principal, mint an OAuth secret, and store both in
     the given secret scope.
@@ -111,9 +114,7 @@ def _create_sp_and_oauth_secret(
     )
     client_secret = secret_data.get("secret", "")
     if not client_secret:
-        raise RuntimeError(
-            f"No secret returned for SP {sp_id}: keys={list(secret_data.keys())}"
-        )
+        raise RuntimeError(f"No secret returned for SP {sp_id}: keys={list(secret_data.keys())}")
 
     w.secrets.put_secret(scope=scope_name, key=id_key, string_value=client_id)
     w.secrets.put_secret(scope=scope_name, key=secret_key, string_value=client_secret)
@@ -157,11 +158,13 @@ async def ensure_streaming_sp(
         return {
             "client_id": None,
             "status": "failed",
-            "results": [{
-                "resource": "Secret scope",
-                "status": "failed",
-                "error": "Scope name is empty",
-            }],
+            "results": [
+                {
+                    "resource": "Secret scope",
+                    "status": "failed",
+                    "error": "Scope name is empty",
+                }
+            ],
         }
 
     scope_result = await provision_scope(scope_name)
@@ -180,23 +183,28 @@ async def ensure_streaming_sp(
             return
         try:
             grant_fn(w, app_name_fn(), application_id)
-            results.append({
-                "resource": "App access (CAN_USE) for SP",
-                "status": "granted",
-            })
+            results.append(
+                {
+                    "resource": "App access (CAN_USE) for SP",
+                    "status": "granted",
+                }
+            )
         except Exception as grant_exc:  # pragma: no cover - defensive
             logger.warning(
                 "Failed to grant app access to SP '%s' (non-fatal): %s",
-                application_id, grant_exc,
+                application_id,
+                grant_exc,
             )
 
     try:
         existing_keys = {s.key for s in w.secrets.list_secrets(scope=scope_name)}
         if zb_id_key in existing_keys and zb_secret_key in existing_keys:
-            results.append({
-                "resource": "Service principal credentials",
-                "status": "already_exists",
-            })
+            results.append(
+                {
+                    "resource": "Service principal credentials",
+                    "status": "already_exists",
+                }
+            )
             # Re-apply the grant idempotently — resolve SP by display name
             # since the secret value is write-only over the API.
             try:
@@ -206,54 +214,71 @@ async def ensure_streaming_sp(
                     _grant_app_access(client_id)
                 else:
                     logger.warning(
-                        "Streaming SP '%s' not found by display name — "
-                        "cannot re-apply app grant", sp_name,
+                        "Streaming SP '%s' not found by display name — cannot re-apply app grant",
+                        sp_name,
                     )
             except Exception as lookup_exc:
                 logger.warning(
-                    "Failed to resolve streaming SP '%s' for app grant "
-                    "(non-fatal): %s", sp_name, lookup_exc,
+                    "Failed to resolve streaming SP '%s' for app grant (non-fatal): %s",
+                    sp_name,
+                    lookup_exc,
                 )
         else:
             sp_id, client_id = _create_sp_and_oauth_secret(
-                w, sp_name, scope_name, zb_id_key, zb_secret_key,
+                w,
+                sp_name,
+                scope_name,
+                zb_id_key,
+                zb_secret_key,
             )
-            results.append({
-                "resource": f"Service principal '{sp_name}' (id={sp_id})",
-                "status": "created",
-            })
+            results.append(
+                {
+                    "resource": f"Service principal '{sp_name}' (id={sp_id})",
+                    "status": "created",
+                }
+            )
             results.append({"resource": "OAuth secret", "status": "created"})
-            results.append({
-                "resource": f"Secret '{zb_id_key}' in '{scope_name}'",
-                "status": "created",
-            })
-            results.append({
-                "resource": f"Secret '{zb_secret_key}' in '{scope_name}'",
-                "status": "created",
-            })
+            results.append(
+                {
+                    "resource": f"Secret '{zb_id_key}' in '{scope_name}'",
+                    "status": "created",
+                }
+            )
+            results.append(
+                {
+                    "resource": f"Secret '{zb_secret_key}' in '{scope_name}'",
+                    "status": "created",
+                }
+            )
 
             logger.info(
                 "Created SP '%s' (app_id=%s) and stored credentials in scope '%s'",
-                sp_name, client_id, scope_name,
+                sp_name,
+                client_id,
+                scope_name,
             )
             _grant_app_access(client_id)
 
     except Exception as exc:
         logger.warning("Failed to create service principal / store credentials: %s", exc)
         if _is_sp_credential_skippable(exc):
-            results.append({
-                "resource": "Service principal credentials",
-                "status": "skipped",
-                "error": "Service-principal credential minting isn't available on "
-                         "this workspace (needs account-admin).  This is only "
-                         "required for Zerobus ingest — skip unless you plan to use Zerobus.",
-            })
+            results.append(
+                {
+                    "resource": "Service principal credentials",
+                    "status": "skipped",
+                    "error": "Service-principal credential minting isn't available on "
+                    "this workspace (needs account-admin).  This is only "
+                    "required for Zerobus ingest — skip unless you plan to use Zerobus.",
+                }
+            )
         else:
-            results.append({
-                "resource": "Service principal credentials",
-                "status": "failed",
-                "error": str(exc)[:200],
-            })
+            results.append(
+                {
+                    "resource": "Service principal credentials",
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                }
+            )
 
     status = "ok" if not any(r.get("status") == "failed" for r in results) else "failed"
     return {"client_id": client_id, "status": status, "results": results}
@@ -281,7 +306,6 @@ SHARED_STREAMING_LAKEBASE_ROLE_ID = "iot-sss-industries"
 # every auth path.  ``provision_lakebase_role`` registers that one SP as the
 # branch Postgres role.  The SHARED_STREAMING_* constants above are retained
 # only for import compatibility (e.g. health checks) and are otherwise unused.
-
 
 
 async def provision_uc_catalog(uc: dict) -> list[dict]:
@@ -314,18 +338,22 @@ async def provision_uc_catalog(uc: dict) -> list[dict]:
             results.append({"resource": f"UC catalog '{catalog_name}'", "status": "created"})
         except Exception as e:
             if _is_already_exists(e):
-                results.append({"resource": f"UC catalog '{catalog_name}'", "status": "already_exists"})
+                results.append(
+                    {"resource": f"UC catalog '{catalog_name}'", "status": "already_exists"}
+                )
             elif _is_missing_metastore_storage(e):
-                results.append({
-                    "resource": f"UC catalog '{catalog_name}'",
-                    "status": "failed",
-                    "error": (
-                        "Workspace metastore has no default storage root. "
-                        "Set 'Storage Root' on this Settings tab to an "
-                        "external-location URL the app SP can write to "
-                        "(CREATE_MANAGED_STORAGE), then retry."
-                    ),
-                })
+                results.append(
+                    {
+                        "resource": f"UC catalog '{catalog_name}'",
+                        "status": "failed",
+                        "error": (
+                            "Workspace metastore has no default storage root. "
+                            "Set 'Storage Root' on this Settings tab to an "
+                            "external-location URL the app SP can write to "
+                            "(CREATE_MANAGED_STORAGE), then retry."
+                        ),
+                    }
+                )
                 return results
             else:
                 raise
@@ -333,12 +361,25 @@ async def provision_uc_catalog(uc: dict) -> list[dict]:
         for schema in schemas:
             try:
                 w.schemas.create(name=schema, catalog_name=catalog_name)
-                results.append({"resource": f"Schema '{catalog_name}.{schema}'", "status": "created"})
+                results.append(
+                    {"resource": f"Schema '{catalog_name}.{schema}'", "status": "created"}
+                )
             except Exception as e:
                 if _is_already_exists(e):
-                    results.append({"resource": f"Schema '{catalog_name}.{schema}'", "status": "already_exists"})
+                    results.append(
+                        {
+                            "resource": f"Schema '{catalog_name}.{schema}'",
+                            "status": "already_exists",
+                        }
+                    )
                 else:
-                    results.append({"resource": f"Schema '{catalog_name}.{schema}'", "status": "failed", "error": str(e)[:200]})
+                    results.append(
+                        {
+                            "resource": f"Schema '{catalog_name}.{schema}'",
+                            "status": "failed",
+                            "error": str(e)[:200],
+                        }
+                    )
 
         if "checkpoints" in schemas:
             try:
@@ -348,15 +389,37 @@ async def provision_uc_catalog(uc: dict) -> list[dict]:
                     name=volume_name,
                     volume_type=VolumeType.MANAGED,
                 )
-                results.append({"resource": f"Volume '{catalog_name}.checkpoints.{volume_name}'", "status": "created"})
+                results.append(
+                    {
+                        "resource": f"Volume '{catalog_name}.checkpoints.{volume_name}'",
+                        "status": "created",
+                    }
+                )
             except Exception as e:
                 if _is_already_exists(e):
-                    results.append({"resource": f"Volume '{catalog_name}.checkpoints.{volume_name}'", "status": "already_exists"})
+                    results.append(
+                        {
+                            "resource": f"Volume '{catalog_name}.checkpoints.{volume_name}'",
+                            "status": "already_exists",
+                        }
+                    )
                 else:
-                    results.append({"resource": f"Volume '{catalog_name}.checkpoints.{volume_name}'", "status": "failed", "error": str(e)[:200]})
+                    results.append(
+                        {
+                            "resource": f"Volume '{catalog_name}.checkpoints.{volume_name}'",
+                            "status": "failed",
+                            "error": str(e)[:200],
+                        }
+                    )
 
     except Exception as exc:
-        results.append({"resource": f"UC catalog '{catalog_name}'", "status": "failed", "error": str(exc)[:200]})
+        results.append(
+            {
+                "resource": f"UC catalog '{catalog_name}'",
+                "status": "failed",
+                "error": str(exc)[:200],
+            }
+        )
 
     return results
 
@@ -374,14 +437,23 @@ async def provision_lakebase_table(lb: dict) -> dict:
             project_id = lb.get("project_id", "")
             branch_id = lb.get("branch_id", "production")
             if not project_id:
-                return {"resource": f"Lakebase table '{table_name}'", "status": "failed", "error": "project_id is empty"}
+                return {
+                    "resource": f"Lakebase table '{table_name}'",
+                    "status": "failed",
+                    "error": "project_id is empty",
+                }
 
             from databricks.sdk import WorkspaceClient
+
             w = WorkspaceClient()
             parent = f"projects/{project_id}/branches/{branch_id}"
             endpoints = list(w.postgres.list_endpoints(parent=parent))
             if not endpoints:
-                return {"resource": f"Lakebase table '{table_name}'", "status": "failed", "error": f"No endpoints for {parent}"}
+                return {
+                    "resource": f"Lakebase table '{table_name}'",
+                    "status": "failed",
+                    "error": f"No endpoints for {parent}",
+                }
 
             endpoint = w.postgres.get_endpoint(name=endpoints[0].name)
             pg_host = endpoint.status.hosts.host
@@ -395,11 +467,19 @@ async def provision_lakebase_table(lb: dict) -> dict:
             pg_password = lb.get("password", "")
             pg_port = int(lb.get("port", 5432))
             if not pg_host:
-                return {"resource": f"Lakebase table '{table_name}'", "status": "failed", "error": "host is empty"}
+                return {
+                    "resource": f"Lakebase table '{table_name}'",
+                    "status": "failed",
+                    "error": "host is empty",
+                }
 
         conn = await asyncpg.connect(
-            host=pg_host, database=database, user=pg_user,
-            password=pg_password, port=pg_port, ssl="require",
+            host=pg_host,
+            database=database,
+            user=pg_user,
+            password=pg_password,
+            port=pg_port,
+            ssl="require",
         )
         try:
             # Create the main table
@@ -430,7 +510,9 @@ async def provision_lakebase_table(lb: dict) -> dict:
                 try:
                     sql_path = lakets_service.resolve_lakets_source(lb.get("lakets_sql_path"))
                     version = await lakets_service.install_lakets(
-                        conn, sql_path, skip_if_installed=True,
+                        conn,
+                        sql_path,
+                        skip_if_installed=True,
                     )
                     result["lakets_version"] = version
                 except Exception as lts_exc:
@@ -459,9 +541,7 @@ async def provision_lakebase_table(lb: dict) -> dict:
                     await conn.execute(
                         f"ALTER SEQUENCE IF EXISTS {table_name}_id_seq OWNED BY NONE"
                     )
-                    await conn.execute(
-                        f"DROP TABLE IF EXISTS {table_name}_lakets_orig CASCADE"
-                    )
+                    await conn.execute(f"DROP TABLE IF EXISTS {table_name}_lakets_orig CASCADE")
 
                     await lakets_service.create_chronotable(
                         conn,
@@ -496,7 +576,9 @@ async def provision_lakebase_table(lb: dict) -> dict:
                 sync_table = tiering.get("time_table", table_name)
                 try:
                     sync_result = await lakets_service.enable_sync(
-                        conn, sync_table, schema=schema,
+                        conn,
+                        sync_table,
+                        schema=schema,
                     )
                 except Exception as sync_exc:  # defensive — enable_sync never raises
                     logger.warning("enable_sync raised unexpectedly: %s", sync_exc)
@@ -513,12 +595,20 @@ async def provision_lakebase_table(lb: dict) -> dict:
             err = str(inner_exc)
             if "already exists" in err.lower() or "DuplicateTable" in err:
                 return {"resource": f"Lakebase table '{table_name}'", "status": "already_exists"}
-            return {"resource": f"Lakebase table '{table_name}'", "status": "failed", "error": err[:200]}
+            return {
+                "resource": f"Lakebase table '{table_name}'",
+                "status": "failed",
+                "error": err[:200],
+            }
         finally:
             await conn.close()
 
     except Exception as exc:
-        return {"resource": f"Lakebase table '{table_name}'", "status": "failed", "error": str(exc)[:200]}
+        return {
+            "resource": f"Lakebase table '{table_name}'",
+            "status": "failed",
+            "error": str(exc)[:200],
+        }
 
 
 async def provision_lakebase_project_and_branch(project_id: str, branch_id: str) -> list[dict]:
@@ -526,7 +616,8 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
-    from databricks.sdk.service.postgres import Project, Branch, BranchSpec
+    from databricks.sdk.service.postgres import Branch, BranchSpec, Project
+
     w = WorkspaceClient()
 
     # Step 1: Check if project exists
@@ -540,7 +631,13 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
         if "not_found" in err_str or "not found" in err_str or "does not exist" in err_str:
             project_exists = False
         else:
-            results.append({"resource": f"Lakebase project '{project_id}'", "status": "failed", "error": str(e)[:200]})
+            results.append(
+                {
+                    "resource": f"Lakebase project '{project_id}'",
+                    "status": "failed",
+                    "error": str(e)[:200],
+                }
+            )
             return results
 
     # Step 2: Create project if needed
@@ -550,9 +647,17 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
             results.append({"resource": f"Lakebase project '{project_id}'", "status": "created"})
         except Exception as exc:
             if "already exists" in str(exc).lower():
-                results.append({"resource": f"Lakebase project '{project_id}'", "status": "already_exists"})
+                results.append(
+                    {"resource": f"Lakebase project '{project_id}'", "status": "already_exists"}
+                )
             else:
-                results.append({"resource": f"Lakebase project '{project_id}'", "status": "failed", "error": str(exc)[:200]})
+                results.append(
+                    {
+                        "resource": f"Lakebase project '{project_id}'",
+                        "status": "failed",
+                        "error": str(exc)[:200],
+                    }
+                )
                 return results
 
     # Step 3: Check if branch exists
@@ -567,7 +672,13 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
         if "not_found" in err_str or "not found" in err_str or "does not exist" in err_str:
             branch_exists = False
         else:
-            results.append({"resource": f"Lakebase branch '{branch_id}'", "status": "failed", "error": str(e)[:200]})
+            results.append(
+                {
+                    "resource": f"Lakebase branch '{branch_id}'",
+                    "status": "failed",
+                    "error": str(e)[:200],
+                }
+            )
             return results
 
     # Step 4: Create branch if needed
@@ -584,9 +695,17 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
             results.append({"resource": f"Lakebase branch '{branch_id}'", "status": "created"})
         except Exception as exc:
             if "already exists" in str(exc).lower():
-                results.append({"resource": f"Lakebase branch '{branch_id}'", "status": "already_exists"})
+                results.append(
+                    {"resource": f"Lakebase branch '{branch_id}'", "status": "already_exists"}
+                )
             else:
-                results.append({"resource": f"Lakebase branch '{branch_id}'", "status": "failed", "error": str(exc)[:200]})
+                results.append(
+                    {
+                        "resource": f"Lakebase branch '{branch_id}'",
+                        "status": "failed",
+                        "error": str(exc)[:200],
+                    }
+                )
                 return results
 
     # Step 5: Ensure a primary read-write endpoint exists on the branch.
@@ -604,6 +723,7 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
                 EndpointSpec,
                 EndpointType,
             )
+
             w.postgres.create_endpoint(
                 parent=parent,
                 endpoint=Endpoint(
@@ -615,16 +735,20 @@ async def provision_lakebase_project_and_branch(project_id: str, branch_id: str)
                 ),
                 endpoint_id="primary",
             )
-            results.append({"resource": f"Lakebase endpoint 'primary'", "status": "created"})
+            results.append({"resource": "Lakebase endpoint 'primary'", "status": "created"})
         except Exception as exc:
             if "already exists" in str(exc).lower():
-                results.append({"resource": f"Lakebase endpoint 'primary'", "status": "already_exists"})
+                results.append(
+                    {"resource": "Lakebase endpoint 'primary'", "status": "already_exists"}
+                )
             else:
-                results.append({
-                    "resource": f"Lakebase endpoint 'primary'",
-                    "status": "failed",
-                    "error": str(exc)[:200],
-                })
+                results.append(
+                    {
+                        "resource": "Lakebase endpoint 'primary'",
+                        "status": "failed",
+                        "error": str(exc)[:200],
+                    }
+                )
 
     # Step 6: Wait for endpoint to be ACTIVE (up to 90s)
     if not branch_exists or not project_exists or not endpoints:
@@ -726,9 +850,7 @@ async def provision_lakebase_role(
         kwargs.pop("role_name", None)
 
     if kwargs:
-        logger.warning(
-            "provision_lakebase_role received unknown kwargs: %s", list(kwargs.keys())
-        )
+        logger.warning("provision_lakebase_role received unknown kwargs: %s", list(kwargs.keys()))
 
     # Normalise sink_tables (tests pass tuples, production uses list).
     sink_tables_list: list[str] = [t for t in sink_tables] if sink_tables else ["sensor_readings"]
@@ -742,6 +864,7 @@ async def provision_lakebase_role(
     results: list[dict] = []
 
     from databricks.sdk import WorkspaceClient
+
     w = ws or WorkspaceClient()
 
     # Resolve the SP client id when not supplied — when the app runs as its
@@ -750,19 +873,23 @@ async def provision_lakebase_role(
         try:
             sp_client_id = w.current_user.me().user_name
         except Exception as exc:
-            results.append({
-                "resource": "Lakebase OAuth role",
-                "status": "failed",
-                "error": f"Unable to resolve SP client id: {exc}"[:200],
-            })
+            results.append(
+                {
+                    "resource": "Lakebase OAuth role",
+                    "status": "failed",
+                    "error": f"Unable to resolve SP client id: {exc}"[:200],
+                }
+            )
             return results
 
     if not project_id or not branch_id:
-        results.append({
-            "resource": "Lakebase OAuth role",
-            "status": "failed",
-            "error": "project_id and branch_id are required",
-        })
+        results.append(
+            {
+                "resource": "Lakebase OAuth role",
+                "status": "failed",
+                "error": "project_id and branch_id are required",
+            }
+        )
         return results
 
     parent = f"projects/{project_id}/branches/{branch_id}"
@@ -772,18 +899,22 @@ async def provision_lakebase_role(
         try:
             endpoints = list(w.postgres.list_endpoints(parent=parent))
         except Exception as exc:
-            results.append({
-                "resource": "Lakebase endpoint lookup",
-                "status": "failed",
-                "error": str(exc)[:200],
-            })
+            results.append(
+                {
+                    "resource": "Lakebase endpoint lookup",
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                }
+            )
             return results
         if not endpoints:
-            results.append({
-                "resource": "Lakebase endpoint lookup",
-                "status": "failed",
-                "error": f"No endpoints available on {parent}",
-            })
+            results.append(
+                {
+                    "resource": "Lakebase endpoint lookup",
+                    "status": "failed",
+                    "error": f"No endpoints available on {parent}",
+                }
+            )
             return results
         endpoint_name = endpoints[0].name
 
@@ -794,9 +925,9 @@ async def provision_lakebase_role(
     try:
         from databricks.sdk.service.postgres import (
             Role,
-            RoleRoleSpec,
             RoleAuthMethod,
             RoleMembershipRole,
+            RoleRoleSpec,
         )
 
         create_kwargs: dict[str, Any] = {
@@ -809,6 +940,7 @@ async def provision_lakebase_role(
         # string literal when the enum is missing.
         try:
             from databricks.sdk.service.postgres import RoleIdentityType
+
             create_kwargs["identity_type"] = RoleIdentityType.SERVICE_PRINCIPAL
         except ImportError:
             create_kwargs["identity_type"] = "SERVICE_PRINCIPAL"
@@ -819,7 +951,7 @@ async def provision_lakebase_role(
             role_id=_lb_role_id,
         )
         results.append({"resource": role_resource, "status": "created"})
-    except AttributeError as exc:
+    except AttributeError:
         # SDK too old — fall back to raw REST.
         try:
             w.api_client.do(
@@ -841,34 +973,42 @@ async def provision_lakebase_role(
             if "already exists" in rest_err:
                 results.append({"resource": role_resource, "status": "already_exists"})
             elif _is_permission_error(rest_exc):
-                results.append({
-                    "resource": role_resource,
-                    "status": "skipped",
-                    "error": "Runtime identity lacks Lakebase project-admin.",
-                })
+                results.append(
+                    {
+                        "resource": role_resource,
+                        "status": "skipped",
+                        "error": "Runtime identity lacks Lakebase project-admin.",
+                    }
+                )
             else:
-                results.append({
-                    "resource": role_resource,
-                    "status": "failed",
-                    "error": str(rest_exc)[:200],
-                })
+                results.append(
+                    {
+                        "resource": role_resource,
+                        "status": "failed",
+                        "error": str(rest_exc)[:200],
+                    }
+                )
                 return results
     except Exception as exc:
         err_str = str(exc).lower()
         if "already exists" in err_str or "already_exists" in err_str:
             results.append({"resource": role_resource, "status": "already_exists"})
         elif _is_permission_error(exc):
-            results.append({
-                "resource": role_resource,
-                "status": "skipped",
-                "error": "Runtime identity lacks Lakebase project-admin.",
-            })
+            results.append(
+                {
+                    "resource": role_resource,
+                    "status": "skipped",
+                    "error": "Runtime identity lacks Lakebase project-admin.",
+                }
+            )
         else:
-            results.append({
-                "resource": role_resource,
-                "status": "failed",
-                "error": str(exc)[:200],
-            })
+            results.append(
+                {
+                    "resource": role_resource,
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                }
+            )
             return results
 
     # ------------------------------------------------------------------ #
@@ -881,15 +1021,21 @@ async def provision_lakebase_role(
         pg_user = w.current_user.me().user_name
 
         conn = await asyncpg.connect(
-            host=pg_host, database=database,
-            user=pg_user, password=pg_token, port=5432, ssl="require",
+            host=pg_host,
+            database=database,
+            user=pg_user,
+            password=pg_token,
+            port=5432,
+            ssl="require",
         )
     except Exception as exc:
-        results.append({
-            "resource": "Connect to Lakebase for grants",
-            "status": "failed",
-            "error": str(exc)[:200],
-        })
+        results.append(
+            {
+                "resource": "Connect to Lakebase for grants",
+                "status": "failed",
+                "error": str(exc)[:200],
+            }
+        )
         return results
 
     try:
@@ -899,46 +1045,56 @@ async def provision_lakebase_role(
         # Schema USAGE on public (once).
         try:
             await conn.execute(f"GRANT USAGE ON SCHEMA public TO {qsp}")
-            results.append({
-                "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
-                "status": "created",
-            })
+            results.append(
+                {
+                    "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
+                    "status": "created",
+                }
+            )
         except Exception as exc:
             err = str(exc)
             if "already" in err.lower():
-                results.append({
-                    "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
-                    "status": "already_exists",
-                })
+                results.append(
+                    {
+                        "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
+                        "status": "already_exists",
+                    }
+                )
             else:
-                results.append({
-                    "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
-                    "status": "failed",
-                    "error": err[:200],
-                })
+                results.append(
+                    {
+                        "resource": f"GRANT USAGE ON SCHEMA public TO {sp_client_id}",
+                        "status": "failed",
+                        "error": err[:200],
+                    }
+                )
 
         # Sequence USAGE (once — covers BIGSERIAL PKs).
         try:
-            await conn.execute(
-                f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {qsp}"
+            await conn.execute(f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {qsp}")
+            results.append(
+                {
+                    "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
+                    "status": "created",
+                }
             )
-            results.append({
-                "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
-                "status": "created",
-            })
         except Exception as exc:
             err = str(exc)
             if "already" in err.lower():
-                results.append({
-                    "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
-                    "status": "already_exists",
-                })
+                results.append(
+                    {
+                        "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
+                        "status": "already_exists",
+                    }
+                )
             else:
-                results.append({
-                    "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
-                    "status": "failed",
-                    "error": err[:200],
-                })
+                results.append(
+                    {
+                        "resource": f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {sp_client_id}",
+                        "status": "failed",
+                        "error": err[:200],
+                    }
+                )
 
         # Optional: USAGE on the lakets schema (installed lazily by LakeTS).
         lakets_resource = f"GRANT USAGE ON SCHEMA lakets TO {sp_client_id}"
@@ -948,26 +1104,28 @@ async def provision_lakebase_role(
         except Exception as exc:
             err = str(exc)
             if "does not exist" in err.lower():
-                results.append({
-                    "resource": lakets_resource,
-                    "status": "skipped",
-                    "error": "lakets schema not installed yet — will be granted after install.",
-                })
+                results.append(
+                    {
+                        "resource": lakets_resource,
+                        "status": "skipped",
+                        "error": "lakets schema not installed yet — will be granted after install.",
+                    }
+                )
             elif "already" in err.lower():
                 results.append({"resource": lakets_resource, "status": "already_exists"})
             else:
-                results.append({
-                    "resource": lakets_resource,
-                    "status": "failed",
-                    "error": err[:200],
-                })
+                results.append(
+                    {
+                        "resource": lakets_resource,
+                        "status": "failed",
+                        "error": err[:200],
+                    }
+                )
 
         # DML on each sink table.
         for table in sink_tables_list:
             qtable = f'"{table}"'
-            stmt = (
-                f"GRANT INSERT, SELECT, UPDATE, DELETE ON {qtable} TO {qsp}"
-            )
+            stmt = f"GRANT INSERT, SELECT, UPDATE, DELETE ON {qtable} TO {qsp}"
             resource = f"GRANT DML ON {table} TO {sp_client_id}"
             try:
                 await conn.execute(stmt)
@@ -977,17 +1135,21 @@ async def provision_lakebase_role(
                 if "already" in err.lower():
                     results.append({"resource": resource, "status": "already_exists"})
                 elif "does not exist" in err.lower():
-                    results.append({
-                        "resource": resource,
-                        "status": "skipped",
-                        "error": f"Table {table} does not exist yet.",
-                    })
+                    results.append(
+                        {
+                            "resource": resource,
+                            "status": "skipped",
+                            "error": f"Table {table} does not exist yet.",
+                        }
+                    )
                 else:
-                    results.append({
-                        "resource": resource,
-                        "status": "failed",
-                        "error": err[:200],
-                    })
+                    results.append(
+                        {
+                            "resource": resource,
+                            "status": "failed",
+                            "error": err[:200],
+                        }
+                    )
     finally:
         try:
             await conn.close()
@@ -998,7 +1160,9 @@ async def provision_lakebase_role(
 
 
 async def save_direct_creds_to_secrets(
-    secrets: dict, lb_user: str, lb_password: str,
+    secrets: dict,
+    lb_user: str,
+    lb_password: str,
 ) -> list[dict]:
     """[DEPRECATED] Persist Lakebase creds into workspace secrets.
 
@@ -1010,19 +1174,25 @@ async def save_direct_creds_to_secrets(
         "save_direct_creds_to_secrets is deprecated — OAuth-native provisioning "
         "does not use static Lakebase credentials; call is a no-op."
     )
-    return [{
-        "resource": "Save credentials to secrets (deprecated)",
-        "status": "skipped",
-        "error": "OAuth-native provisioning does not require static credentials.",
-    }]
+    return [
+        {
+            "resource": "Save credentials to secrets (deprecated)",
+            "status": "skipped",
+            "error": "OAuth-native provisioning does not require static credentials.",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
 # UC Secrets (catalog-scoped)
 # ---------------------------------------------------------------------------
 
+
 async def provision_uc_secret(
-    catalog: str, schema: str, name: str, value: str,
+    catalog: str,
+    schema: str,
+    name: str,
+    value: str,
 ) -> dict:
     """Create or update a UC Secret (catalog-scoped).
 
@@ -1039,12 +1209,14 @@ async def provision_uc_secret(
         resp = await client.post(
             f"{host}/api/2.1/unity-catalog/secrets",
             headers=headers,
-            json={"secret_info": {
-                "catalog_name": catalog,
-                "schema_name": schema,
-                "name": name,
-                "value": value,
-            }},
+            json={
+                "secret_info": {
+                    "catalog_name": catalog,
+                    "schema_name": schema,
+                    "name": name,
+                    "value": value,
+                }
+            },
         )
         if resp.status_code == 200:
             return {"resource": f"UC secret '{fqn}'", "status": "created"}
@@ -1063,7 +1235,9 @@ async def provision_uc_secret(
 
 
 async def grant_uc_secret_permissions(
-    catalog: str, schema: str, principal: str,
+    catalog: str,
+    schema: str,
+    principal: str,
 ) -> dict:
     """Grant READ_SECRET and REFERENCE_SECRET on a UC schema to a principal."""
     from databricks.sdk import WorkspaceClient
@@ -1077,19 +1251,29 @@ async def grant_uc_secret_permissions(
         resp = await client.patch(
             f"{host}/api/2.1/unity-catalog/permissions/schema/{fqn}",
             headers=headers,
-            json={"changes": [{
-                "principal": principal,
-                "add": ["READ_SECRET", "REFERENCE_SECRET"],
-            }]},
+            json={
+                "changes": [
+                    {
+                        "principal": principal,
+                        "add": ["READ_SECRET", "REFERENCE_SECRET"],
+                    }
+                ]
+            },
         )
         if resp.status_code == 200:
             return {"resource": f"UC secret grants on '{fqn}' for {principal}", "status": "created"}
-        return {"resource": f"UC secret grants on '{fqn}'", "status": "failed", "error": resp.text[:200]}
+        return {
+            "resource": f"UC secret grants on '{fqn}'",
+            "status": "failed",
+            "error": resp.text[:200],
+        }
 
 
 async def save_creds_as_uc_secrets(
-    catalog: str, schema: str,
-    lb_user: str, lb_password: str,
+    catalog: str,
+    schema: str,
+    lb_user: str,
+    lb_password: str,
     zb_client_id: str | None = None,
     zb_client_secret: str | None = None,
 ) -> list[dict]:
@@ -1106,21 +1290,29 @@ async def save_creds_as_uc_secrets(
         "save_creds_as_uc_secrets: skipping `lb-user` / `lb-password` — "
         "OAuth-native provisioning does not use static Lakebase credentials."
     )
-    results.append({
-        "resource": f"UC secret '{catalog}.{schema}.lb-user' (deprecated)",
-        "status": "skipped",
-        "error": "OAuth-native provisioning does not require static credentials.",
-    })
-    results.append({
-        "resource": f"UC secret '{catalog}.{schema}.lb-password' (deprecated)",
-        "status": "skipped",
-        "error": "OAuth-native provisioning does not require static credentials.",
-    })
+    results.append(
+        {
+            "resource": f"UC secret '{catalog}.{schema}.lb-user' (deprecated)",
+            "status": "skipped",
+            "error": "OAuth-native provisioning does not require static credentials.",
+        }
+    )
+    results.append(
+        {
+            "resource": f"UC secret '{catalog}.{schema}.lb-password' (deprecated)",
+            "status": "skipped",
+            "error": "OAuth-native provisioning does not require static credentials.",
+        }
+    )
 
     if zb_client_id:
-        results.append(await provision_uc_secret(catalog, schema, "zerobus-client-id", zb_client_id))
+        results.append(
+            await provision_uc_secret(catalog, schema, "zerobus-client-id", zb_client_id)
+        )
     if zb_client_secret:
-        results.append(await provision_uc_secret(catalog, schema, "zerobus-client-secret", zb_client_secret))
+        results.append(
+            await provision_uc_secret(catalog, schema, "zerobus-client-secret", zb_client_secret)
+        )
 
     return results
 
@@ -1142,7 +1334,8 @@ CREATE TABLE IF NOT EXISTS {table} (
 
 
 async def provision_metrics_table(
-    catalog: str, schema: str = "metrics",
+    catalog: str,
+    schema: str = "metrics",
     table_name: str = "streaming_metrics",
     grant_to: str | None = None,
 ) -> list[dict]:
@@ -1160,8 +1353,13 @@ async def provision_metrics_table(
 
         warehouses = list(w.warehouses.list())
         if not warehouses:
-            return [{"resource": f"Metrics table '{fqn}'", "status": "failed",
-                     "error": "No SQL warehouse available"}]
+            return [
+                {
+                    "resource": f"Metrics table '{fqn}'",
+                    "status": "failed",
+                    "error": "No SQL warehouse available",
+                }
+            ]
 
         wh_id = warehouses[0].id
 
@@ -1171,24 +1369,31 @@ async def provision_metrics_table(
             wait_timeout="50s",
         )
         if stmt.status.error:
-            results.append({"resource": f"Metrics table '{fqn}'", "status": "failed",
-                           "error": str(stmt.status.error)[:200]})
+            results.append(
+                {
+                    "resource": f"Metrics table '{fqn}'",
+                    "status": "failed",
+                    "error": str(stmt.status.error)[:200],
+                }
+            )
         else:
             results.append({"resource": f"Metrics table '{fqn}'", "status": "created"})
 
         if grant_to:
             for sql in [
-                f'GRANT MODIFY, SELECT ON TABLE {fqn} TO `{grant_to}`',
-                f'GRANT USE CATALOG ON CATALOG {catalog} TO `{grant_to}`',
-                f'GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `{grant_to}`',
+                f"GRANT MODIFY, SELECT ON TABLE {fqn} TO `{grant_to}`",
+                f"GRANT USE CATALOG ON CATALOG {catalog} TO `{grant_to}`",
+                f"GRANT USE SCHEMA ON SCHEMA {catalog}.{schema} TO `{grant_to}`",
                 # Required so the deployed job identity can mint UC
                 # temporary-table-credentials for the delta-rs metrics writer
                 # (generate_temporary_table_credentials -> EXTERNAL USE SCHEMA).
-                f'GRANT EXTERNAL USE SCHEMA ON SCHEMA {catalog}.{schema} TO `{grant_to}`',
+                f"GRANT EXTERNAL USE SCHEMA ON SCHEMA {catalog}.{schema} TO `{grant_to}`",
             ]:
                 try:
                     w.statement_execution.execute_statement(
-                        warehouse_id=wh_id, statement=sql, wait_timeout="50s",
+                        warehouse_id=wh_id,
+                        statement=sql,
+                        wait_timeout="50s",
                     )
                 except Exception as ge:
                     logger.warning("Grant failed: %s — %s", sql, ge)
@@ -1196,7 +1401,8 @@ async def provision_metrics_table(
             results.append({"resource": f"Grants on '{fqn}' to {grant_to}", "status": "created"})
 
     except Exception as exc:
-        results.append({"resource": f"Metrics table '{fqn}'", "status": "failed",
-                       "error": str(exc)[:200]})
+        results.append(
+            {"resource": f"Metrics table '{fqn}'", "status": "failed", "error": str(exc)[:200]}
+        )
 
     return results

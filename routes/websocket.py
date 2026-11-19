@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.auth import require_identity
@@ -23,6 +23,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # SSE endpoint (preferred — works through Databricks App proxy)
 # ---------------------------------------------------------------------------
+
 
 @router.get("/api/events")
 async def sse_events(
@@ -46,7 +47,7 @@ async def sse_events(
                 try:
                     data = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"data: {json.dumps(data, default=str)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
             try:
@@ -70,6 +71,7 @@ async def sse_events(
 # WebSocket endpoint (fallback — blocked by Databricks App proxy)
 # ---------------------------------------------------------------------------
 
+
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket, state: AppState = Depends(get_app_state)):
     await ws.accept()
@@ -89,6 +91,7 @@ async def websocket_endpoint(ws: WebSocket, state: AppState = Depends(get_app_st
 # ---------------------------------------------------------------------------
 # SSS threshold-alert ingest endpoint
 # ---------------------------------------------------------------------------
+
 
 @router.post("/api/sss/alerts")
 async def sss_alerts_ingest(request: Request, user_email: str = Depends(require_identity)):
@@ -117,8 +120,7 @@ async def sss_alerts_ingest(request: Request, user_email: str = Depends(require_
     db = state.app_backend_db if state.app_backend_available else None
     transitions = await engine.ingest_threshold_alerts(accepted, db=db)
     payloads = [
-        build_lifecycle_payload(item.event_type, item.alert, item.extra)
-        for item in transitions
+        build_lifecycle_payload(item.event_type, item.alert, item.extra) for item in transitions
     ]
     enqueue_alert_events(state, payloads)
     if transitions:

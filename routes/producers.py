@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
 from models.producer_state import new_producer_state
 from services.producer_service import (
+    poll_producer_state,
     start_data_producer,
     stop_data_producer,
-    poll_producer_state,
 )
 
 logger = logging.getLogger("iot_digital_twin.routes.producers")
@@ -29,7 +29,9 @@ async def producer_status_endpoint(pipeline_id: str, state: AppState = Depends(g
 
 
 @router.post("/api/pipelines/{pipeline_id}/producer/start")
-async def producer_start_endpoint(pipeline_id: str, request: Request, state: AppState = Depends(get_app_state)):
+async def producer_start_endpoint(
+    pipeline_id: str, request: Request, state: AppState = Depends(get_app_state)
+):
     """Submit a serverless data producer notebook for a pipeline."""
     try:
         body = await request.json()
@@ -52,16 +54,29 @@ async def producer_start_endpoint(pipeline_id: str, request: Request, state: App
                 "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id
             )
             if row:
-                resources = json.loads(row["resources"] or "{}") if isinstance(row["resources"], str) else (row["resources"] or {})
+                resources = (
+                    json.loads(row["resources"] or "{}")
+                    if isinstance(row["resources"], str)
+                    else (row["resources"] or {})
+                )
                 uc_catalog = resources.get("uc_catalog")
                 if uc_catalog:
                     # Metrics are per-mode now (streaming_metrics_<mode>); the legacy
                     # per-pipeline producer is realtime-shaped, so point at that table.
-                    base_parameters["metrics_table"] = f"{uc_catalog}.metrics.streaming_metrics_realtime"
+                    base_parameters["metrics_table"] = (
+                        f"{uc_catalog}.metrics.streaming_metrics_realtime"
+                    )
         except Exception as exc:
             logger.warning("Could not resolve metrics table for pipeline %s: %s", pipeline_id, exc)
 
-    result = await start_data_producer(state.producer_states, pipeline_id, notebook_content, source_type, destination, base_parameters)
+    result = await start_data_producer(
+        state.producer_states,
+        pipeline_id,
+        notebook_content,
+        source_type,
+        destination,
+        base_parameters,
+    )
     status_code = 200 if result.get("running") or result.get("state") == "STARTING" else 500
     return JSONResponse(status_code=status_code, content=result)
 
@@ -77,7 +92,7 @@ async def producer_stop_endpoint(pipeline_id: str, state: AppState = Depends(get
 @router.get("/api/kafka-producer/status")
 async def kafka_producer_status_compat(state: AppState = Depends(get_app_state)):
     """Legacy endpoint — returns the first active producer or IDLE."""
-    for pid, ps in state.producer_states.items():
+    for ps in state.producer_states.values():
         if ps.get("running") or ps.get("state") not in ("IDLE", None):
             return poll_producer_state(ps)
     return new_producer_state()
@@ -97,7 +112,9 @@ async def kafka_producer_start_compat(request: Request, state: AppState = Depend
 
     notebook_content = body.get("notebook", "")
     topic = body.get("topic", "")
-    result = await start_data_producer(state.producer_states, pipeline_id, notebook_content, "kafka", topic)
+    result = await start_data_producer(
+        state.producer_states, pipeline_id, notebook_content, "kafka", topic
+    )
     status_code = 200 if result.get("running") or result.get("state") == "STARTING" else 500
     return JSONResponse(status_code=status_code, content=result)
 

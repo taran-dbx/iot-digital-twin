@@ -78,9 +78,7 @@ def load_profile(name: str, profiles_dir: Path = DEFAULT_PROFILES_DIR) -> dict[s
 
     missing = [key for key in REQUIRED_PROFILE_KEYS if key not in raw]
     if missing:
-        raise ProfileError(
-            f"profile {name!r} missing required key(s): {', '.join(missing)}"
-        )
+        raise ProfileError(f"profile {name!r} missing required key(s): {', '.join(missing)}")
 
     profile: dict[str, str] = {}
     for key in REQUIRED_PROFILE_KEYS:

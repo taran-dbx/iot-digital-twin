@@ -33,7 +33,9 @@ def connectivity_probe(bootstrap_public: str, bootstrap_private: str) -> str:
     Passes when the **public ``:9198``** endpoint is reachable (the private
     ``:9098`` is expected to time out on this workspace — no VPC peering, §1.7).
     """
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 import urllib.request
 def _probe(bs):
     host, _, port = bs.partition(":")
@@ -66,7 +68,8 @@ if pub.get("tcp"):
     _ok(public=pub, private=prv, egress_ip=egress)
 else:
     _fail("public bootstrap :9198 unreachable", public=pub, private=prv, egress_ip=egress)
-'''
+"""
+    )
 
 
 def topic_create(
@@ -81,7 +84,9 @@ def topic_create(
     ``kafka.net.sasl.oauth.AbstractTokenProvider`` (kafka-python 3.x) and the UC
     service credential ``iot-rtm-sc``.  Idempotent (existing topics are skipped).
     """
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     import os
     from kafka.admin import KafkaAdminClient, NewTopic
@@ -130,7 +135,8 @@ try:
         _ok(created=created, existed=existed)
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )
 
 
 def rtm_produce(
@@ -152,7 +158,9 @@ def rtm_produce(
     before the SASL handshake).  AWS creds come from
     ``getServiceCredentialsProvider(...).get_credentials().get_frozen_credentials()``.
     """
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     import os, time, random
     from kafka import KafkaProducer
@@ -207,7 +215,8 @@ try:
     _ok(topic={topic!r}, produced=sent, min_ts=_min_ts)
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )
 
 
 def rtm_write_test(
@@ -250,7 +259,9 @@ def rtm_write_test(
         Databricks-only latency percentiles land in the managed metrics table;
       * ``.outputMode("update").trigger(realTime=...)`` — the RTM shape.
     """
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     import os, time as _t
     import queue as _queue, threading as _threading
@@ -499,7 +510,8 @@ try:
         metrics_written=_mwritten, recent_progress=_nprog, metrics_flush_error=_mflush_err)
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )
 
 
 def _metrics_listener_code(
@@ -520,7 +532,7 @@ def _metrics_listener_code(
     (no remaining ``{{}}`` placeholders) so callers must CONCATENATE it — never
     embed it in another f-string.
     """
-    return f'''
+    return f"""
     import json as _json, queue as _queue, threading as _threading
     from datetime import datetime, timezone
     from zerobus.sdk.shared import RecordType, StreamConfigurationOptions, TableProperties
@@ -603,7 +615,7 @@ def _metrics_listener_code(
             pass
     _metrics_listener = BufferedZerobusMetricsListener()
     spark.streams.addListener(_metrics_listener)
-'''
+"""
 
 
 def microbatch_write_test(
@@ -642,13 +654,16 @@ def microbatch_write_test(
             zerobus_client_id,
             zerobus_secret_key,
         )
-    header = _PREAMBLE + '''
+    header = (
+        _PREAMBLE
+        + """
 try:
     from pyspark.sql import functions as F
     from pyspark.sql.types import (StructType, StringType, DoubleType,
                                    BooleanType, MapType)
-'''
-    body = f'''
+"""
+    )
+    body = f"""
     q = (spark.readStream.format("kafka")
          .option("kafka.bootstrap.servers", {bootstrap_public!r})
          .option("subscribe", {topic!r})
@@ -704,7 +719,7 @@ try:
         metrics_written=_mwritten, recent_progress=_nprog, metrics_flush_error=_mflush_err)
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
     return header + listener + body
 
 
@@ -722,7 +737,9 @@ def cdf_verify(
     matching ANY streaming table would let an unrelated pipeline's shadow pass.
     """
     shadow = f"_shadow_{table}"
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     import time as _t
     SHADOW = {shadow!r}
@@ -754,13 +771,16 @@ try:
                   streaming=streaming, advanced=advanced)
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )
 
 
 def remove_path(path: str) -> str:
     """Delete a DBFS/Volumes path (the distinct validation checkpoint) so no
     checkpoint state leaks across validation runs (test-data isolation, §1.13)."""
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     try:
         dbutils.fs.rm({path!r}, True)
@@ -769,7 +789,8 @@ try:
     _ok(removed={path!r})
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )
 
 
 def zerobus_produce(
@@ -781,7 +802,9 @@ def zerobus_produce(
     """Bounded zerobus ingest test (spec §1.10 zerobus): OAuth (**https://** prefix
     gotcha), ``create_stream``, ingest, ``wait_for_ack()``.
     """
-    return _PREAMBLE + f'''
+    return (
+        _PREAMBLE
+        + f"""
 try:
     from databricks.sdk import WorkspaceClient
     # Auth endpoint MUST carry the https:// prefix (known gotcha, §1.10).
@@ -790,4 +813,5 @@ try:
         token_url=token_url, records={num_records})
 except Exception as e:
     _fail(traceback.format_exc())
-'''
+"""
+    )

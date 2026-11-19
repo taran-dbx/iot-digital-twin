@@ -23,7 +23,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -31,24 +31,24 @@ from databricks.sdk.service.compute import (
     AwsAttributes,
     DataSecurityMode,
     EbsVolumeType,
-    Language as CmdLanguage,
     RuntimeEngine,
+)
+from databricks.sdk.service.compute import (
+    Language as CmdLanguage,
 )
 
 from core.workspace_config import get_secret_scope
 from models.metrics_schema import ALL_METRIC_MODES, metrics_table_location
 from models.sensor_schema import delta_table_ddl
+from services import cdf_config_service, health_checks, resource_ledger
 from services import cdf_reconciliation_service as cdf
-from services import cdf_config_service
-from services import health_checks
 from services import industry_catalog_service as cat
 from services import lakets_service as lakets_svc
 from services import pipelines_project_service as pps
-from services import resource_ledger
-from services import zerobus_validation as zbv
 from services import validation_config as vc
 from services import validation_snippets as snip
 from services import validation_state_machine as sm
+from services import zerobus_validation as zbv
 from services.dbsql_service import execute_dbsql
 from services.uc_ident import sql_fqn
 from services.validation_service import StepContext, StepResult, format_executor_error
@@ -92,7 +92,7 @@ _ZEROBUS_READ_POLL_S = 8
 VALIDATION_CLUSTER_LIBRARIES: tuple[str, ...] = (
     "kafka-python>=3",
     "aws-msk-iam-sasl-signer-python",
-    "psycopg2-binary",   # RTM ForeachWriter → Lakebase ChronoTable
+    "psycopg2-binary",  # RTM ForeachWriter → Lakebase ChronoTable
     "databricks-zerobus-ingest-sdk",  # zerobus produce_test (ZerobusSdk ingest)
 )
 
@@ -136,22 +136,15 @@ def _cfg(ctx: StepContext) -> dict:
         "zerobus_secret_key": cat.APP_SP_OAUTH_SECRET,
         "metric_mode": metric_mode,
         "metrics_table_fqn": cat.industry_table(industry, "metrics"),
-        "metrics_table_location": metrics_table_location(
-            catalog, cat._storage_base(), metric_mode
-        ),
+        "metrics_table_location": metrics_table_location(catalog, cat._storage_base(), metric_mode),
         "cdf_shadow_table": cdf.shadow_table_name(industry),
-        "cdf_delta_table": cdf.delta_table_fqn(
-            industry, catalog=catalog, schema=schema
-        ),
+        "cdf_delta_table": cdf.delta_table_fqn(industry, catalog=catalog, schema=schema),
     }
 
 
 def _checkpoint(catalog: str, schema: str, industry: str, mode: str) -> str:
     """Distinct validation checkpoint in the shared workspace volume (§G4/G10)."""
-    return (
-        f"/Volumes/{catalog}/{schema}/{cat.CHECKPOINT_VOLUME}"
-        f"/{industry}/validation/{mode}"
-    )
+    return f"/Volumes/{catalog}/{schema}/{cat.CHECKPOINT_VOLUME}/{industry}/validation/{mode}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +166,7 @@ def _get_or_create_context(ws: Any, cluster_id: str) -> str:
     ctx_id = _CONTEXT_CACHE.get(cluster_id)
     if ctx_id:
         return ctx_id
-    ctx = ws.command_execution.create(
-        cluster_id=cluster_id, language=CmdLanguage.PYTHON
-    ).result()
+    ctx = ws.command_execution.create(cluster_id=cluster_id, language=CmdLanguage.PYTHON).result()
     _CONTEXT_CACHE[cluster_id] = ctx.id
     # A fresh context gets its OWN ephemeral venv, so (re)install the validation
     # libraries into it. Critically this self-heals a context created AFTER an app
@@ -184,7 +175,8 @@ def _get_or_create_context(ws: Any, cluster_id: str) -> str:
     # (pip -q); best-effort so a hiccup here never blocks context creation.
     try:
         ws.command_execution.execute(
-            cluster_id=cluster_id, context_id=ctx.id,
+            cluster_id=cluster_id,
+            context_id=ctx.id,
             language=CmdLanguage.PYTHON,
             command=_pip_install_code(VALIDATION_CLUSTER_LIBRARIES),
         ).result(timeout=timedelta(seconds=_LIB_WAIT_S))
@@ -197,16 +189,20 @@ def _run_python_sync(ws: Any, cluster_id: str, code: str, timeout_s: int) -> dic
     context_id = _get_or_create_context(ws, cluster_id)
     try:
         result = ws.command_execution.execute(
-            cluster_id=cluster_id, context_id=context_id,
-            language=CmdLanguage.PYTHON, command=code,
+            cluster_id=cluster_id,
+            context_id=context_id,
+            language=CmdLanguage.PYTHON,
+            command=code,
         ).result(timeout=timedelta(seconds=timeout_s))
     except Exception:
         # Context may have expired — recreate once and retry.
         _CONTEXT_CACHE.pop(cluster_id, None)
         context_id = _get_or_create_context(ws, cluster_id)
         result = ws.command_execution.execute(
-            cluster_id=cluster_id, context_id=context_id,
-            language=CmdLanguage.PYTHON, command=code,
+            cluster_id=cluster_id,
+            context_id=context_id,
+            language=CmdLanguage.PYTHON,
+            command=code,
         ).result(timeout=timedelta(seconds=timeout_s))
     status = result.status.value if result.status else "UNKNOWN"
     output = ""
@@ -217,9 +213,7 @@ def _run_python_sync(ws: Any, cluster_id: str, code: str, timeout_s: int) -> dic
     return {"status": status, "output": str(output), "cause": cause}
 
 
-async def _run_on_cluster(
-    ctx: StepContext, code: str, *, timeout_s: int = 300
-) -> StepResult:
+async def _run_on_cluster(ctx: StepContext, code: str, *, timeout_s: int = 300) -> StepResult:
     """Ship ``code`` to the validation cluster; pass on the OK sentinel."""
     cluster_id = (ctx.state or {}).get("cluster_id")
     if not cluster_id:
@@ -239,17 +233,13 @@ async def _run_on_cluster(
 def _extract_fail(output: str) -> str | None:
     for line in (output or "").splitlines():
         if line.startswith(snip.FAIL_SENTINEL):
-            payload = line[len(snip.FAIL_SENTINEL):].strip()
+            payload = line[len(snip.FAIL_SENTINEL) :].strip()
             try:
                 decoded = json.loads(payload)
             except (TypeError, ValueError):
                 return payload
             if isinstance(decoded, dict) and decoded.get("error"):
-                extras = {
-                    key: value
-                    for key, value in decoded.items()
-                    if key != "error"
-                }
+                extras = {key: value for key, value in decoded.items() if key != "error"}
                 if extras:
                     prefix = "\ndetails: "
                     details = _compact_error(
@@ -282,7 +272,7 @@ def _ok_payload(output: str) -> dict:
     for line in (output or "").splitlines():
         if line.startswith(snip.OK_SENTINEL):
             try:
-                return json.loads(line[len(snip.OK_SENTINEL):].strip())
+                return json.loads(line[len(snip.OK_SENTINEL) :].strip())
             except Exception:  # malformed / truncated payload → no fields
                 return {}
     return {}
@@ -334,7 +324,8 @@ def _latest_lts_spark_version(ws: Any) -> str:
     except Exception as exc:  # pragma: no cover - defensive fallback
         logger.warning(
             "latest LTS spark-version lookup failed; using pinned %s: %s",
-            vc.VALIDATION_DBR, exc,
+            vc.VALIDATION_DBR,
+            exc,
         )
     return vc.VALIDATION_DBR
 
@@ -425,8 +416,7 @@ async def provision_cluster(ctx: StepContext) -> StepResult:
     except Exception:
         await _terminate_cluster(ws, cluster_id)
         raise
-    return StepResult(sm.PASSED, data={"cluster_id": cluster_id,
-                                       "worker_sizing": sizing})
+    return StepResult(sm.PASSED, data={"cluster_id": cluster_id, "worker_sizing": sizing})
 
 
 def _pip_install_code(packages: tuple[str, ...]) -> str:
@@ -449,9 +439,7 @@ else:
 '''
 
 
-async def _install_cluster_libraries(
-    ws: Any, cluster_id: str, packages: tuple[str, ...]
-) -> None:
+async def _install_cluster_libraries(ws: Any, cluster_id: str, packages: tuple[str, ...]) -> None:
     """Ensure PyPI ``packages`` are importable on ``cluster_id``.
 
     The cluster-scoped ``libraries.install`` API is a no-op on some
@@ -503,10 +491,13 @@ async def schema_conformance(ctx: StepContext) -> StepResult:
 async def partitions_precreate(ctx: StepContext) -> StepResult:
     # 24h / 96-chunk forward window ensured + Partition Manager one-shot; hard
     # gate on partitions covering [now, now+horizon] (§1.10.1 / Approach A).
-    return StepResult(sm.PASSED, data={
-        "horizon_hours": vc.PARTITION_HORIZON_HOURS,
-        "chunks": vc.PARTITION_CHUNK_COUNT,
-    })
+    return StepResult(
+        sm.PASSED,
+        data={
+            "horizon_hours": vc.PARTITION_HORIZON_HOURS,
+            "chunks": vc.PARTITION_CHUNK_COUNT,
+        },
+    )
 
 
 async def _run_write_test(ctx: StepContext, code: str) -> StepResult:
@@ -518,21 +509,20 @@ async def _run_write_test(ctx: StepContext, code: str) -> StepResult:
     p = _ok_payload((result.data or {}).get("output", ""))
     logger.info(
         "write_test[%s] status=%s metrics_written=%s recent_progress=%s flush_error=%s",
-        ctx.mode, result.status, p.get("metrics_written"),
-        p.get("recent_progress"), p.get("metrics_flush_error"),
+        ctx.mode,
+        result.status,
+        p.get("metrics_written"),
+        p.get("recent_progress"),
+        p.get("metrics_flush_error"),
     )
     if (
         result.status == sm.PASSED
         and p
         and ctx.mode in {"realtime", "microbatch"}
-        and (
-            int(p.get("metrics_written") or 0) <= 0
-            or bool(p.get("metrics_flush_error"))
-        )
+        and (int(p.get("metrics_written") or 0) <= 0 or bool(p.get("metrics_flush_error")))
     ):
         detail = p.get("metrics_flush_error") or (
-            f"no streaming progress was captured (recent_progress="
-            f"{p.get('recent_progress', 0)})"
+            f"no streaming progress was captured (recent_progress={p.get('recent_progress', 0)})"
         )
         return StepResult(sm.FAILED, error=f"metrics flush failed: {detail}")
     return result
@@ -552,7 +542,11 @@ async def write_test(ctx: StepContext) -> StepResult:
         # The managed metrics table is shared; the listener tags these rows as
         # microbatch.
         code = snip.microbatch_write_test(
-            topic, cfg["bootstrap"], cfg["service_credential"], delta, checkpoint,
+            topic,
+            cfg["bootstrap"],
+            cfg["service_credential"],
+            delta,
+            checkpoint,
             metrics_table_fqn=cfg["metrics_table_fqn"],
             metrics_table_location=cfg["metrics_table_location"],
             region=cfg["region"],
@@ -573,7 +567,10 @@ async def write_test(ctx: StepContext) -> StepResult:
     produce = await _run_on_cluster(
         ctx,
         snip.rtm_produce(
-            topic, cfg["bootstrap"], cfg["region"], cfg["service_credential"],
+            topic,
+            cfg["bootstrap"],
+            cfg["region"],
+            cfg["service_credential"],
             num_records=100,
             source=VALIDATION_SOURCE,
             industry=cfg["industry"],
@@ -596,18 +593,25 @@ async def write_test(ctx: StepContext) -> StepResult:
     # inject host/user/token as literals into the ForeachWriter snippet.
     pg_host, pg_user, pg_token = _resolve_lakebase_write_conn(ctx, cfg["branch"])
     code = snip.rtm_write_test(
-        topic, cfg["bootstrap"], cfg["service_credential"],
-        project_id=cfg["project_id"], branch=cfg["branch"],
-        pg_database=pps.PG_DATABASE, table=RTM_TABLE,
+        topic,
+        cfg["bootstrap"],
+        cfg["service_credential"],
+        project_id=cfg["project_id"],
+        branch=cfg["branch"],
+        pg_database=pps.PG_DATABASE,
+        table=RTM_TABLE,
         checkpoint_path=checkpoint,
         metrics_table_fqn=cfg["metrics_table_fqn"],
         metrics_table_location=cfg["metrics_table_location"],
-        pg_host=pg_host, pg_user=pg_user, pg_token=pg_token,
+        pg_host=pg_host,
+        pg_user=pg_user,
+        pg_token=pg_token,
         zerobus_endpoint=cfg["zerobus_endpoint"],
         workspace_url=cfg["workspace_url"],
         zerobus_client_id=cfg["zerobus_client_id"],
         zerobus_secret_key=cfg["zerobus_secret_key"],
-        region=cfg["region"], source=VALIDATION_SOURCE,
+        region=cfg["region"],
+        source=VALIDATION_SOURCE,
         min_event_epoch=min_event_epoch,
     )
     return await _run_write_test(ctx, code)
@@ -672,9 +676,7 @@ async def cdf_manual(ctx: StepContext) -> StepResult:
             ws=ctx.ws,
         )
     except Exception as exc:
-        return StepResult(
-            sm.FAILED, error=f"CDF config enablement failed: {str(exc)[:300]}"
-        )
+        return StepResult(sm.FAILED, error=f"CDF config enablement failed: {str(exc)[:300]}")
 
     setup_id = ctx.setup.get("id")
     if ctx.db is not None and setup_id is not None:
@@ -690,9 +692,7 @@ async def cdf_manual(ctx: StepContext) -> StepResult:
                     setup_id=setup_id,
                     resource_type="cdf_sync",
                     identifier=cdf_result["name"],
-                    parent_ref=pps.branch_resource_name(
-                        cfg["branch"], cfg["project_id"]
-                    ),
+                    parent_ref=pps.branch_resource_name(cfg["branch"], cfg["project_id"]),
                     teardown_order=cdf_config_service.TEARDOWN_ORDER,
                     metadata={
                         "parent": parent,
@@ -707,9 +707,7 @@ async def cdf_manual(ctx: StepContext) -> StepResult:
                             cdf_config_service.DEFAULT_POSTGRES_SCHEMA,
                         ),
                         "database": pps.PG_DATABASE,
-                        "source_table": (
-                            f"{cdf.CDF_SHADOW_SCHEMA}.{cfg['cdf_shadow_table']}"
-                        ),
+                        "source_table": (f"{cdf.CDF_SHADOW_SCHEMA}.{cfg['cdf_shadow_table']}"),
                         "delta_table": cfg["cdf_delta_table"],
                         "force_delete_tables": False,
                     },
@@ -720,13 +718,16 @@ async def cdf_manual(ctx: StepContext) -> StepResult:
                 error=f"CDF config ledger recording failed: {str(exc)[:300]}",
             )
 
-    return StepResult(sm.PASSED, data={
-        "note": "managed CDF sync enabled through the Postgres API",
-        "shadow_table": f"lakets_cdf.{cfg['cdf_shadow_table']}",
-        "cdf_shadow": shadow_status,
-        "cdf_config": cdf_result.get("name"),
-        "cdf_config_status": cdf_result.get("status"),
-    })
+    return StepResult(
+        sm.PASSED,
+        data={
+            "note": "managed CDF sync enabled through the Postgres API",
+            "shadow_table": f"lakets_cdf.{cfg['cdf_shadow_table']}",
+            "cdf_shadow": shadow_status,
+            "cdf_config": cdf_result.get("name"),
+            "cdf_config_status": cdf_result.get("status"),
+        },
+    )
 
 
 async def cdf_verify(ctx: StepContext) -> StepResult:
@@ -738,9 +739,7 @@ async def cdf_verify(ctx: StepContext) -> StepResult:
     conn = None
     try:
         conn = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
-        result = await health_checks.check_cdf_sync(
-            conn, shadow=cfg["cdf_shadow_table"]
-        )
+        result = await health_checks.check_cdf_sync(conn, shadow=cfg["cdf_shadow_table"])
     except Exception as exc:
         return StepResult(sm.FAILED, error=f"cdf verify failed: {str(exc)[:300]}")
     finally:
@@ -761,14 +760,14 @@ def _read_back_window(ctx: StepContext) -> tuple[datetime, datetime]:
     finds those rows without scanning later live partitions. Fall back to a
     short lookback from now when that stamp is missing.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     key = sm.step_key(ctx.mode, "write_test") if ctx.mode else "write_test"
     raw = ((ctx.state or {}).get("steps") or {}).get(key, {}).get("updated_at")
     if raw:
         try:
             stamped = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
             if stamped.tzinfo is None:
-                stamped = stamped.replace(tzinfo=timezone.utc)
+                stamped = stamped.replace(tzinfo=UTC)
             return (
                 stamped - _WRITE_TEST_WINDOW_BEFORE,
                 stamped + _WRITE_TEST_WINDOW_AFTER,
@@ -778,9 +777,7 @@ def _read_back_window(ctx: StepContext) -> tuple[datetime, datetime]:
     return now - _FALLBACK_LOOKBACK, now + timedelta(minutes=1)
 
 
-async def _validation_row_exists(
-    conn: Any, industry: str, start: datetime, end: datetime
-) -> bool:
+async def _validation_row_exists(conn: Any, industry: str, start: datetime, end: datetime) -> bool:
     """Return whether one validation row is visible in ``[start, end)``.
 
     ChronoTables also hold unbounded live SSS traffic. A full-table COUNT(*)
@@ -817,9 +814,7 @@ async def read_back(ctx: StepContext) -> StepResult:
     primary = None
     try:
         primary = await pps.get_write_conn(cfg["branch"], ws=ctx.ws)
-        found_primary = await _validation_row_exists(
-            primary, cfg["industry"], start, end
-        )
+        found_primary = await _validation_row_exists(primary, cfg["industry"], start, end)
     except Exception as exc:
         return StepResult(
             sm.FAILED,
@@ -840,9 +835,7 @@ async def read_back(ctx: StepContext) -> StepResult:
     replica = None
     try:
         replica = await pps.get_read_conn(cfg["branch"], ws=ctx.ws)
-        found_replica = await _validation_row_exists(
-            replica, cfg["industry"], start, end
-        )
+        found_replica = await _validation_row_exists(replica, cfg["industry"], start, end)
     except Exception as exc:  # replica lag / transient — non-fatal
         logger.info(
             "read_back replica read failed (non-fatal): %s",
@@ -873,10 +866,7 @@ async def dbsql_read(ctx: StepContext) -> StepResult:
     sql_table = sql_fqn(*table.split("."))
     sql = f"SELECT count(*) AS n FROM {sql_table}"
     if ctx.mode == "realtime":
-        sql += (
-            f" WHERE industry = '{cfg['industry']}'"
-            f" AND source = '{VALIDATION_SOURCE}'"
-        )
+        sql += f" WHERE industry = '{cfg['industry']}' AND source = '{VALIDATION_SOURCE}'"
 
     if ctx.mode == "zerobus":
         # Bounded poll to absorb the Zerobus ingest→commit lag (see
@@ -1006,12 +996,16 @@ async def auth_probe(ctx: StepContext) -> StepResult:
     if not server_endpoint:
         return StepResult(sm.FAILED, error="ZEROBUS_SERVER_ENDPOINT not configured")
     ok, detail = await asyncio.to_thread(
-        zbv.auth_probe, workspace_url, server_endpoint, table_fqn,
+        zbv.auth_probe,
+        workspace_url,
+        server_endpoint,
+        table_fqn,
         secret_scope=get_secret_scope(),
         secret_key=os.getenv("ZEROBUS_SECRET_KEY", "zerobus-client-secret"),
     )
-    return StepResult(sm.PASSED if ok else sm.FAILED,
-                      error=None if ok else str(detail)[:400], data=detail)
+    return StepResult(
+        sm.PASSED if ok else sm.FAILED, error=None if ok else str(detail)[:400], data=detail
+    )
 
 
 async def produce_test(ctx: StepContext) -> StepResult:

@@ -29,10 +29,13 @@ class TestDeployRetentionJob:
 
     def test_creates_job_when_none_exists(self) -> None:
         w = _fake_workspace_client()
-        with patch("databricks.sdk.WorkspaceClient", return_value=w), patch.object(
-            lakets_deploy_service,
-            "_notebook_source_bytes",
-            return_value=b"# Databricks notebook source\nprint('hi')\n",
+        with (
+            patch("databricks.sdk.WorkspaceClient", return_value=w),
+            patch.object(
+                lakets_deploy_service,
+                "_notebook_source_bytes",
+                return_value=b"# Databricks notebook source\nprint('hi')\n",
+            ),
         ):
             result = lakets_deploy_service.deploy_retention_job(
                 project_id="iot-lakets-demo",
@@ -56,10 +59,13 @@ class TestDeployRetentionJob:
         existing.settings.name = "LakeTS Retention — iot-lakets-demo/production"
         w.jobs.list.return_value = [existing]
 
-        with patch("databricks.sdk.WorkspaceClient", return_value=w), patch.object(
-            lakets_deploy_service,
-            "_notebook_source_bytes",
-            return_value=b"# body\n",
+        with (
+            patch("databricks.sdk.WorkspaceClient", return_value=w),
+            patch.object(
+                lakets_deploy_service,
+                "_notebook_source_bytes",
+                return_value=b"# body\n",
+            ),
         ):
             result = lakets_deploy_service.deploy_retention_job(
                 project_id="iot-lakets-demo",
@@ -72,10 +78,13 @@ class TestDeployRetentionJob:
 
     def test_passes_params_to_notebook_task(self) -> None:
         w = _fake_workspace_client()
-        with patch("databricks.sdk.WorkspaceClient", return_value=w), patch.object(
-            lakets_deploy_service,
-            "_notebook_source_bytes",
-            return_value=b"# body\n",
+        with (
+            patch("databricks.sdk.WorkspaceClient", return_value=w),
+            patch.object(
+                lakets_deploy_service,
+                "_notebook_source_bytes",
+                return_value=b"# body\n",
+            ),
         ):
             lakets_deploy_service.deploy_retention_job(
                 project_id="my-proj",
@@ -160,9 +169,7 @@ class TestDeployRollupRefreshJob:
 
     def test_creates_job_when_none_exists(self) -> None:
         w = _ops_workspace_client()
-        result = lakets_deploy_service.deploy_rollup_refresh_job(
-            w, "iot-lakets-demo", "production"
-        )
+        result = lakets_deploy_service.deploy_rollup_refresh_job(w, "iot-lakets-demo", "production")
 
         assert result["job_id"] == 7
         assert result["status"] == "created"
@@ -178,9 +185,7 @@ class TestDeployRollupRefreshJob:
         name = "LakeTS Rollup Refresh — iot-lakets-demo/production"
         w.jobs.list.return_value = [_existing_job(name, 88)]
 
-        result = lakets_deploy_service.deploy_rollup_refresh_job(
-            w, "iot-lakets-demo", "production"
-        )
+        result = lakets_deploy_service.deploy_rollup_refresh_job(w, "iot-lakets-demo", "production")
 
         assert result["job_id"] == 88
         assert result["status"] == "updated"
@@ -196,9 +201,7 @@ class TestDeployTieringJob:
 
     def test_creates_job_when_none_exists(self) -> None:
         w = _ops_workspace_client()
-        result = lakets_deploy_service.deploy_tiering_job(
-            w, "iot-lakets-demo", "production"
-        )
+        result = lakets_deploy_service.deploy_tiering_job(w, "iot-lakets-demo", "production")
 
         assert result["job_id"] == 7
         assert result["status"] == "created"
@@ -216,9 +219,7 @@ class TestDeployTieringJob:
         name = "LakeTS Tiering — iot-lakets-demo/production"
         w.jobs.list.return_value = [_existing_job(name, 77)]
 
-        result = lakets_deploy_service.deploy_tiering_job(
-            w, "iot-lakets-demo", "production"
-        )
+        result = lakets_deploy_service.deploy_tiering_job(w, "iot-lakets-demo", "production")
 
         assert result["job_id"] == 77
         assert result["status"] == "updated"
@@ -294,9 +295,7 @@ class TestDeployLakeTSOpsJobs:
 
     def test_respects_flags(self) -> None:
         w = _ops_workspace_client()
-        with patch.object(
-            lakets_deploy_service, "deploy_retention_job"
-        ) as mock_ret:
+        with patch.object(lakets_deploy_service, "deploy_retention_job") as mock_ret:
             results = lakets_deploy_service.deploy_lakets_ops_jobs(
                 w,
                 "iot-lakets-demo",
@@ -308,9 +307,7 @@ class TestDeployLakeTSOpsJobs:
             )
 
         assert len(results) == 1
-        assert results[0]["job"] == (
-            "LakeTS Partition Manager — iot-lakets-demo/production"
-        )
+        assert results[0]["job"] == ("LakeTS Partition Manager — iot-lakets-demo/production")
         mock_ret.assert_not_called()
 
     def test_only_rollup(self) -> None:
@@ -346,9 +343,7 @@ def test_all_lakets_notebooks_retry_postgres_recovery_with_backoff() -> None:
         assert "BACKOFF_MAX_S = 30.0" in text
         assert "def connect_with_backoff():" in text
         assert "def run_with_backoff(sql, params=None, fetch=None):" in text
-        operation_retry = text.split(
-            "def run_with_backoff(sql, params=None, fetch=None):", 1
-        )[1]
+        operation_retry = text.split("def run_with_backoff(sql, params=None, fetch=None):", 1)[1]
         assert "conn = connect_once()" in operation_retry
         assert "conn = connect_with_backoff()" not in operation_retry
         assert "time.sleep(delay)" in text

@@ -18,9 +18,10 @@ import io
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
@@ -49,7 +50,7 @@ def control_file_path(workspace_dir: str, industry: str) -> str:
 
 
 def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _assets(raw: Any) -> tuple[str, ...]:
@@ -98,7 +99,7 @@ def _running_since_boot(industry: str) -> dict[str, Any]:
 
 def _row_to_change(row: Any, *, id_key: str = "id", at_key: str = "created_at") -> ProductionChange:
     return ProductionChange(
-        id=str(row[id_key]) if id_key in row.keys() else "",
+        id=str(row[id_key]) if id_key in row else "",
         industry=str(row["industry"]),
         state=str(row["state"]),
         assets=_assets(row["assets"]),
@@ -123,7 +124,7 @@ class ProductionControl:
     def __init__(
         self,
         workspace_factory: Callable[[], Any] = WorkspaceClient,
-        now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._workspace_factory = workspace_factory
         self._now = now_fn

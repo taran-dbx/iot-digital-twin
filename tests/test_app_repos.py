@@ -115,9 +115,7 @@ async def test_create_list_deployment(schema_ready) -> None:
     deps = await deployment_repo.list_deployments(db, setup["id"])
     assert {d["mode"] for d in deps} == {"realtime", "microbatch"}
 
-    by_mode = await deployment_repo.get_deployment_by_mode(
-        db, setup["id"], "realtime"
-    )
+    by_mode = await deployment_repo.get_deployment_by_mode(db, setup["id"], "realtime")
     assert by_mode["id"] == dep["id"]
 
 
@@ -126,17 +124,13 @@ async def test_deployment_unique_setup_mode(schema_ready) -> None:
     setup = await pipeline_setup_repo.create_setup(db, industry="energy")
     await deployment_repo.create_deployment(db, setup_id=setup["id"], mode="realtime")
     with pytest.raises(asyncpg.UniqueViolationError):
-        await deployment_repo.create_deployment(
-            db, setup_id=setup["id"], mode="realtime"
-        )
+        await deployment_repo.create_deployment(db, setup_id=setup["id"], mode="realtime")
 
 
 async def test_update_deployment(schema_ready) -> None:
     db = schema_ready
     setup = await pipeline_setup_repo.create_setup(db, industry="mining")
-    dep = await deployment_repo.create_deployment(
-        db, setup_id=setup["id"], mode="zerobus"
-    )
+    dep = await deployment_repo.create_deployment(db, setup_id=setup["id"], mode="zerobus")
     updated = await deployment_repo.update_deployment(
         db, dep["id"], status="deployed", job_id="job-99"
     )
@@ -150,9 +144,7 @@ async def test_update_deployment(schema_ready) -> None:
 async def test_record_and_list_resources(schema_ready) -> None:
     db = schema_ready
     setup = await pipeline_setup_repo.create_setup(db, industry="pharmaceutical")
-    dep = await deployment_repo.create_deployment(
-        db, setup_id=setup["id"], mode="realtime"
-    )
+    dep = await deployment_repo.create_deployment(db, setup_id=setup["id"], mode="realtime")
 
     await resource_ledger.record_resource(
         db,
@@ -210,11 +202,7 @@ async def test_update_resource_refreshes_cdf_binding_c7253() -> None:
         return_value={
             "id": "r1",
             "deployment_id": "d1",
-            "metadata": {
-                "source_table": (
-                    "lakets_cdf._shadow_manufacturing_sensor_readings"
-                )
-            },
+            "metadata": {"source_table": ("lakets_cdf._shadow_manufacturing_sensor_readings")},
         }
     )
 
@@ -222,9 +210,7 @@ async def test_update_resource_refreshes_cdf_binding_c7253() -> None:
         db,
         "r1",
         deployment_id="d1",
-        metadata={
-            "source_table": "lakets_cdf._shadow_manufacturing_sensor_readings"
-        },
+        metadata={"source_table": "lakets_cdf._shadow_manufacturing_sensor_readings"},
     )
 
     query = db.fetchrow.await_args.args[0]
@@ -232,6 +218,4 @@ async def test_update_resource_refreshes_cdf_binding_c7253() -> None:
     assert "deployment_id" in query
     assert "metadata" in query
     assert "updated_at" not in query
-    assert updated["metadata"]["source_table"].endswith(
-        "_shadow_manufacturing_sensor_readings"
-    )
+    assert updated["metadata"]["source_table"].endswith("_shadow_manufacturing_sensor_readings")

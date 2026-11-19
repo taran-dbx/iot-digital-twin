@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 
 
@@ -94,15 +93,18 @@ class TestAppDefaultsEndpoint:
         assert expected_keys.issubset(body.keys())
 
     @pytest.mark.asyncio
-    @patch.dict("os.environ", {
-        "ZEROBUS_SERVER_ENDPOINT": "https://zb.example.com",
-        "ZEROBUS_CLIENT_ID": "legacy-zb-client",
-        "ZEROBUS_CLIENT_SECRET": "legacy-zb-secret",
-        "DATABRICKS_CLIENT_ID": "app-client-123",
-        "DATABRICKS_CLIENT_SECRET": "app-secret-456",
-        "DATABRICKS_HOST": "https://adb-999.azuredatabricks.net",
-        "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-123",
-    })
+    @patch.dict(
+        "os.environ",
+        {
+            "ZEROBUS_SERVER_ENDPOINT": "https://zb.example.com",
+            "ZEROBUS_CLIENT_ID": "legacy-zb-client",
+            "ZEROBUS_CLIENT_SECRET": "legacy-zb-secret",
+            "DATABRICKS_CLIENT_ID": "app-client-123",
+            "DATABRICKS_CLIENT_SECRET": "app-secret-456",
+            "DATABRICKS_HOST": "https://adb-999.azuredatabricks.net",
+            "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-123",
+        },
+    )
     async def test_returns_env_values(self, test_client: AsyncClient) -> None:
         """[C7256][defect][regression] Zerobus uses one matching app-SP OAuth pair."""
         resp = await test_client.get("/api/app-defaults")

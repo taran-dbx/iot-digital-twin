@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 CLIENT = ROOT / "client" / "src"
 DIST = ROOT / "static" / "dist"
@@ -58,10 +57,10 @@ def test_copilot_is_investigation_drawer_c7505_usability() -> None:
     """[C7505][usability] Copilot is a right-side drawer, not a floating bubble."""
     component = _read("components", "dashboard", "genie-copilot.tsx")
     css = _read("styles", "dubois.css")
-    assert "data-testid=\"genie-copilot\"" in component
-    assert "data-testid=\"genie-copilot-drawer\"" in component
-    assert "data-testid=\"genie-explain-alert\"" in component or "Explain this alert" in component
-    assert "data-testid=\"genie-copilot-transcript\"" in component
+    assert 'data-testid="genie-copilot"' in component
+    assert 'data-testid="genie-copilot-drawer"' in component
+    assert 'data-testid="genie-explain-alert"' in component or "Explain this alert" in component
+    assert 'data-testid="genie-copilot-transcript"' in component
     assert "floating" not in component.lower()
     assert "chat-bubble" not in component.lower()
     assert "genie-drawer" in css
@@ -83,7 +82,10 @@ def test_disabled_genie_copy_is_operator_facing_c7509_usability() -> None:
     component = _read("components", "dashboard", "genie-copilot.tsx")
     assert "Genie isn’t connected" in component or "Genie isn't connected" in component
     assert "Ask an admin to attach a Genie space" in component
-    assert 'return "Genie isn’t connected' in component or "return \"Genie isn't connected" in component
+    assert (
+        'return "Genie isn’t connected' in component
+        or "return \"Genie isn't connected" in component
+    )
     css = _read("styles", "dubois.css")
     assert "text-overflow:ellipsis" in css.replace(" ", "") or "text-overflow: ellipsis" in css
 

@@ -18,7 +18,6 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
-
 WORKSPACE_ID = 1234567890123456
 
 
@@ -36,6 +35,7 @@ def _state_no_existing_catalog() -> AppState:
     Forces ``provision_pipeline_catalog`` past its idempotent early-return so
     catalog creation (and the subsequent workspace binding) actually runs.
     """
+
     async def _fetchrow(query: str, *args, **kwargs):
         # The route issues two distinct fetchrow queries: the pipeline
         # resources lookup (idempotency guard) and the user_settings lookup.
@@ -70,7 +70,7 @@ def _set_state(app: FastAPI, state: AppState) -> None:
     app.state.app_state = state
 
 
-async def _post_provision(app: FastAPI, body: dict) -> "object":
+async def _post_provision(app: FastAPI, body: dict) -> object:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.post("/api/provision/pipeline-catalog", json=body)
@@ -176,9 +176,7 @@ class TestZerobusServicePrincipalGrants:
     """
 
     @pytest.mark.asyncio
-    async def test_grants_use_lowercase_securable_type_and_app_id(
-        self, monkeypatch
-    ) -> None:
+    async def test_grants_use_lowercase_securable_type_and_app_id(self, monkeypatch) -> None:
         from databricks.sdk.service.catalog import Privilege
 
         monkeypatch.setenv("ZEROBUS_CLIENT_ID", ZEROBUS_APP_ID)

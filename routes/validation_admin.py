@@ -52,9 +52,7 @@ def _require_admin(request: Request) -> None:
 def _require_db(state: AppState) -> Any:
     db = getattr(state, "app_backend_db", None)
     if db is None:
-        raise HTTPException(
-            status_code=503, detail="app-backend metadata database is unavailable"
-        )
+        raise HTTPException(status_code=503, detail="app-backend metadata database is unavailable")
     return db
 
 
@@ -67,7 +65,8 @@ def _run_in_background(db: Any, setup: dict) -> None:
         except Exception as exc:  # pragma: no cover - defensive (logged only)
             logger.warning(
                 "background validation run for %s failed: %s",
-                setup.get("industry"), exc,
+                setup.get("industry"),
+                exc,
             )
 
     task = asyncio.create_task(_drive())
@@ -79,9 +78,7 @@ def _run_in_background(db: Any, setup: dict) -> None:
 # POST .../validate/start
 # ---------------------------------------------------------------------------
 @router.post("/api/admin/industries/{industry}/validate/start")
-async def validate_start(
-    industry: str, request: Request, state: AppState = Depends(get_app_state)
-):
+async def validate_start(industry: str, request: Request, state: AppState = Depends(get_app_state)):
     """Initialize a fresh validation state and run the flow in the background."""
     _require_admin(request)
     db = _require_db(state)
@@ -101,9 +98,7 @@ async def validate_start(
 # GET .../validate/state
 # ---------------------------------------------------------------------------
 @router.get("/api/admin/industries/{industry}/validate/state")
-async def validate_state(
-    industry: str, request: Request, state: AppState = Depends(get_app_state)
-):
+async def validate_state(industry: str, request: Request, state: AppState = Depends(get_app_state)):
     """Return the persisted validation state (poll for live progress)."""
     _require_admin(request)
     db = _require_db(state)
@@ -124,7 +119,9 @@ async def validate_state(
 # ---------------------------------------------------------------------------
 @router.post("/api/admin/industries/{industry}/validate/retry/{step}")
 async def validate_retry(
-    industry: str, step: str, request: Request,
+    industry: str,
+    step: str,
+    request: Request,
     state: AppState = Depends(get_app_state),
 ):
     """Reset a failed step + its downstream, then re-run from there (§1.12).
@@ -141,8 +138,7 @@ async def validate_retry(
         code = 404 if "no pipeline setup" in detail else 400
         raise HTTPException(status_code=code, detail=detail) from exc
     _run_in_background(db, setup)
-    return {"industry": industry, "retried": step,
-            "validation_state": setup["validation_state"]}
+    return {"industry": industry, "retried": step, "validation_state": setup["validation_state"]}
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +166,7 @@ async def validate_cdf_enabled(
         code = 404 if "no pipeline setup" in detail else 400
         raise HTTPException(status_code=code, detail=detail) from exc
     _run_in_background(db, setup)
-    return {"industry": industry, "mode": mode,
-            "validation_state": setup["validation_state"]}
+    return {"industry": industry, "mode": mode, "validation_state": setup["validation_state"]}
 
 
 # ---------------------------------------------------------------------------

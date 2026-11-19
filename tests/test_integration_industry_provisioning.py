@@ -63,8 +63,8 @@ async def _catalog_exists(ws, wh, catalog: str) -> bool:
 
 @pytest.mark.asyncio
 async def test_integration_full_provision_and_teardown() -> None:
-    from services import industry_provisioning_service as ips
     from services import industry_catalog_service as ics
+    from services import industry_provisioning_service as ips
     from services import pipelines_project_service as pps
     from services.dbsql_service import execute_dbsql
 
@@ -82,8 +82,12 @@ async def test_integration_full_provision_and_teardown() -> None:
 
     try:
         summary = await ips.provision_industry(
-            INDUSTRY, setup_id=None, ws=ws, warehouse_id=wh,
-            enable_realtime=True, deploy_ops_jobs=False,
+            INDUSTRY,
+            setup_id=None,
+            ws=ws,
+            warehouse_id=wh,
+            enable_realtime=True,
+            deploy_ops_jobs=False,
             lakets_sql_path=_VENDORED_LAKETS,
         )
 
@@ -129,9 +133,7 @@ async def test_integration_full_provision_and_teardown() -> None:
         # Delete the Lakebase branch (removes its primary endpoint); delete the
         # replica first.
         try:
-            ws.postgres.delete_endpoint(
-                name=pps.endpoint_resource_name(INDUSTRY, "replica")
-            )
+            ws.postgres.delete_endpoint(name=pps.endpoint_resource_name(INDUSTRY, "replica"))
         except Exception:
             pass
         try:

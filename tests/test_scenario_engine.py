@@ -114,7 +114,6 @@ class TestScenarioPhases:
             assert wrapped.metadata["asset_id"]
             assert wrapped.industry == industry
 
-
     def test_wrap_records_respects_catalog_cadence_c7312_regression(self) -> None:
         """[C7312][regression] wrap_records emits only sensors that are due on the catalog clock."""
         engine = ScenarioEngine(industry="manufacturing", seed=1, scenario_id="cadence")
@@ -125,10 +124,14 @@ class TestScenarioPhases:
         later = engine.wrap_records([_record(timestamp=10.2, value=47.0)])
         assert len(later) == 1
         assert later[0].value == 47.0
-        counters = engine.cadence_metrics() if hasattr(engine, "cadence_metrics") else {
-            "emitted": getattr(engine, "emitted_count", None),
-            "dropped": getattr(engine, "dropped_count", None),
-        }
+        counters = (
+            engine.cadence_metrics()
+            if hasattr(engine, "cadence_metrics")
+            else {
+                "emitted": getattr(engine, "emitted_count", None),
+                "dropped": getattr(engine, "dropped_count", None),
+            }
+        )
         emitted = counters.get("emitted") if isinstance(counters, dict) else None
         dropped = counters.get("dropped") if isinstance(counters, dict) else None
         assert emitted == 2
@@ -138,7 +141,14 @@ class TestScenarioPhases:
         """[C7302][smoke] Due energy ticks keep industry=energy on the wire."""
         engine = ScenarioEngine(industry="energy", seed=3, scenario_id="grid-sag")
         wrapped = engine.wrap_records(
-            [_record(sensor_name="gt_1_power_output", industry="electric_power", timestamp=0.0, value=80.0)]
+            [
+                _record(
+                    sensor_name="gt_1_power_output",
+                    industry="electric_power",
+                    timestamp=0.0,
+                    value=80.0,
+                )
+            ]
         )
         assert len(wrapped) == 1
         assert wrapped[0].industry == "energy"

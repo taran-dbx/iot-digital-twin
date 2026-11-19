@@ -20,13 +20,15 @@ from services.validation_service import ValidationError
 
 pytestmark = pytest.mark.asyncio
 
-_STATE = {"sequence": ["provision_cluster", "done"],
-          "steps": {"provision_cluster": {"status": "pending"},
-                    "done": {"status": "pending"}}}
+_STATE = {
+    "sequence": ["provision_cluster", "done"],
+    "steps": {"provision_cluster": {"status": "pending"}, "done": {"status": "pending"}},
+}
 
 
 def _build_app(state: AppState):
     from fastapi import FastAPI
+
     from routes.validation_admin import router
 
     app = FastAPI()
@@ -83,9 +85,11 @@ async def test_503_when_db_unavailable(client):
 async def test_start_returns_state_and_schedules_run(client):
     c, monkeypatch = client
     monkeypatch.setattr(
-        validation_service, "prepare_start",
-        AsyncMock(return_value={"id": "s1", "industry": "pharmaceutical",
-                                "validation_state": _STATE}),
+        validation_service,
+        "prepare_start",
+        AsyncMock(
+            return_value={"id": "s1", "industry": "pharmaceutical", "validation_state": _STATE}
+        ),
     )
     resp = await c.post("/api/admin/industries/pharmaceutical/validate/start")
     assert resp.status_code == 200
@@ -97,7 +101,8 @@ async def test_start_returns_state_and_schedules_run(client):
 async def test_start_404_when_no_setup(client):
     c, monkeypatch = client
     monkeypatch.setattr(
-        validation_service, "prepare_start",
+        validation_service,
+        "prepare_start",
         AsyncMock(side_effect=ValidationError("no pipeline setup for 'x'")),
     )
     resp = await c.post("/api/admin/industries/x/validate/start")
@@ -112,10 +117,13 @@ async def test_start_400_when_setup_incomplete(client):
     from services.validation_service import IncompleteSetupError
 
     monkeypatch.setattr(
-        validation_service, "prepare_start",
-        AsyncMock(side_effect=IncompleteSetupError(
-            "complete the source config first — missing: warehouse_id"
-        )),
+        validation_service,
+        "prepare_start",
+        AsyncMock(
+            side_effect=IncompleteSetupError(
+                "complete the source config first — missing: warehouse_id"
+            )
+        ),
     )
     resp = await c.post("/api/admin/industries/automotive/validate/start")
     assert resp.status_code == 400
@@ -137,8 +145,8 @@ async def test_state_404_when_no_setup(client):
     c, monkeypatch = client
     monkeypatch.setattr(validation_service, "get_state", AsyncMock(return_value=None))
     from services import pipeline_setup_repo
-    monkeypatch.setattr(pipeline_setup_repo, "get_setup_by_industry",
-                        AsyncMock(return_value=None))
+
+    monkeypatch.setattr(pipeline_setup_repo, "get_setup_by_industry", AsyncMock(return_value=None))
     resp = await c.get("/api/admin/industries/ghost/validate/state")
     assert resp.status_code == 404
 
@@ -149,13 +157,13 @@ async def test_state_404_when_no_setup(client):
 async def test_retry_accepts_namespaced_step(client):
     c, monkeypatch = client
     monkeypatch.setattr(
-        validation_service, "prepare_retry",
-        AsyncMock(return_value={"id": "s1", "industry": "pharmaceutical",
-                                "validation_state": _STATE}),
+        validation_service,
+        "prepare_retry",
+        AsyncMock(
+            return_value={"id": "s1", "industry": "pharmaceutical", "validation_state": _STATE}
+        ),
     )
-    resp = await c.post(
-        "/api/admin/industries/pharmaceutical/validate/retry/realtime:cdf_verify"
-    )
+    resp = await c.post("/api/admin/industries/pharmaceutical/validate/retry/realtime:cdf_verify")
     assert resp.status_code == 200
     assert resp.json()["retried"] == "realtime:cdf_verify"
 
@@ -163,7 +171,8 @@ async def test_retry_accepts_namespaced_step(client):
 async def test_retry_400_on_unknown_step(client):
     c, monkeypatch = client
     monkeypatch.setattr(
-        validation_service, "prepare_retry",
+        validation_service,
+        "prepare_retry",
         AsyncMock(side_effect=ValidationError("unknown validation step: 'nope'")),
     )
     resp = await c.post("/api/admin/industries/pharmaceutical/validate/retry/nope")
@@ -194,14 +203,18 @@ async def test_cdf_enabled_defaults_realtime(client):
 async def test_can_deploy_returns_gate(client):
     c, monkeypatch = client
     monkeypatch.setattr(
-        validation_service, "can_deploy",
-        AsyncMock(return_value={
-            "can_deploy": True, "data_purged": True, "outstanding": [],
-            "modes": {
-                "microbatch": {"can_deploy": True, "data_purged": True,
-                               "outstanding": []},
-            },
-        }),
+        validation_service,
+        "can_deploy",
+        AsyncMock(
+            return_value={
+                "can_deploy": True,
+                "data_purged": True,
+                "outstanding": [],
+                "modes": {
+                    "microbatch": {"can_deploy": True, "data_purged": True, "outstanding": []},
+                },
+            }
+        ),
     )
     resp = await c.get("/api/admin/industries/pharmaceutical/validate/can-deploy")
     assert resp.status_code == 200

@@ -134,7 +134,9 @@ def _serialize_attachments(attachments: object) -> list[dict[str, Any]]:
         for field in ("text", "query", "attachment_id", "query_result"):
             value = getattr(item, field, None)
             if value is not None:
-                raw[field] = value if isinstance(value, (str, int, float, bool, list, dict)) else str(value)
+                raw[field] = (
+                    value if isinstance(value, (str, int, float, bool, list, dict)) else str(value)
+                )
         if raw:
             out.append(raw)
     return out
@@ -220,7 +222,9 @@ def allowed_uc_tables(industry: str, mode: str) -> list[str]:
     return list(reference_tables().values())
 
 
-def inspect_space_tables(client: Any | None = None, space_id: str | None = None) -> list[str] | None:
+def inspect_space_tables(
+    client: Any | None = None, space_id: str | None = None
+) -> list[str] | None:
     """Best-effort SDK inspection of Genie space table attachments.
 
     Returns None when the SDK cannot list space tables reliably.
@@ -382,7 +386,11 @@ def build_context_pack(
         "industry": industry,
         "mode": mode,
         "asset": (
-            {"asset_id": asset_node.asset_id, "name": asset_node.name, "site_id": asset_node.site_id}
+            {
+                "asset_id": asset_node.asset_id,
+                "name": asset_node.name,
+                "site_id": asset_node.site_id,
+            }
             if asset_node
             else None
         ),
@@ -406,7 +414,9 @@ def build_context_pack(
         },
         "maintenance": maintenance,
         "telemetry_summary": telemetry_summary or [],
-        "allowed_uc_tables": allowed_tables if allowed_tables is not None else allowed_uc_tables(industry, mode),
+        "allowed_uc_tables": allowed_tables
+        if allowed_tables is not None
+        else allowed_uc_tables(industry, mode),
         "capabilities": {
             "can_mutate_alerts": False,
             "can_explain": True,
@@ -574,5 +584,3 @@ def status_payload(client: Any | None = None) -> dict[str, Any]:
         payload["enabled"] = False
         payload["reason"] = allowlist["requirement"]
     return payload
-
-

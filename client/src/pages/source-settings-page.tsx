@@ -482,7 +482,7 @@ export function SourceSettingsPage({ pipelineId, pipelineResources, onValidityCh
     const parallelism = getSourceParallelism();
     const recommended = getRecommendedWorkers(parallelism, nodeType.num_cores);
     setWorkers(recommended);
-  }, [selectedSource, workerNodeType, nodeTypes, getSourceParallelism, getRecommendedWorkers, workersManualOverride]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedSource, workerNodeType, nodeTypes, getSourceParallelism, getRecommendedWorkers, workersManualOverride]);
 
   const recommendedWorkers = useMemo(() => {
     if (!selectedSource || !workerNodeType) return null;

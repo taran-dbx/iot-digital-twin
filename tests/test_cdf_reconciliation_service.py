@@ -79,9 +79,7 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
     setup = {"id": "s1", "industry": "manufacturing"}
     deployment = {"id": "d1", "mode": "realtime"}
 
-    monkeypatch.setattr(
-        cdf.pipeline_setup_repo, "get_setup", AsyncMock(return_value=setup)
-    )
+    monkeypatch.setattr(cdf.pipeline_setup_repo, "get_setup", AsyncMock(return_value=setup))
     monkeypatch.setattr(
         cdf.deployment_repo,
         "get_deployment_by_mode",
@@ -99,6 +97,7 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
         "reconcile_chronotable_shadow",
         AsyncMock(return_value={"status": "migrated"}),
     )
+
     def ensure_config(*_args, **_kwargs):
         assert migration_conn.close.await_count == 1
         return {
@@ -106,9 +105,7 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
             "cdf_config_id": "lakets_cdf",
         }
 
-    monkeypatch.setattr(
-        cdf.cdf_config_service, "ensure_cdf_config", ensure_config
-    )
+    monkeypatch.setattr(cdf.cdf_config_service, "ensure_cdf_config", ensure_config)
     monkeypatch.setattr(cdf, "wait_for_exact_shadow_streaming", AsyncMock())
     monkeypatch.setattr(
         cdf.resource_ledger,
@@ -119,8 +116,7 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
                     "id": "resource-1",
                     "resource_type": "cdf_sync",
                     "identifier": (
-                        "projects/p/branches/manufacturing/databases/d/"
-                        "cdf-configs/lakets_cdf"
+                        "projects/p/branches/manufacturing/databases/d/cdf-configs/lakets_cdf"
                     ),
                     "status": "active",
                 }
@@ -135,12 +131,8 @@ async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypa
     binding = await cdf.reconcile_realtime_cdf(db, "s1")
 
     assert binding["status"] == "streaming"
-    assert binding["shadow_table"] == (
-        "lakets_cdf._shadow_manufacturing_sensor_readings"
-    )
-    assert binding["delta_table"].endswith(
-        ".lb__shadow_manufacturing_sensor_readings_history"
-    )
+    assert binding["shadow_table"] == ("lakets_cdf._shadow_manufacturing_sensor_readings")
+    assert binding["delta_table"].endswith(".lb__shadow_manufacturing_sensor_readings_history")
     record.assert_not_awaited()
     refresh.assert_awaited_once()
     refreshed = refresh.await_args.kwargs
@@ -247,12 +239,8 @@ async def test_explicit_admin_reconcile_endpoint_returns_binding_c7241(monkeypat
         reconcile,
     )
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        response = await client.post(
-            "/api/admin/pipelines/s1/realtime/reconcile-cdf"
-        )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/admin/pipelines/s1/realtime/reconcile-cdf")
 
     assert response.status_code == 200
     assert response.json() == binding

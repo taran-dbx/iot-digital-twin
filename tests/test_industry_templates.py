@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from services.industry_templates import (
     CURATED_INDUSTRIES,
-    MODES,
     get_template,
     mode_config,
 )
@@ -93,9 +92,13 @@ def test_mode_config_flags():
     assert isinstance(realtime_desc, str) and realtime_desc
     assert realtime_desc.startswith("Spark Structured Streaming")
     assert mode_config("realtime") == {
-        "id": "realtime", "name": "Real-time", "to": "Lakebase + LakeTS",
-        "desc": realtime_desc, "uses_kafka": True,
-        "uses_lakebase": True, "has_metrics": True,
+        "id": "realtime",
+        "name": "Real-time",
+        "to": "Lakebase + LakeTS",
+        "desc": realtime_desc,
+        "uses_kafka": True,
+        "uses_lakebase": True,
+        "has_metrics": True,
     }
     assert mode_config("zerobus")["uses_kafka"] is False
     assert mode_config("zerobus")["uses_lakebase"] is False

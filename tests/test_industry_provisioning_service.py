@@ -29,41 +29,59 @@ def _patch_all(*, preflight_pass=True):
     patches = {
         "preflight_checks": patch.object(ips.cat, "preflight_checks", return_value=checks),
         "provision_industry_catalog": patch.object(
-            ips.cat, "provision_industry_catalog",
-            new=AsyncMock(return_value={
-                "catalog": CATALOG, "schema": SCHEMA, "results": [],
-                "tables": {"zerobus": f"{CATALOG}.{SCHEMA}.spiketest_zerobus"},
-                "metrics_table": f"{CATALOG}.{SCHEMA}.spiketest_metrics",
-            }),
+            ips.cat,
+            "provision_industry_catalog",
+            new=AsyncMock(
+                return_value={
+                    "catalog": CATALOG,
+                    "schema": SCHEMA,
+                    "results": [],
+                    "tables": {"zerobus": f"{CATALOG}.{SCHEMA}.spiketest_zerobus"},
+                    "metrics_table": f"{CATALOG}.{SCHEMA}.spiketest_metrics",
+                }
+            ),
         ),
         "put_secret": patch.object(
-            ips.uc_secrets, "put_secret",
+            ips.uc_secrets,
+            "put_secret",
             new=AsyncMock(return_value={"resource": "secret", "status": "created"}),
         ),
         "provision_industry_branch": patch.object(
-            ips.pps, "provision_industry_branch",
-            new=AsyncMock(return_value={
-                "project": "iot-pipelines", "branch": "spiketest",
-                "primary_host": "p", "replica_host": "r",
-            }),
+            ips.pps,
+            "provision_industry_branch",
+            new=AsyncMock(
+                return_value={
+                    "project": "iot-pipelines",
+                    "branch": "spiketest",
+                    "primary_host": "p",
+                    "replica_host": "r",
+                }
+            ),
         ),
         "provision_lakebase_role": patch.object(
-            ips.provisioning_service, "provision_lakebase_role",
+            ips.provisioning_service,
+            "provision_lakebase_role",
             new=AsyncMock(return_value=[]),
         ),
         "get_write_conn": patch.object(
-            ips.pps, "get_write_conn", new=AsyncMock(return_value=write_mgr),
+            ips.pps,
+            "get_write_conn",
+            new=AsyncMock(return_value=write_mgr),
         ),
         "setup_lakets_on_branch": patch.object(
-            ips.setup, "setup_lakets_on_branch",
-            new=AsyncMock(return_value={
-                "branch": "spiketest",
-                "cdf_shadow": "created",
-                "steps": [],
-            }),
+            ips.setup,
+            "setup_lakets_on_branch",
+            new=AsyncMock(
+                return_value={
+                    "branch": "spiketest",
+                    "cdf_shadow": "created",
+                    "steps": [],
+                }
+            ),
         ),
         "ensure_cdf_config": patch.object(
-            ips.cdf_config_service, "ensure_cdf_config",
+            ips.cdf_config_service,
+            "ensure_cdf_config",
             return_value={
                 "name": (
                     "projects/iot-pipelines/branches/spiketest/databases/"
@@ -78,7 +96,8 @@ def _patch_all(*, preflight_pass=True):
             ips.resource_ledger, "list_resources", new=AsyncMock(return_value=[])
         ),
         "grant_app_sp": patch.object(
-            ips.cat, "grant_app_sp",
+            ips.cat,
+            "grant_app_sp",
             new=AsyncMock(return_value={"catalog": CATALOG, "principal": "app-xyz", "results": []}),
         ),
     }
@@ -93,21 +112,36 @@ async def test_orchestrator_runs_all_phases_and_records_sp() -> None:
     async def _rec(_db, **kw):
         recorded.append(kw)
 
-    with patches["preflight_checks"], patches["provision_industry_catalog"], \
-         patches["put_secret"], patches["provision_industry_branch"], \
-         patches["provision_lakebase_role"], patches["get_write_conn"], \
-         patches["setup_lakets_on_branch"], patches["ensure_cdf_config"], \
-         patches["list_resources"], \
-         patches["grant_app_sp"], \
-         patch.object(ips, "record_resource", side_effect=_rec):
+    with (
+        patches["preflight_checks"],
+        patches["provision_industry_catalog"],
+        patches["put_secret"],
+        patches["provision_industry_branch"],
+        patches["provision_lakebase_role"],
+        patches["get_write_conn"],
+        patches["setup_lakets_on_branch"],
+        patches["ensure_cdf_config"],
+        patches["list_resources"],
+        patches["grant_app_sp"],
+        patch.object(ips, "record_resource", side_effect=_rec),
+    ):
         summary = await ips.provision_industry(
-            "manufacturing", "setup-1", db=MagicMock(), ws=MagicMock(),
+            "manufacturing",
+            "setup-1",
+            db=MagicMock(),
+            ws=MagicMock(),
         )
 
     phases = [s["phase"] for s in summary["sections"]]
     for expected in (
-        "preflight", "app_sp", "uc_catalog", "uc_secret",
-        "lakebase_branch", "lakets_setup", "cdf_sync", "grants",
+        "preflight",
+        "app_sp",
+        "uc_catalog",
+        "uc_secret",
+        "lakebase_branch",
+        "lakets_setup",
+        "cdf_sync",
+        "grants",
     ):
         assert expected in phases, f"missing phase {expected}"
 
@@ -127,10 +161,17 @@ async def test_orchestrator_runs_all_phases_and_records_sp() -> None:
 @pytest.mark.asyncio
 async def test_orchestrator_writes_uc_secret_from_env() -> None:
     patches, _ = _patch_all()
-    with patches["preflight_checks"], patches["provision_industry_catalog"], \
-         patches["put_secret"] as put_mock, patches["grant_app_sp"]:
+    with (
+        patches["preflight_checks"],
+        patches["provision_industry_catalog"],
+        patches["put_secret"] as put_mock,
+        patches["grant_app_sp"],
+    ):
         await ips.provision_industry(
-            "spiketest", None, ws=MagicMock(), enable_realtime=False,
+            "spiketest",
+            None,
+            ws=MagicMock(),
+            enable_realtime=False,
         )
     put_mock.assert_awaited_once()
     args = put_mock.await_args.args
@@ -153,12 +194,22 @@ async def test_realtime_branch_failure_is_recorded_not_propagated() -> None:
     # raises — provisioning must stay best-effort: record a failed lakebase_branch
     # section and still reach the grants phase, never a 500.
     patches, _ = _patch_all()
-    with patches["preflight_checks"], patches["provision_industry_catalog"], \
-         patches["put_secret"], patches["grant_app_sp"], \
-         patch.object(ips.pps, "provision_industry_branch",
-                      new=AsyncMock(side_effect=RuntimeError("Project 'iot-pipelines' not found"))):
+    with (
+        patches["preflight_checks"],
+        patches["provision_industry_catalog"],
+        patches["put_secret"],
+        patches["grant_app_sp"],
+        patch.object(
+            ips.pps,
+            "provision_industry_branch",
+            new=AsyncMock(side_effect=RuntimeError("Project 'iot-pipelines' not found")),
+        ),
+    ):
         summary = await ips.provision_industry(
-            "spiketest", "s1", ws=MagicMock(), enable_realtime=True,
+            "spiketest",
+            "s1",
+            ws=MagicMock(),
+            enable_realtime=True,
         )
     sections = {s["phase"]: s["result"] for s in summary["sections"]}
     assert sections["lakebase_branch"]["status"] == "failed"
@@ -171,11 +222,18 @@ async def test_realtime_branch_failure_is_recorded_not_propagated() -> None:
 @pytest.mark.asyncio
 async def test_orchestrator_skips_realtime_when_disabled() -> None:
     patches, _ = _patch_all()
-    with patches["preflight_checks"], patches["provision_industry_catalog"], \
-         patches["put_secret"], patches["provision_industry_branch"] as branch_mock, \
-         patches["grant_app_sp"]:
+    with (
+        patches["preflight_checks"],
+        patches["provision_industry_catalog"],
+        patches["put_secret"],
+        patches["provision_industry_branch"] as branch_mock,
+        patches["grant_app_sp"],
+    ):
         summary = await ips.provision_industry(
-            "spiketest", "s1", ws=MagicMock(), enable_realtime=False,
+            "spiketest",
+            "s1",
+            ws=MagicMock(),
+            enable_realtime=False,
         )
     branch_mock.assert_not_called()
     phases = [s["phase"] for s in summary["sections"]]
@@ -188,12 +246,18 @@ async def test_orchestrator_skips_realtime_when_disabled() -> None:
 async def test_realtime_provisioning_surfaces_shadow_failure_c7246() -> None:
     """Realtime provisioning cannot hide CDF preparation failure [C7246][defect][regression]."""
     patches, _ = _patch_all()
-    with patches["preflight_checks"], patches["provision_industry_catalog"], \
-         patches["put_secret"], patches["provision_industry_branch"], \
-         patches["provision_lakebase_role"], patches["get_write_conn"], \
-         patches["setup_lakets_on_branch"] as setup_lakets, \
-         patches["ensure_cdf_config"] as ensure_cdf, patches["grant_app_sp"], \
-         patch.object(ips, "record_resource", new=AsyncMock()):
+    with (
+        patches["preflight_checks"],
+        patches["provision_industry_catalog"],
+        patches["put_secret"],
+        patches["provision_industry_branch"],
+        patches["provision_lakebase_role"],
+        patches["get_write_conn"],
+        patches["setup_lakets_on_branch"] as setup_lakets,
+        patches["ensure_cdf_config"] as ensure_cdf,
+        patches["grant_app_sp"],
+        patch.object(ips, "record_resource", new=AsyncMock()),
+    ):
         setup_lakets.return_value = {
             "branch": "manufacturing",
             "cdf_shadow": "failed",

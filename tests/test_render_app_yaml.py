@@ -105,7 +105,7 @@ def test_missing_required_key_raises(renderer, profiles_dir: Path) -> None:
 def test_render_includes_runtime_command_and_all_env_names(renderer) -> None:
     rendered = renderer.render_app_yaml(_MINIMAL_PROFILE)
 
-    assert 'uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}' in rendered
+    assert "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}" in rendered
     for env_name in _EXPECTED_ENV_NAMES:
         assert f"name: {env_name}" in rendered
     assert "valueFrom: genie-space" in rendered

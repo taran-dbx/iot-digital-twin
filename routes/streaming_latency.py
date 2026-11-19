@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 from core.auth import get_current_user
 from core.state import AppState, get_app_state
 from models import metrics_schema  # noqa: F401 — kept for backward compat; new code uses _icat
+from routes.sensor_data import _is_industry_deployment
 from services import industry_catalog_service as _icat
 from services.dbsql_service import (
     execute_dbsql,
@@ -44,7 +45,6 @@ from services.dbsql_service import (
 )
 from services.industry_templates import CURATED_INDUSTRIES
 from services.uc_ident import sql_fqn
-from routes.sensor_data import _is_industry_deployment
 
 logger = logging.getLogger("iot_digital_twin.routes.streaming_latency")
 router = APIRouter()
@@ -191,21 +191,13 @@ async def get_streaming_latency(
     if normalized_mode not in metrics_schema.ALL_METRIC_MODES:
         return JSONResponse(
             status_code=400,
-            content={
-                "error": f"mode must be one of {metrics_schema.ALL_METRIC_MODES}"
-            },
+            content={"error": f"mode must be one of {metrics_schema.ALL_METRIC_MODES}"},
         )
     industry = industry.strip().lower()
     if industry not in CURATED_INDUSTRIES:
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid industry"}
-        )
-    if not await _is_bound_pipeline(
-        state, pipeline_id, industry, normalized_mode, user_email
-    ):
-        return JSONResponse(
-            status_code=404, content={"error": "Industry deployment not found"}
-        )
+        return JSONResponse(status_code=400, content={"error": "Invalid industry"})
+    if not await _is_bound_pipeline(state, pipeline_id, industry, normalized_mode, user_email):
+        return JSONResponse(status_code=404, content={"error": "Industry deployment not found"})
 
     try:
         table = _icat.industry_table(industry, "metrics")
@@ -300,12 +292,8 @@ async def get_streaming_latency(
         # this industry+mode metrics table, not the process-global /api/sources
         # counters (which measure app HTTP activity rather than Spark work).
         "rows_per_sec": _num(_first_non_null(rows, "processed_rps")),
-        "processing_latency_p50_ms": _num(
-            _first_non_null(rows, "processing_p50")
-        ),
-        "processing_latency_p99_ms": _num(
-            _first_non_null(rows, "processing_p99")
-        ),
+        "processing_latency_p50_ms": _num(_first_non_null(rows, "processing_p50")),
+        "processing_latency_p99_ms": _num(_first_non_null(rows, "processing_p99")),
         "spark_e2e_latency_p99_ms": _num(_first_non_null(rows, "e2e_p99")),
         "throughput_basis": "spark_processed_rows_per_second",
         "e2e_basis": "spark_source_available_to_trigger_complete",
@@ -336,9 +324,7 @@ def _empty_zerobus_payload(table_name: str, reason: str) -> dict[str, Any]:
 async def get_zerobus_latency(
     industry: str = Query(..., description="Industry id — resolves iot_<industry>"),
     pipeline_id: str = Query(..., description="Bound pipeline deployment id"),
-    minutes: int = Query(
-        60, ge=1, le=10080, description="Lookback window in minutes"
-    ),
+    minutes: int = Query(60, ge=1, le=10080, description="Lookback window in minutes"),
     user_email: str = Depends(get_current_user),
     state: AppState = Depends(get_app_state),
 ):
@@ -353,15 +339,9 @@ async def get_zerobus_latency(
     """
     industry = industry.strip().lower()
     if industry not in CURATED_INDUSTRIES:
-        return JSONResponse(
-            status_code=400, content={"error": "Invalid industry"}
-        )
-    if not await _is_bound_pipeline(
-        state, pipeline_id, industry, "zerobus", user_email
-    ):
-        return JSONResponse(
-            status_code=404, content={"error": "Industry deployment not found"}
-        )
+        return JSONResponse(status_code=400, content={"error": "Invalid industry"})
+    if not await _is_bound_pipeline(state, pipeline_id, industry, "zerobus", user_email):
+        return JSONResponse(status_code=404, content={"error": "Industry deployment not found"})
     try:
         target_table = _icat.industry_table(industry, "zerobus")
     except (ValueError, RuntimeError) as exc:

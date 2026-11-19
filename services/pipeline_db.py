@@ -44,27 +44,23 @@ from databricks.sdk.core import Config
 from backend import LakebaseConnectionManager
 from core.state import AppState
 from core.workspace_config import get_pipelines_project
+from services.industry_templates import CURATED_INDUSTRIES
 from services.pipelines_project_service import (
     PG_DATABASE,
     PRIMARY_ENDPOINT_ID,
     endpoint_resource_name,
 )
-from services.industry_templates import CURATED_INDUSTRIES
 
 logger = logging.getLogger("iot_digital_twin.services.pipeline_db")
 
 # Bound pool init so a hung Lakebase host cannot pin request workers.
-_LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(
-    os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10")
-)
+_LAKEBASE_CONNECT_TIMEOUT_SECONDS = float(os.getenv("LAKEBASE_CONNECT_TIMEOUT_SECONDS", "10"))
 _LAKEBASE_INIT_TIMEOUT_SECONDS = max(_LAKEBASE_CONNECT_TIMEOUT_SECONDS + 5, 15)
 _ENDPOINT_RESOLVE_TIMEOUT_SECONDS = 8.0
 _INDUSTRY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-async def _load_pipeline_sink_config(
-    state: AppState, pipeline_id: str
-) -> dict[str, Any] | None:
+async def _load_pipeline_sink_config(state: AppState, pipeline_id: str) -> dict[str, Any] | None:
     """Fetch the pipeline row and return its ``source_config`` dict (or None)."""
     if not state.db_available or not state.db:
         return None
@@ -119,14 +115,12 @@ async def _resolve_endpoint_host_bounded(endpoint_name: str) -> str | None:
             asyncio.to_thread(_resolve_endpoint_host, endpoint_name),
             timeout=_ENDPOINT_RESOLVE_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Endpoint host resolution timed out for %s", endpoint_name)
         return None
 
 
-async def _initialize_handle(
-    handle: "PipelineLakebaseHandle", *, description: str
-) -> bool:
+async def _initialize_handle(handle: PipelineLakebaseHandle, *, description: str) -> bool:
     try:
         await asyncio.wait_for(
             handle.initialize(),
@@ -144,16 +138,14 @@ async def _initialize_handle(
         return False
 
 
-async def get_pipeline_lakebase(
-    state: AppState, pipeline_id: str
-) -> "PipelineLakebaseHandle | None":
+async def get_pipeline_lakebase(state: AppState, pipeline_id: str) -> PipelineLakebaseHandle | None:
     """Return a connection manager for the pipeline's Lakebase, or None.
 
     Caches the manager in ``state.pipeline_dbs`` so repeat calls reuse the
     same asyncpg pool.  Pools auto-refresh their OAuth token every 50 min
     (see ``LakebaseConnectionManager._token_refresh_loop``).
     """
-    cache: dict[str, "PipelineLakebaseHandle"] = getattr(state, "pipeline_dbs", None)
+    cache: dict[str, PipelineLakebaseHandle] = getattr(state, "pipeline_dbs", None)
     if cache is None:
         cache = {}
         state.pipeline_dbs = cache
@@ -168,12 +160,8 @@ async def get_pipeline_lakebase(
 
         project_id = sc.get("lb_project_id") or os.getenv("LAKEBASE_PROJECT_ID", "")
         branch_id = sc.get("lb_branch_id") or "production"
-        database = sc.get("lb_database") or os.getenv(
-            "PGDATABASE", "databricks_postgres"
-        )
-        endpoint_name = (
-            f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
-        )
+        database = sc.get("lb_database") or os.getenv("PGDATABASE", "databricks_postgres")
+        endpoint_name = f"projects/{project_id}/branches/{branch_id}/endpoints/primary"
 
         if not project_id:
             logger.warning("Pipeline %s: no lb_project_id in sink_config", pipeline_id)
@@ -196,21 +184,20 @@ async def get_pipeline_lakebase(
             database=database,
             host=host,
         )
-        if not await _initialize_handle(
-            handle, description=f"Pipeline {pipeline_id}"
-        ):
+        if not await _initialize_handle(handle, description=f"Pipeline {pipeline_id}"):
             return None
         cache[pipeline_id] = handle
     logger.info(
         "Pipeline %s bound to Lakebase endpoint=%s host=%s db=%s",
-        pipeline_id, endpoint_name, host, database,
+        pipeline_id,
+        endpoint_name,
+        host,
+        database,
     )
     return handle
 
 
-async def get_industry_lakebase(
-    state: AppState, industry: str
-) -> "PipelineLakebaseHandle | None":
+async def get_industry_lakebase(state: AppState, industry: str) -> PipelineLakebaseHandle | None:
     """Return a connection manager for an industry-first pipeline's Lakebase, or None.
 
     Unlike ``get_pipeline_lakebase``, this does not read a ``pipelines`` row —
@@ -226,14 +213,11 @@ async def get_industry_lakebase(
     to an empty/graceful payload.
     """
     industry = industry.strip().lower()
-    if (
-        not _INDUSTRY_ID_RE.fullmatch(industry)
-        or industry not in CURATED_INDUSTRIES
-    ):
+    if not _INDUSTRY_ID_RE.fullmatch(industry) or industry not in CURATED_INDUSTRIES:
         logger.warning("Rejected invalid industry Lakebase branch %r", industry)
         return None
 
-    cache: dict[str, "PipelineLakebaseHandle"] = getattr(state, "pipeline_dbs", None)
+    cache: dict[str, PipelineLakebaseHandle] = getattr(state, "pipeline_dbs", None)
     if cache is None:
         cache = {}
         state.pipeline_dbs = cache
@@ -246,9 +230,7 @@ async def get_industry_lakebase(
         project_id = get_pipelines_project()
         branch_id = industry
         database = PG_DATABASE
-        endpoint_name = endpoint_resource_name(
-            branch_id, PRIMARY_ENDPOINT_ID, project_id
-        )
+        endpoint_name = endpoint_resource_name(branch_id, PRIMARY_ENDPOINT_ID, project_id)
 
         host = await _resolve_endpoint_host_bounded(endpoint_name)
         if not host:
@@ -272,14 +254,15 @@ async def get_industry_lakebase(
             database=database,
             host=host,
         )
-        if not await _initialize_handle(
-            handle, description=f"Industry {industry}"
-        ):
+        if not await _initialize_handle(handle, description=f"Industry {industry}"):
             return None
         cache[cache_key] = handle
     logger.info(
         "Industry %s bound to Lakebase endpoint=%s host=%s db=%s",
-        industry, endpoint_name, host, database,
+        industry,
+        endpoint_name,
+        host,
+        database,
     )
     return handle
 

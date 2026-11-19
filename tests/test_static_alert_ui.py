@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 CLIENT = ROOT / "client" / "src"
 DIST = ROOT / "static" / "dist"
@@ -55,7 +54,7 @@ def test_api_client_exposes_alert_list_detail_ack_c7412_regression() -> None:
     assert "listAlerts:" in api or "listAlerts :" in api
     assert "getAlert:" in api or "getAlert :" in api
     assert "acknowledgeAlert:" in api or "acknowledgeAlert :" in api
-    assert '`/alerts/${' in api or '"/alerts/"' in api
+    assert "`/alerts/${" in api or '"/alerts/"' in api
     assert "/acknowledge" in api
     assert "AlertListResponse" in api
     assert "AlertRecord" in api
@@ -180,6 +179,9 @@ def test_alert_rail_actions_wrap_inside_column_c7414_defect() -> None:
     compact = css.replace(" ", "").replace("\n", "")
 
     assert ".alert-rail__actions{display:flex;flex-wrap:wrap" in compact
-    assert ".alert-rail{" in compact and "overflow:hidden" in compact.split(".alert-rail{")[1].split("}")[0]
+    assert (
+        ".alert-rail{" in compact
+        and "overflow:hidden" in compact.split(".alert-rail{")[1].split("}")[0]
+    )
     assert "is-cleared" in component
     assert "Explain this alert" in component

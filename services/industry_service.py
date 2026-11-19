@@ -19,9 +19,8 @@ import logging
 import os
 from typing import Any
 
-from core.workspace_config import get_secret_scope
-
 from core.state import AppState
+from core.workspace_config import get_secret_scope
 from services import deployment_service
 from services.industry_templates import (
     CURATED_INDUSTRIES,
@@ -40,6 +39,7 @@ def _resolve_app_sp(state: Any) -> dict:
     """
     cid = os.getenv("DATABRICKS_CLIENT_ID", "")
     return {"client_id": cid or None}
+
 
 logger = logging.getLogger("iot_digital_twin.services.industry_service")
 
@@ -213,7 +213,6 @@ def is_mode_active(row: dict[str, Any] | None) -> bool:
     return str(row.get("status") or row.get("state") or "").lower() in _RECONCILE_DEPLOYED_STATES
 
 
-
 # Pipeline row statuses treated as "deployed/active" by the reconciliation
 # pass below — a legacy row need not be literally ``"running"`` to count,
 # since ``_STOPPED_STATUS`` (``"step2_complete"``) is also written for
@@ -287,7 +286,9 @@ async def resolve_pipeline_for_mode(
 
 
 async def update_pipeline_config(
-    state: AppState, pipeline_id: str, patch: dict[str, Any],
+    state: AppState,
+    pipeline_id: str,
+    patch: dict[str, Any],
 ) -> dict[str, Any]:
     """Merge ``patch`` into a pipeline row's ``source_config`` JSONB, by id.
 
@@ -303,7 +304,8 @@ async def update_pipeline_config(
     row = await state.db.fetchrow(
         "UPDATE pipelines SET source_config = COALESCE(source_config, '{}'::jsonb) || $2::jsonb, "
         "updated_at = NOW() WHERE id = $1::uuid RETURNING source_config",
-        pipeline_id, json.dumps(patch),
+        pipeline_id,
+        json.dumps(patch),
     )
     if not row:
         return {}
@@ -440,7 +442,10 @@ def _parse_resources(row: dict[str, Any] | None) -> dict[str, Any]:
 
 
 async def _ensure_pipeline_row(
-    state: AppState, name: str, industry: str, status: str,
+    state: AppState,
+    name: str,
+    industry: str,
+    status: str,
 ) -> str | None:
     """Ensure a pipeline row named ``name`` exists, set to ``status``.
 
@@ -453,7 +458,8 @@ async def _ensure_pipeline_row(
         return None
     try:
         row = await state.db.fetchrow(
-            "SELECT id FROM pipelines WHERE name = $1 AND status != 'deleted'", name,
+            "SELECT id FROM pipelines WHERE name = $1 AND status != 'deleted'",
+            name,
         )
         if row is None:
             row = await state.db.fetchrow(
@@ -462,12 +468,16 @@ async def _ensure_pipeline_row(
                 VALUES ($1, $2, $3, $4)
                 RETURNING id
                 """,
-                _INDUSTRY_PIPELINE_OWNER, name, industry, status,
+                _INDUSTRY_PIPELINE_OWNER,
+                name,
+                industry,
+                status,
             )
         else:
             await state.db.execute(
                 "UPDATE pipelines SET status = $2, updated_at = NOW() WHERE id = $1",
-                row["id"], status,
+                row["id"],
+                status,
             )
     except Exception as exc:
         logger.warning("Failed to ensure pipeline row for %s: %s", name, exc)
@@ -482,7 +492,8 @@ async def _set_pipeline_status(state: AppState, name: str, status: str) -> None:
     try:
         await state.db.execute(
             "UPDATE pipelines SET status = $2, updated_at = NOW() WHERE name = $1",
-            name, status,
+            name,
+            status,
         )
     except Exception as exc:
         logger.warning("Failed to set status for pipeline %s: %s", name, exc)
@@ -490,11 +501,17 @@ async def _set_pipeline_status(state: AppState, name: str, status: str) -> None:
 
 async def _get_job_id(state: AppState, pipeline_id: str | None) -> str | None:
     """Resolve the tracked ``job_id`` (if any) for a pipeline row by id."""
-    if not pipeline_id or not state or not getattr(state, "db_available", False) or not getattr(state, "db", None):
+    if (
+        not pipeline_id
+        or not state
+        or not getattr(state, "db_available", False)
+        or not getattr(state, "db", None)
+    ):
         return None
     try:
         row = await state.db.fetchrow(
-            "SELECT resources FROM pipelines WHERE id = $1::uuid", pipeline_id,
+            "SELECT resources FROM pipelines WHERE id = $1::uuid",
+            pipeline_id,
         )
     except Exception as exc:
         logger.warning("Failed to look up job_id for pipeline %s: %s", pipeline_id, exc)
@@ -503,14 +520,16 @@ async def _get_job_id(state: AppState, pipeline_id: str | None) -> str | None:
 
 
 async def _get_pipeline_id_and_job(
-    state: AppState, name: str,
+    state: AppState,
+    name: str,
 ) -> tuple[str | None, str | None]:
     """Resolve ``(pipeline_id, job_id)`` for the mode's pipeline row by name."""
     if not state or not getattr(state, "db_available", False) or not getattr(state, "db", None):
         return None, None
     try:
         row = await state.db.fetchrow(
-            "SELECT id, resources FROM pipelines WHERE name = $1 AND status != 'deleted'", name,
+            "SELECT id, resources FROM pipelines WHERE name = $1 AND status != 'deleted'",
+            name,
         )
     except Exception as exc:
         logger.warning("Failed to look up pipeline %s: %s", name, exc)
@@ -531,14 +550,19 @@ async def _provision_catalog_schema(industry: str, mode: str) -> list[dict]:
     """
     from services.provisioning_service import provision_uc_catalog
 
-    return await provision_uc_catalog({
-        "catalog_pattern": catalog_name(industry),
-        "schemas": [mode],
-    })
+    return await provision_uc_catalog(
+        {
+            "catalog_pattern": catalog_name(industry),
+            "schemas": [mode],
+        }
+    )
 
 
 async def _provision_lakebase_branch(
-    state: AppState, industry: str, mode: str, pipeline_id: str | None,
+    state: AppState,
+    industry: str,
+    mode: str,
+    pipeline_id: str | None,
 ) -> dict:
     """Provision the mode's Lakebase branch + LakeTS (realtime only).
 
@@ -567,7 +591,10 @@ async def _provision_lakebase_branch(
 
 
 async def _deploy_and_start(
-    state: AppState, industry: str, mode: str, pipeline_id: str | None,
+    state: AppState,
+    industry: str,
+    mode: str,
+    pipeline_id: str | None,
 ) -> dict:
     """Deploy (idempotently) and start the mode's streaming job.
 
@@ -627,7 +654,9 @@ async def _deploy_and_start(
         except Exception as exc:
             logger.warning(
                 "Failed to run zerobus job %s for %s: %s",
-                zerobus_job_id, pipeline_name(industry, mode), exc,
+                zerobus_job_id,
+                pipeline_name(industry, mode),
+                exc,
             )
             return {"status": "starting", "job_id": zerobus_job_id, "error": str(exc)[:200]}
 
@@ -654,7 +683,10 @@ async def _deploy_and_start(
         )
     except Exception as exc:
         logger.warning(
-            "Failed to start job %s for %s: %s", job_id, pipeline_name(industry, mode), exc,
+            "Failed to start job %s for %s: %s",
+            job_id,
+            pipeline_name(industry, mode),
+            exc,
         )
         return {"status": "starting", "job_id": job_id, "error": str(exc)[:200]}
     return {"status": "running", "job_id": job_id}
@@ -716,7 +748,11 @@ async def start_mode(state: AppState, industry: str, mode: str) -> dict:
 
     if cfg.get("uses_lakebase"):
         lakebase_result = await _call_maybe_async(
-            _provision_lakebase_branch, state, industry, mode, pipeline_id,
+            _provision_lakebase_branch,
+            state,
+            industry,
+            mode,
+            pipeline_id,
         )
         steps.append({"step": "lakebase_branch", "result": lakebase_result})
 

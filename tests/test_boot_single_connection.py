@@ -13,7 +13,7 @@ Asserts that after lifespan startup:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_manager() -> MagicMock:
     """Return a fully mocked AppBackendConnectionManager."""
@@ -63,6 +64,7 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
         patch("app.shutdown", AsyncMock()),
     ):
         from fastapi import FastAPI
+
         import app as app_module
 
         fa = FastAPI()
@@ -75,6 +77,7 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 async def test_db_and_app_backend_db_are_same_manager(monkeypatch: pytest.MonkeyPatch) -> None:
     """state.db and state.app_backend_db must be the identical object."""

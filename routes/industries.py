@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from core.state import AppState, get_app_state
@@ -26,9 +26,7 @@ router = APIRouter()
 
 
 def _unknown_industry(industry: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=400, content={"error": f"Unknown industry: {industry}"}
-    )
+    return JSONResponse(status_code=400, content={"error": f"Unknown industry: {industry}"})
 
 
 @router.get("/api/industries")
@@ -40,17 +38,21 @@ async def list_industries():
     for industry in IndustryType:
         try:
             gen = DataGenerator(industries=[industry.value])
-            result.append({
-                "id": industry.value,
-                "label": industry.value.replace("_", " ").title(),
-                "sensor_count": gen.sensor_count,
-            })
+            result.append(
+                {
+                    "id": industry.value,
+                    "label": industry.value.replace("_", " ").title(),
+                    "sensor_count": gen.sensor_count,
+                }
+            )
         except Exception:
-            result.append({
-                "id": industry.value,
-                "label": industry.value.replace("_", " ").title(),
-                "sensor_count": 0,
-            })
+            result.append(
+                {
+                    "id": industry.value,
+                    "label": industry.value.replace("_", " ").title(),
+                    "sensor_count": 0,
+                }
+            )
     return result
 
 
@@ -72,21 +74,23 @@ async def get_industry_sensors(name: str):
             if sc and hasattr(sc, "config") and hasattr(sc.config, "update_frequency_hz"):
                 freq = sc.config.update_frequency_hz
 
-            configs.append({
-                "name": r.sensor_name,
-                "sensor_type": r.sensor_type,
-                "unit": r.unit,
-                "min_value": r.min_value,
-                "max_value": r.max_value,
-                "nominal_value": r.nominal_value,
-                "noise_std": 0,
-                "anomaly_probability": 0,
-                "anomaly_magnitude": 0,
-                "update_frequency_hz": freq,
-                "cyclic": False,
-                "cycle_period_seconds": 0,
-                "cycle_amplitude": 0,
-            })
+            configs.append(
+                {
+                    "name": r.sensor_name,
+                    "sensor_type": r.sensor_type,
+                    "unit": r.unit,
+                    "min_value": r.min_value,
+                    "max_value": r.max_value,
+                    "nominal_value": r.nominal_value,
+                    "noise_std": 0,
+                    "anomaly_probability": 0,
+                    "anomaly_magnitude": 0,
+                    "update_frequency_hz": freq,
+                    "cyclic": False,
+                    "cycle_period_seconds": 0,
+                    "cycle_amplitude": 0,
+                }
+            )
         return configs
     except Exception as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -107,15 +111,17 @@ async def generate_sample(request: Request, state: AppState = Depends(get_app_st
         collected: list[dict] = []
         for _ in range(num_ticks):
             for r in gen.tick():
-                collected.append({
-                    "sensor_name": r.sensor_name,
-                    "industry": to_record_industry(r.industry),
-                    "value": round(r.value, 3),
-                    "unit": r.unit,
-                    "sensor_type": r.sensor_type,
-                    "timestamp": r.timestamp,
-                    "fault_active": r.fault_active,
-                })
+                collected.append(
+                    {
+                        "sensor_name": r.sensor_name,
+                        "industry": to_record_industry(r.industry),
+                        "value": round(r.value, 3),
+                        "unit": r.unit,
+                        "sensor_type": r.sensor_type,
+                        "timestamp": r.timestamp,
+                        "fault_active": r.fault_active,
+                    }
+                )
 
         sensor_count = len(gen._sensors) if hasattr(gen, "_sensors") else 0
         est_record_bytes = 175
@@ -137,9 +143,7 @@ async def generate_sample(request: Request, state: AppState = Depends(get_app_st
 
 
 @router.get("/api/industries/catalog")
-async def get_industries_catalog(
-    request: Request, state: AppState = Depends(get_app_state)
-):
+async def get_industries_catalog(request: Request, state: AppState = Depends(get_app_state)):
     """Return the curated industry catalog plus whether the caller is an admin."""
     catalog = await industry_service.get_catalog(state)
     return {"industries": catalog, "is_admin": app_permissions.is_admin(request)}
@@ -168,18 +172,14 @@ async def get_industry_reference(industry: str):
 def _validate_industry_mode(industry: str, mode: str) -> JSONResponse | None:
     """Return a 400 JSONResponse if ``industry``/``mode`` aren't curated, else None."""
     if industry not in CURATED_INDUSTRIES:
-        return JSONResponse(
-            status_code=400, content={"error": f"Unknown industry: {industry}"}
-        )
+        return JSONResponse(status_code=400, content={"error": f"Unknown industry: {industry}"})
     if mode not in MODES:
         return JSONResponse(status_code=400, content={"error": f"Unknown mode: {mode}"})
     return None
 
 
 @router.post("/api/industries/{industry}/modes/{mode}/start")
-async def start_industry_mode(
-    industry: str, mode: str, state: AppState = Depends(get_app_state)
-):
+async def start_industry_mode(industry: str, mode: str, state: AppState = Depends(get_app_state)):
     """Provision (idempotently) and start a curated industry's streaming mode."""
     error = _validate_industry_mode(industry, mode)
     if error is not None:
@@ -188,9 +188,7 @@ async def start_industry_mode(
 
 
 @router.post("/api/industries/{industry}/modes/{mode}/stop")
-async def stop_industry_mode(
-    industry: str, mode: str, state: AppState = Depends(get_app_state)
-):
+async def stop_industry_mode(industry: str, mode: str, state: AppState = Depends(get_app_state)):
     """Stop a curated industry's streaming mode, keeping provisioned assets."""
     error = _validate_industry_mode(industry, mode)
     if error is not None:

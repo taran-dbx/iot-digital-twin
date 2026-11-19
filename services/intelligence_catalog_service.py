@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from databricks.sdk import WorkspaceClient
 
@@ -113,10 +114,7 @@ def reference_tables() -> dict[str, str]:
     """Return ``{kind: catalog.schema.table}`` for the shared reference set."""
     catalog = _catalog()
     schema = _schema()
-    return {
-        _KIND_BY_NAME[name]: f"{catalog}.{schema}.{name}"
-        for name in TABLE_NAMES
-    }
+    return {_KIND_BY_NAME[name]: f"{catalog}.{schema}.{name}" for name in TABLE_NAMES}
 
 
 def alert_snapshot_contract(syncer: Any | None = None) -> dict[str, Any]:
@@ -146,11 +144,7 @@ def alert_snapshot_contract(syncer: Any | None = None) -> dict[str, Any]:
     elif not uc_ready:
         freshness = "disabled"
         last_error = "Missing UC_CATALOG, UC_SCHEMA"
-    table = (
-        reference_tables()["alert_snapshot"]
-        if uc_ready
-        else ""
-    )
+    table = reference_tables()["alert_snapshot"] if uc_ready else ""
     return {
         "table": table,
         "access": "read_only",

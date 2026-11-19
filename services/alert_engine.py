@@ -7,9 +7,10 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 from domain.catalog import (
     AlertRule,
@@ -92,9 +93,7 @@ class AlertRecord:
             "threshold": self.threshold,
             "opened_at": self.opened_at.isoformat() if self.opened_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "acknowledged_at": (
-                self.acknowledged_at.isoformat() if self.acknowledged_at else None
-            ),
+            "acknowledged_at": (self.acknowledged_at.isoformat() if self.acknowledged_at else None),
             "acknowledged_by": self.acknowledged_by,
             "cleared_at": self.cleared_at.isoformat() if self.cleared_at else None,
             "metadata": dict(self.metadata),
@@ -119,7 +118,7 @@ def engine_for(state: Any) -> AlertEngine:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _to_float(value: Any) -> float | None:
@@ -143,9 +142,7 @@ def _is_violation(operator: str, value: float, threshold: float) -> bool:
     return False
 
 
-def _in_clear_band(
-    operator: str, value: float, threshold: float, hysteresis: float
-) -> bool:
+def _in_clear_band(operator: str, value: float, threshold: float, hysteresis: float) -> bool:
     band = float(hysteresis or 0.0)
     if operator == "gt" or operator == "gte":
         return value <= threshold - band
@@ -267,7 +264,7 @@ def _as_datetime(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
     if isinstance(value, str):
         try:
@@ -332,7 +329,7 @@ class AlertEngine:
     def _now_dt(self) -> datetime:
         instant = self._now()
         if instant.tzinfo is None:
-            return instant.replace(tzinfo=timezone.utc)
+            return instant.replace(tzinfo=UTC)
         return instant
 
     async def list_alerts(
@@ -424,9 +421,7 @@ class AlertEngine:
             return None
         return self._store(_row_to_alert(row))
 
-    async def _lookup_fingerprint(
-        self, fingerprint: str, db: Any | None
-    ) -> AlertRecord | None:
+    async def _lookup_fingerprint(self, fingerprint: str, db: Any | None) -> AlertRecord | None:
         existing = self._by_fingerprint.get(fingerprint)
         if existing is not None:
             return existing
@@ -569,9 +564,7 @@ class AlertEngine:
                 if existing is not None:
                     alert = replace(alert, id=existing.id)
                 self._store(alert)
-                transition = AlertTransition(
-                    event_type=EVENT_OPENED, alert=alert, extra=extra
-                )
+                transition = AlertTransition(event_type=EVENT_OPENED, alert=alert, extra=extra)
                 applied = await self._persist_transition(transition, db)
                 if not applied:
                     return None
@@ -588,9 +581,7 @@ class AlertEngine:
                     sensor_ids=list(sensor_ids or existing.sensor_ids),
                 )
                 self._store(alert)
-                transition = AlertTransition(
-                    event_type=EVENT_UPDATED, alert=alert, extra=extra
-                )
+                transition = AlertTransition(event_type=EVENT_UPDATED, alert=alert, extra=extra)
                 applied = await self._persist_transition(transition, db)
                 if not applied:
                     return None
@@ -671,9 +662,7 @@ class AlertEngine:
             forced_sensor_ids=[sensor_id],
         )
 
-    async def _persist_transition(
-        self, transition: AlertTransition, db: Any | None
-    ) -> bool:
+    async def _persist_transition(self, transition: AlertTransition, db: Any | None) -> bool:
         if db is None:
             return True
         alert = transition.alert
@@ -781,8 +770,7 @@ class AlertEngine:
                 id=persisted_id,
                 status=canonical_status,
                 version=int(row.get("version") or alert.version or 0),
-                acknowledged_at=_as_datetime(row.get("acknowledged_at"))
-                or alert.acknowledged_at,
+                acknowledged_at=_as_datetime(row.get("acknowledged_at")) or alert.acknowledged_at,
                 acknowledged_by=row.get("acknowledged_by", alert.acknowledged_by),
                 cleared_at=_as_datetime(row.get("cleared_at")) or alert.cleared_at,
                 updated_at=_as_datetime(row.get("updated_at")) or alert.updated_at,
@@ -793,9 +781,7 @@ class AlertEngine:
             self._store(canonical)
             if not applied and canonical_status != alert.status:
                 return False
-            if not applied and transition.event_type in {EVENT_OPENED, EVENT_UPDATED}:
-                return False
-            return True
+            return applied or transition.event_type not in {EVENT_OPENED, EVENT_UPDATED}
         except Exception:
             logger.exception("alert persist failed; continuing in memory")
             return True
@@ -817,9 +803,7 @@ async def evaluate_and_emit(
         first = readings[0] if readings else {}
         if isinstance(first, Mapping):
             resolved_industry = first.get("industry")
-    resolved_industry = _catalog_industry(
-        str(resolved_industry) if resolved_industry else None
-    )
+    resolved_industry = _catalog_industry(str(resolved_industry) if resolved_industry else None)
     rules = _rules_for(resolved_industry)
     db = None
     if getattr(state, "app_backend_available", False):
@@ -832,8 +816,7 @@ async def evaluate_and_emit(
         db=db,
     )
     payloads = [
-        build_lifecycle_payload(item.event_type, item.alert, item.extra)
-        for item in transitions
+        build_lifecycle_payload(item.event_type, item.alert, item.extra) for item in transitions
     ]
     enqueue_alert_events(state, payloads)
     if transitions:

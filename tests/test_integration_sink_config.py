@@ -34,7 +34,7 @@ uses the ``AsyncClient.stream`` API to cover the GET /api/events route shape
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -44,10 +44,10 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_app_with_routers(state: AppState, *routers) -> FastAPI:
     """Create a minimal FastAPI app with the given router(s) and AppState."""
@@ -99,6 +99,7 @@ async def _assert_stream_route_is_sse(client: AsyncClient) -> None:
     to the test, so we wrap it in a short deadline and treat the
     ``TimeoutError`` as confirmation that the route is actually streaming.
     """
+
     async def _open() -> None:
         async with client.stream("GET", "/api/events") as resp:
             # Consume until deadline expires; never reached for an SSE stream.
@@ -113,13 +114,14 @@ async def _assert_stream_route_is_sse(client: AsyncClient) -> None:
 # 1. SSE broadcast E2E — POST /api/sss/ingest fans out to /api/events
 # ---------------------------------------------------------------------------
 
+
 class TestSseIngestBroadcastE2E:
     """POST /api/sss/ingest should fan events out to SSE subscribers."""
 
     @pytest_asyncio.fixture()
     async def sse_client(self) -> AsyncGenerator[tuple[AsyncClient, AppState], None]:
-        from routes.websocket import router as ws_router
         from routes.sensor_data import router as sensor_router
+        from routes.websocket import router as ws_router
 
         state = _app_state_with_db()
         app = _build_app_with_routers(state, ws_router, sensor_router)
@@ -196,9 +198,7 @@ class TestSseIngestBroadcastE2E:
         client, state = sse_client
         queue = _register_sse_queue(state)
 
-        with patch(
-            "routes.sensor_data.get_pipeline_lakebase", new=AsyncMock()
-        ) as mock_get_lb:
+        with patch("routes.sensor_data.get_pipeline_lakebase", new=AsyncMock()) as mock_get_lb:
             resp = await client.post(
                 "/api/sss/ingest",
                 json=[
@@ -229,6 +229,7 @@ class TestSseIngestBroadcastE2E:
 # ---------------------------------------------------------------------------
 # 2. Threshold-alert SSE E2E — POST /api/sss/alerts fans out to /api/events
 # ---------------------------------------------------------------------------
+
 
 class TestSseThresholdAlertBroadcastE2E:
     """POST /api/sss/alerts should fan threshold alerts out to SSE subscribers."""
@@ -283,6 +284,7 @@ class TestSseThresholdAlertBroadcastE2E:
 # 3. Timeseries endpoints — both return a JSON object with a ``rows`` list
 # ---------------------------------------------------------------------------
 
+
 class TestTimeseriesEndpointsReturnRowsShape:
     """Both /api/timeseries and /api/pipeline/:id/dbsql-timeseries return {rows: [...]}."""
 
@@ -328,9 +330,7 @@ class TestTimeseriesEndpointsReturnRowsShape:
             yield client
 
     @pytest.mark.asyncio
-    async def test_lakebase_timeseries_returns_rows_shape(
-        self, ts_client: AsyncClient
-    ) -> None:
+    async def test_lakebase_timeseries_returns_rows_shape(self, ts_client: AsyncClient) -> None:
         # minutes=60 routes through the aggregated branch (no ``source`` filter).
         resp = await ts_client.get("/api/timeseries?minutes=60&industry=pharmaceutical")
         assert resp.status_code == 200
@@ -347,28 +347,30 @@ class TestTimeseriesEndpointsReturnRowsShape:
 
         state = _app_state_with_db()
         # Stub the helpers used by the dbsql-timeseries route.
-        with patch(
-            "routes.sensor_data.get_pipeline_catalog",
-            new=AsyncMock(return_value="my_catalog"),
-        ), patch(
-            "routes.sensor_data.resolve_warehouse_id",
-            new=AsyncMock(return_value="warehouse-xyz"),
-        ), patch(
-            "routes.sensor_data.execute_dbsql",
-            new=AsyncMock(
-                return_value={
-                    "columns": list(self._DBSQL_ROWS[0].keys()),
-                    "data": self._DBSQL_ROWS,
-                    "row_count": len(self._DBSQL_ROWS),
-                }
+        with (
+            patch(
+                "routes.sensor_data.get_pipeline_catalog",
+                new=AsyncMock(return_value="my_catalog"),
+            ),
+            patch(
+                "routes.sensor_data.resolve_warehouse_id",
+                new=AsyncMock(return_value="warehouse-xyz"),
+            ),
+            patch(
+                "routes.sensor_data.execute_dbsql",
+                new=AsyncMock(
+                    return_value={
+                        "columns": list(self._DBSQL_ROWS[0].keys()),
+                        "data": self._DBSQL_ROWS,
+                        "row_count": len(self._DBSQL_ROWS),
+                    }
+                ),
             ),
         ):
             app = _build_app_with_routers(state, sensor_router)
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.get(
-                    "/api/pipeline/pipe-xyz/dbsql-timeseries?minutes=120"
-                )
+                resp = await client.get("/api/pipeline/pipe-xyz/dbsql-timeseries?minutes=120")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -382,6 +384,7 @@ class TestTimeseriesEndpointsReturnRowsShape:
 # ---------------------------------------------------------------------------
 # 4. Sync readiness route — smoke test wiring into the app router
 # ---------------------------------------------------------------------------
+
 
 class TestSyncCheckRouteWired:
     """POST /api/lakets/sync/check is reachable and validates autoscale input."""
@@ -412,6 +415,7 @@ class TestSyncCheckRouteWired:
 # ---------------------------------------------------------------------------
 # 5. Retention deploy route — returns job_id + notebook_path with mocked SDK
 # ---------------------------------------------------------------------------
+
 
 class TestRetentionDeployRoute:
     """POST /api/lakets/retention/deploy with a mocked WorkspaceClient."""
@@ -444,12 +448,13 @@ class TestRetentionDeployRoute:
         from services import lakets_deploy_service
 
         w = self._fake_workspace_client()
-        with patch(
-            "databricks.sdk.WorkspaceClient", return_value=w
-        ), patch.object(
-            lakets_deploy_service,
-            "_notebook_source_bytes",
-            return_value=b"# Databricks notebook source\nprint('hi')\n",
+        with (
+            patch("databricks.sdk.WorkspaceClient", return_value=w),
+            patch.object(
+                lakets_deploy_service,
+                "_notebook_source_bytes",
+                return_value=b"# Databricks notebook source\nprint('hi')\n",
+            ),
         ):
             resp = await deploy_client.post(
                 "/api/lakets/retention/deploy",
@@ -464,9 +469,7 @@ class TestRetentionDeployRoute:
         assert body["action"] == "created"
 
     @pytest.mark.asyncio
-    async def test_deploy_without_project_id_returns_400(
-        self, deploy_client: AsyncClient
-    ) -> None:
+    async def test_deploy_without_project_id_returns_400(self, deploy_client: AsyncClient) -> None:
         resp = await deploy_client.post(
             "/api/lakets/retention/deploy",
             json={"lakebase": {}},

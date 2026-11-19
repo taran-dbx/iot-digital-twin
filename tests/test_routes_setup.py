@@ -23,7 +23,6 @@ from httpx import ASGITransport, AsyncClient
 
 from services import pipeline_setup_service
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -47,9 +46,7 @@ def _make_ws() -> MagicMock:
     ep.status.hosts.host = "pg.example.com"
     w.postgres.list_endpoints = MagicMock(return_value=[ep])
     w.postgres.get_endpoint = MagicMock(return_value=ep)
-    w.postgres.generate_database_credential = MagicMock(
-        return_value=MagicMock(token="oauth-token")
-    )
+    w.postgres.generate_database_credential = MagicMock(return_value=MagicMock(token="oauth-token"))
     return w
 
 
@@ -85,10 +82,13 @@ def _default_patchers() -> dict:
     return {
         "ensure_streaming_sp": patch(
             "services.pipeline_setup_service.ensure_streaming_sp",
-            new=AsyncMock(return_value={
-                "client_id": "sp-123", "status": "ok",
-                "results": [{"resource": "SP", "status": "created"}],
-            }),
+            new=AsyncMock(
+                return_value={
+                    "client_id": "sp-123",
+                    "status": "ok",
+                    "results": [{"resource": "SP", "status": "created"}],
+                }
+            ),
         ),
         "provision_project": patch(
             "services.pipeline_setup_service.provision_lakebase_project_and_branch",
@@ -110,9 +110,7 @@ def _default_patchers() -> dict:
             "services.pipeline_setup_service.deploy_lakets_ops_jobs",
             new=MagicMock(return_value=[{"job": "partition", "status": "created"}]),
         ),
-        "ws": patch.object(
-            pipeline_setup_service, "_new_ws", return_value=_make_ws()
-        ),
+        "ws": patch.object(pipeline_setup_service, "_new_ws", return_value=_make_ws()),
         "connect": patch("asyncpg.connect", new=AsyncMock(return_value=_stub_conn())),
     }
 
@@ -152,13 +150,13 @@ class TestStepOrdering:
             for p in patchers.values():
                 stack.enter_context(p)
             result = await pipeline_setup_service.setup_pipeline_lakebase(
-                _make_state(), _base_params(create_new_project=True, lb_project_id="new-proj"),
+                _make_state(),
+                _base_params(create_new_project=True, lb_project_id="new-proj"),
             )
 
         proj_mock.assert_awaited_once()
         assert proj_mock.await_args.args[0] == "new-proj"
-        assert any(s["step"] == "provision_lakebase_project_and_branch"
-                   for s in result["steps"])
+        assert any(s["step"] == "provision_lakebase_project_and_branch" for s in result["steps"])
 
     @pytest.mark.asyncio
     async def test_create_new_project_false_skips_project_creation(self) -> None:
@@ -172,12 +170,14 @@ class TestStepOrdering:
             for p in patchers.values():
                 stack.enter_context(p)
             result = await pipeline_setup_service.setup_pipeline_lakebase(
-                _make_state(), _base_params(create_new_project=False),
+                _make_state(),
+                _base_params(create_new_project=False),
             )
 
         proj_mock.assert_not_awaited()
-        assert not any(s["step"] == "provision_lakebase_project_and_branch"
-                       for s in result["steps"])
+        assert not any(
+            s["step"] == "provision_lakebase_project_and_branch" for s in result["steps"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,8 @@ class TestRollups:
             for p in patchers.values():
                 stack.enter_context(p)
             result = await pipeline_setup_service.setup_pipeline_lakebase(
-                _make_state(), _base_params(rollups=rollups),
+                _make_state(),
+                _base_params(rollups=rollups),
             )
 
         assert rollup_mock.await_count == 2
@@ -225,7 +226,8 @@ class TestRollups:
             for p in patchers.values():
                 stack.enter_context(p)
             await pipeline_setup_service.setup_pipeline_lakebase(
-                _make_state(), _base_params(rollups=[]),
+                _make_state(),
+                _base_params(rollups=[]),
             )
 
         rollup_mock.assert_not_awaited()
@@ -243,13 +245,15 @@ class TestDeployJobs:
         patchers = _default_patchers()
         deploy_mock = MagicMock(return_value=[{"job": "x", "status": "created"}])
         patchers["deploy_jobs"] = patch(
-            "services.pipeline_setup_service.deploy_lakets_ops_jobs", new=deploy_mock,
+            "services.pipeline_setup_service.deploy_lakets_ops_jobs",
+            new=deploy_mock,
         )
         with ExitStack() as stack:
             for p in patchers.values():
                 stack.enter_context(p)
             await pipeline_setup_service.setup_pipeline_lakebase(
-                _make_state(), _base_params(),
+                _make_state(),
+                _base_params(),
             )
 
         deploy_mock.assert_called_once()
@@ -277,26 +281,30 @@ class TestNonFatal:
             new=AsyncMock(side_effect=Exception("role boom")),
         )
         patchers["provision_table"] = patch(
-            "services.pipeline_setup_service.provision_lakebase_table", new=table_mock,
+            "services.pipeline_setup_service.provision_lakebase_table",
+            new=table_mock,
         )
         patchers["create_rollup"] = patch(
-            "services.pipeline_setup_service.lakets_service.create_rollup", new=rollup_mock,
+            "services.pipeline_setup_service.lakets_service.create_rollup",
+            new=rollup_mock,
         )
         patchers["deploy_jobs"] = patch(
-            "services.pipeline_setup_service.deploy_lakets_ops_jobs", new=deploy_mock,
+            "services.pipeline_setup_service.deploy_lakets_ops_jobs",
+            new=deploy_mock,
         )
         with ExitStack() as stack:
             for p in patchers.values():
                 stack.enter_context(p)
             result = await pipeline_setup_service.setup_pipeline_lakebase(
                 _make_state(),
-                _base_params(rollups=[
-                    {"name": "r", "bucket": "1 minute", "aggregates": ["avg(v)"]},
-                ]),
+                _base_params(
+                    rollups=[
+                        {"name": "r", "bucket": "1 minute", "aggregates": ["avg(v)"]},
+                    ]
+                ),
             )
 
-        role_step = next(s for s in result["steps"]
-                         if s["step"] == "provision_lakebase_role")
+        role_step = next(s for s in result["steps"] if s["step"] == "provision_lakebase_role")
         assert role_step["status"] == "failed"
         assert "role boom" in role_step["error"]
         # Downstream steps still ran.
@@ -315,11 +323,11 @@ class TestNonFatal:
             for p in patchers.values():
                 stack.enter_context(p)
             result = await pipeline_setup_service.setup_pipeline_lakebase(
-                _make_state(), _base_params(),
+                _make_state(),
+                _base_params(),
             )
 
-        deploy_step = next(s for s in result["steps"]
-                           if s["step"] == "deploy_lakets_ops_jobs")
+        deploy_step = next(s for s in result["steps"] if s["step"] == "deploy_lakets_ops_jobs")
         assert deploy_step["status"] == "failed"
         assert "deploy boom" in deploy_step["error"]
 
@@ -340,10 +348,12 @@ class TestNonFatal:
                 stack.enter_context(p)
             result = await pipeline_setup_service.setup_pipeline_lakebase(
                 _make_state(),
-                _base_params(rollups=[
-                    {"name": "good", "bucket": "1 minute", "aggregates": ["avg(v)"]},
-                    {"name": "bad", "bucket": "5 minutes", "aggregates": ["max(v)"]},
-                ]),
+                _base_params(
+                    rollups=[
+                        {"name": "good", "bucket": "1 minute", "aggregates": ["avg(v)"]},
+                        {"name": "bad", "bucket": "5 minutes", "aggregates": ["max(v)"]},
+                    ]
+                ),
             )
 
         rollup_steps = [s for s in result["steps"] if s["step"] == "create_rollup"]
@@ -359,8 +369,8 @@ class TestNonFatal:
 
 
 def _build_app() -> FastAPI:
+    from core.state import get_app_state
     from routes.setup import router as setup_router
-    from core.state import AppState, get_app_state
 
     app = FastAPI()
     app.include_router(setup_router)
@@ -383,17 +393,21 @@ class TestSetupRoute:
 
         async def _fake_setup(state, params):
             called["params"] = params
-            return {"steps": [{"step": "ensure_streaming_sp", "status": "ok"}],
-                    "lb_project_id": params["lb_project_id"]}
+            return {
+                "steps": [{"step": "ensure_streaming_sp", "status": "ok"}],
+                "lb_project_id": params["lb_project_id"],
+            }
 
         with patch("routes.setup.setup_pipeline_lakebase", new=_fake_setup):
-            status, payload = await _post({
-                "pipeline_id": "pipe-1",
-                "create_new_project": True,
-                "lb_project_id": "iot-demo",
-                "rollups": [{"name": "r", "bucket": "1 minute", "aggregates": ["avg(v)"]}],
-                "tiering": {"hot": "1 hour", "drop": "7 days"},
-            })
+            status, payload = await _post(
+                {
+                    "pipeline_id": "pipe-1",
+                    "create_new_project": True,
+                    "lb_project_id": "iot-demo",
+                    "rollups": [{"name": "r", "bucket": "1 minute", "aggregates": ["avg(v)"]}],
+                    "tiering": {"hot": "1 hour", "drop": "7 days"},
+                }
+            )
 
         assert status == 200
         assert payload["steps"][0]["step"] == "ensure_streaming_sp"
@@ -416,20 +430,24 @@ class TestSetupRoute:
 
     @pytest.mark.asyncio
     async def test_invalid_rollup_is_400(self) -> None:
-        status, payload = await _post({
-            "pipeline_id": "pipe-1",
-            "lb_project_id": "iot-demo",
-            "rollups": [{"bucket": "1 minute"}],  # missing name
-        })
+        status, payload = await _post(
+            {
+                "pipeline_id": "pipe-1",
+                "lb_project_id": "iot-demo",
+                "rollups": [{"bucket": "1 minute"}],  # missing name
+            }
+        )
         assert status == 400
         assert "rollup" in payload["error"].lower()
 
     @pytest.mark.asyncio
     async def test_invalid_tiering_is_400(self) -> None:
-        status, payload = await _post({
-            "pipeline_id": "pipe-1",
-            "lb_project_id": "iot-demo",
-            "tiering": {"hot": "1 hour"},  # missing drop
-        })
+        status, payload = await _post(
+            {
+                "pipeline_id": "pipe-1",
+                "lb_project_id": "iot-demo",
+                "tiering": {"hot": "1 hour"},  # missing drop
+            }
+        )
         assert status == 400
         assert "tiering" in payload["error"].lower()

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
 CURATED_INDUSTRIES: list[str] = ["manufacturing", "pharmaceutical", "energy", "automotive"]
 
 MODES: list[str] = ["realtime", "microbatch", "zerobus"]
@@ -188,10 +187,7 @@ _MODES: dict[str, dict] = {
         "id": "microbatch",
         "name": "Micro-batch",
         "to": "Delta table",
-        "desc": (
-            "Spark Structured Streaming in micro-batches → a Delta table "
-            "in Unity Catalog."
-        ),
+        "desc": ("Spark Structured Streaming in micro-batches → a Delta table in Unity Catalog."),
         "uses_kafka": True,
         "uses_lakebase": False,
         "has_metrics": True,

@@ -54,7 +54,7 @@ VALIDATION_DBR = "18.2.x-scala2.13"
 SERVICE_CREDENTIAL: str = os.getenv("UC_SERVICE_CREDENTIAL", "")
 DEFAULT_REGION = "us-east-1"
 
-MSK_PUBLIC_PORT = 9198   # reachable from fe-vm-shared-interop
+MSK_PUBLIC_PORT = 9198  # reachable from fe-vm-shared-interop
 MSK_PRIVATE_PORT = 9098  # IAM/private — probed but unreachable (no VPC peering)
 
 # 90-minute inactivity auto-terminate: default AND floor (admin may raise only).
@@ -123,8 +123,10 @@ def worker_sizing(
     warned rather than silently under-provisioned (M1).
     """
     workers = worker_count(
-        num_partitions, cores_per_worker,
-        min_workers=min_workers, max_workers=max_workers,
+        num_partitions,
+        cores_per_worker,
+        min_workers=min_workers,
+        max_workers=max_workers,
     )
     over_cap = num_partitions > max_workers * cores_per_worker
     return {
@@ -175,13 +177,13 @@ def build_validation_cluster_spec(
         "cluster_name": cluster_name or "iot-validation-harness",
         "spark_version": spark_version,
         "node_type_id": node_type_id,
-        "driver_node_type_id": node_type_id,   # driver == worker (§1.3)
-        "num_workers": num_workers,            # fixed → autoscaling OFF
+        "driver_node_type_id": node_type_id,  # driver == worker (§1.3)
+        "num_workers": num_workers,  # fixed → autoscaling OFF
         "autotermination_minutes": auto_terminate_min,
         "spark_conf": rtm_spark_conf(stream_stream_join=stream_stream_join),
-        "data_security_mode": "SINGLE_USER",   # dedicated / single-user
+        "data_security_mode": "SINGLE_USER",  # dedicated / single-user
         "single_user_name": single_user_name,
-        "runtime_engine": "STANDARD",          # Photon OFF
+        "runtime_engine": "STANDARD",  # Photon OFF
     }
 
     # Spot OFF: every node on-demand (first_on_demand covers driver + workers).

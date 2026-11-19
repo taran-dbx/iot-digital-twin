@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
-import os
-import subprocess
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,7 +23,9 @@ class TestGetInstalledVersion:
     @pytest.mark.asyncio
     async def test_returns_none_when_lakets_missing(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(side_effect=Exception('relation "lakets._version" does not exist'))
+        pool.fetchval = AsyncMock(
+            side_effect=Exception('relation "lakets._version" does not exist')
+        )
         result = await lakets_service.get_installed_version(pool)
         assert result is None
 
@@ -71,7 +71,9 @@ class TestResolveLakeTsSource:
         with pytest.raises(FileNotFoundError, match="LakeTS SQL not found"):
             lakets_service.resolve_lakets_source(explicit_path=str(missing))
 
-    def test_uses_env_sql_path_when_no_arg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_uses_env_sql_path_when_no_arg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         sql_file = tmp_path / "lakets.sql"
         sql_file.write_text("-- LakeTS v0.1.0\n")
         monkeypatch.setenv("LAKETS_SQL_PATH", str(sql_file))
@@ -181,7 +183,10 @@ class TestCreateChronotable:
         pool.execute = AsyncMock(return_value=None)
 
         already = await lakets_service.create_chronotable(
-            pool, table="sensor_readings", time_col="event_time", chunk="15 minutes",
+            pool,
+            table="sensor_readings",
+            time_col="event_time",
+            chunk="15 minutes",
         )
 
         assert already is False
@@ -194,7 +199,10 @@ class TestCreateChronotable:
         pool.fetchval = AsyncMock(return_value=7)  # registry probe returns existing id
 
         already = await lakets_service.create_chronotable(
-            pool, table="sensor_readings", time_col="event_time", chunk="15 minutes",
+            pool,
+            table="sensor_readings",
+            time_col="event_time",
+            chunk="15 minutes",
         )
 
         assert already is True
@@ -203,11 +211,15 @@ class TestCreateChronotable:
     @pytest.mark.asyncio
     async def test_passes_time_column_and_chunk_to_sql(self) -> None:
         import datetime as _dt
+
         pool = MagicMock()
         pool.fetchval = AsyncMock(side_effect=[None, 1])
 
         await lakets_service.create_chronotable(
-            pool, table="sensor_readings", time_col="event_time", chunk="15 minutes",
+            pool,
+            table="sensor_readings",
+            time_col="event_time",
+            chunk="15 minutes",
         )
 
         create_call = pool.fetchval.await_args_list[1]
@@ -229,7 +241,10 @@ class TestApplyTierPolicy:
         pool.execute = AsyncMock(return_value=None)
 
         already = await lakets_service.apply_tier_policy(
-            pool, table="sensor_readings", hot="1 hour", drop="7 days",
+            pool,
+            table="sensor_readings",
+            hot="1 hour",
+            drop="7 days",
         )
 
         assert already is False
@@ -242,7 +257,10 @@ class TestApplyTierPolicy:
         pool.fetchval = AsyncMock(return_value=17)
 
         already = await lakets_service.apply_tier_policy(
-            pool, table="sensor_readings", hot="1 hour", drop="7 days",
+            pool,
+            table="sensor_readings",
+            hot="1 hour",
+            drop="7 days",
         )
 
         assert already is True
@@ -251,11 +269,15 @@ class TestApplyTierPolicy:
     @pytest.mark.asyncio
     async def test_passes_intervals_as_params(self) -> None:
         import datetime as _dt
+
         pool = MagicMock()
         pool.fetchval = AsyncMock(side_effect=[None, 1])
 
         await lakets_service.apply_tier_policy(
-            pool, table="sensor_readings", hot="1 hour", drop="7 days",
+            pool,
+            table="sensor_readings",
+            hot="1 hour",
+            drop="7 days",
         )
 
         apply_call = pool.fetchval.await_args_list[1]
@@ -268,11 +290,17 @@ class TestApplyTierPolicy:
         pool = MagicMock()
         with pytest.raises(ValueError, match="hot .* must be less than drop"):
             await lakets_service.apply_tier_policy(
-                pool, table="sensor_readings", hot="7 days", drop="1 hour",
+                pool,
+                table="sensor_readings",
+                hot="7 days",
+                drop="1 hour",
             )
         with pytest.raises(ValueError, match="hot .* must be less than drop"):
             await lakets_service.apply_tier_policy(
-                pool, table="sensor_readings", hot="1 day", drop="1 day",
+                pool,
+                table="sensor_readings",
+                hot="1 day",
+                drop="1 day",
             )
 
 
@@ -285,12 +313,14 @@ class TestCheckLakehouseSyncReadiness:
     @pytest.mark.asyncio
     async def test_all_green(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(side_effect=[
-            "databricks_postgres",  # current_database
-            True,                    # wal2delta available
-            "0.1.0",                 # wal2delta installed version
-            True,                    # lakets.enable_sync present
-        ])
+        pool.fetchval = AsyncMock(
+            side_effect=[
+                "databricks_postgres",  # current_database
+                True,  # wal2delta available
+                "0.1.0",  # wal2delta installed version
+                True,  # lakets.enable_sync present
+            ]
+        )
         result = await lakets_service.check_lakehouse_sync_readiness(pool)
 
         assert result["database_compatible"] is True
@@ -303,9 +333,14 @@ class TestCheckLakehouseSyncReadiness:
     @pytest.mark.asyncio
     async def test_database_not_compatible(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(side_effect=[
-            "custom_db", True, "0.1.0", True,
-        ])
+        pool.fetchval = AsyncMock(
+            side_effect=[
+                "custom_db",
+                True,
+                "0.1.0",
+                True,
+            ]
+        )
         result = await lakets_service.check_lakehouse_sync_readiness(pool)
 
         assert result["database_compatible"] is False
@@ -317,9 +352,14 @@ class TestCheckLakehouseSyncReadiness:
     async def test_wal2delta_does_not_gate_readiness(self) -> None:
         # wal2delta is managed by the platform — absence doesn't block sync.
         pool = MagicMock()
-        pool.fetchval = AsyncMock(side_effect=[
-            "databricks_postgres", True, None, True,
-        ])
+        pool.fetchval = AsyncMock(
+            side_effect=[
+                "databricks_postgres",
+                True,
+                None,
+                True,
+            ]
+        )
         result = await lakets_service.check_lakehouse_sync_readiness(pool)
 
         assert result["wal2delta_available"] is True
@@ -330,9 +370,14 @@ class TestCheckLakehouseSyncReadiness:
     @pytest.mark.asyncio
     async def test_wal2delta_not_available_is_still_ready(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(side_effect=[
-            "databricks_postgres", False, None, True,
-        ])
+        pool.fetchval = AsyncMock(
+            side_effect=[
+                "databricks_postgres",
+                False,
+                None,
+                True,
+            ]
+        )
         result = await lakets_service.check_lakehouse_sync_readiness(pool)
 
         assert result["wal2delta_available"] is False
@@ -342,9 +387,14 @@ class TestCheckLakehouseSyncReadiness:
     @pytest.mark.asyncio
     async def test_lakets_sync_missing(self) -> None:
         pool = MagicMock()
-        pool.fetchval = AsyncMock(side_effect=[
-            "databricks_postgres", True, "0.1.0", False,
-        ])
+        pool.fetchval = AsyncMock(
+            side_effect=[
+                "databricks_postgres",
+                True,
+                "0.1.0",
+                False,
+            ]
+        )
         result = await lakets_service.check_lakehouse_sync_readiness(pool)
 
         assert result["lakets_sync_functions_present"] is False
@@ -378,10 +428,12 @@ class TestRunRetention:
     @pytest.mark.asyncio
     async def test_invokes_execute_retention_for_each_table(self) -> None:
         pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[
-            {"schema_name": "public", "table_name": "sensor_readings"},
-            {"schema_name": "public", "table_name": "sliding_aggregates"},
-        ])
+        pool.fetch = AsyncMock(
+            return_value=[
+                {"schema_name": "public", "table_name": "sensor_readings"},
+                {"schema_name": "public", "table_name": "sliding_aggregates"},
+            ]
+        )
         pool.fetchval = AsyncMock(side_effect=[5, 0])
 
         result = await lakets_service.run_retention(pool)
@@ -395,10 +447,12 @@ class TestRunRetention:
     @pytest.mark.asyncio
     async def test_per_table_failure_does_not_abort_rest(self) -> None:
         pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[
-            {"schema_name": "public", "table_name": "a"},
-            {"schema_name": "public", "table_name": "b"},
-        ])
+        pool.fetch = AsyncMock(
+            return_value=[
+                {"schema_name": "public", "table_name": "a"},
+                {"schema_name": "public", "table_name": "b"},
+            ]
+        )
         pool.fetchval = AsyncMock(side_effect=[RuntimeError("locked"), 3])
 
         result = await lakets_service.run_retention(pool)
@@ -414,29 +468,33 @@ class TestLaketsDashboard:
         self,
     ) -> None:
         """[C7226][regression] Preserve sensor rollup values in the dashboard map."""
-        bucket = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        bucket = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         refreshed_at = bucket + dt.timedelta(minutes=1)
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value={
-            "name": "sensor_1m",
-            "rollup_table": "_rollup_sensor_1m",
-            "bucket": "00:01:00",
-            "watermark": bucket,
-            "last_refreshed_at": refreshed_at,
-            "refresh_age_seconds": Decimal("4.25"),
-            "pending_invalidations": 2,
-        })
-        pool.fetch = AsyncMock(return_value=[
-            {
-                "bucket": bucket,
-                "sensor_name": "temperature",
-                "sample_count": Decimal("60"),
-                "avg_value": Decimal("21.75"),
-                "min_value": Decimal("20.5"),
-                "max_value": Decimal("23.0"),
-                "stddev_value": Decimal("0.625"),
+        pool.fetchrow = AsyncMock(
+            return_value={
+                "name": "sensor_1m",
+                "rollup_table": "_rollup_sensor_1m",
+                "bucket": "00:01:00",
+                "watermark": bucket,
+                "last_refreshed_at": refreshed_at,
+                "refresh_age_seconds": Decimal("4.25"),
+                "pending_invalidations": 2,
             }
-        ])
+        )
+        pool.fetch = AsyncMock(
+            return_value=[
+                {
+                    "bucket": bucket,
+                    "sensor_name": "temperature",
+                    "sample_count": Decimal("60"),
+                    "avg_value": Decimal("21.75"),
+                    "min_value": Decimal("20.5"),
+                    "max_value": Decimal("23.0"),
+                    "stddev_value": Decimal("0.625"),
+                }
+            ]
+        )
 
         section = await lakets_service._rollup_dashboard(pool)
 
@@ -493,28 +551,30 @@ class TestLaketsDashboard:
         self,
     ) -> None:
         """[C7225][regression] Serialize partition phases and numeric metadata."""
-        start = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        start = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         end = start + dt.timedelta(minutes=15)
         pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[
-            {
-                "name": "public.sensor_readings_20260901_080000",
-                "range_start": start,
-                "range_end": end,
-                "phase": "current",
-                "status": "active",
-                "recorded_row_count": 12,
-                "recorded_size_bytes": 4096,
-                "active_count": 1,
-                "tiered_count": 0,
-                "dropped_count": 0,
-                "total_count": 600,
-                "is_current": True,
-                "live_row_count": 13,
-                "live_size_bytes": 8192,
-                "age_seconds": Decimal("30.5"),
-            }
-        ])
+        pool.fetch = AsyncMock(
+            return_value=[
+                {
+                    "name": "public.sensor_readings_20260901_080000",
+                    "range_start": start,
+                    "range_end": end,
+                    "phase": "current",
+                    "status": "active",
+                    "recorded_row_count": 12,
+                    "recorded_size_bytes": 4096,
+                    "active_count": 1,
+                    "tiered_count": 0,
+                    "dropped_count": 0,
+                    "total_count": 600,
+                    "is_current": True,
+                    "live_row_count": 13,
+                    "live_size_bytes": 8192,
+                    "age_seconds": Decimal("30.5"),
+                }
+            ]
+        )
 
         partitions, current = await lakets_service._partition_dashboard(pool)
 
@@ -531,18 +591,20 @@ class TestLaketsDashboard:
     async def test_no_policy_preserves_tier_counts_c7225_regression(self) -> None:
         """[C7225][regression] Preserve tier counts without claiming eligibility."""
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value={
-            "active": 4,
-            "age_eligible": 0,
-            "durable_eligible": 0,
-            "tiered": 2,
-            "dropped": 1,
-            "policy_type": None,
-            "policy": None,
-            "enabled": None,
-            "last_run_at": None,
-            "committed_lsn": None,
-        })
+        pool.fetchrow = AsyncMock(
+            return_value={
+                "active": 4,
+                "age_eligible": 0,
+                "durable_eligible": 0,
+                "tiered": 2,
+                "dropped": 1,
+                "policy_type": None,
+                "policy": None,
+                "enabled": None,
+                "last_run_at": None,
+                "committed_lsn": None,
+            }
+        )
 
         section = await lakets_service._tiering_dashboard(pool)
 
@@ -563,13 +625,15 @@ class TestLaketsDashboard:
     ) -> None:
         """[C7225][regression] Report missing buckets without inventing samples."""
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value={
-            "sensor_count": 2,
-            "expected_bucket_count": 60,
-            "observed_bucket_count": 57,
-            "missing_bucket_count": 3,
-            "missing_bucket_percentage": Decimal("5.00"),
-        })
+        pool.fetchrow = AsyncMock(
+            return_value={
+                "sensor_count": 2,
+                "expected_bucket_count": 60,
+                "observed_bucket_count": 57,
+                "missing_bucket_count": 3,
+                "missing_bucket_percentage": Decimal("5.00"),
+            }
+        )
 
         section = await lakets_service._data_quality_dashboard(pool)
 
@@ -598,12 +662,8 @@ class TestLaketsDashboard:
         assert section["value"]["raw_error"] == "Raw aggregate query unavailable"
         assert section["value"]["source_event_rows"] is None
         assert section["value"]["persisted_rollup_rows"] == 12
-        assert (
-            section["value"]["event_to_rollup_row_reduction_percentage"] is None
-        )
-        assert "GROUP BY bucket, sensor_name" in (
-            lakets_service._RAW_AGGREGATE_COUNT_SQL
-        )
+        assert section["value"]["event_to_rollup_row_reduction_percentage"] is None
+        assert "GROUP BY bucket, sensor_name" in (lakets_service._RAW_AGGREGATE_COUNT_SQL)
         assert "sample_count" in lakets_service._ROLLUP_AGGREGATE_COUNT_SQL
 
     @pytest.mark.asyncio
@@ -639,24 +699,26 @@ class TestLaketsDashboard:
         self,
     ) -> None:
         """[C7225][regression] Expose cache event lag and update age."""
-        event_time = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        event_time = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(side_effect=[
-            {
-                "enabled": True,
-                "cache_table_name": "_lvc_sensor_readings",
-                "key_columns": ["sensor_name"],
-                "value_columns": ["event_time", "value"],
-            },
-            {
-                "cached_series": 8,
-                "source_event_time": event_time,
-                "cache_event_time": event_time - dt.timedelta(seconds=2),
-                "cache_updated_at": event_time + dt.timedelta(seconds=1),
-                "source_to_cache_event_lag_seconds": Decimal("2.0"),
-                "cache_update_age_seconds": Decimal("4.5"),
-            },
-        ])
+        pool.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "enabled": True,
+                    "cache_table_name": "_lvc_sensor_readings",
+                    "key_columns": ["sensor_name"],
+                    "value_columns": ["event_time", "value"],
+                },
+                {
+                    "cached_series": 8,
+                    "source_event_time": event_time,
+                    "cache_event_time": event_time - dt.timedelta(seconds=2),
+                    "cache_updated_at": event_time + dt.timedelta(seconds=1),
+                    "source_to_cache_event_lag_seconds": Decimal("2.0"),
+                    "cache_update_age_seconds": Decimal("4.5"),
+                },
+            ]
+        )
 
         section = await lakets_service._lvc_dashboard(pool)
 
@@ -674,18 +736,18 @@ class TestLaketsDashboard:
             def __str__(self) -> str:
                 return "0/16B6C50"
 
-        hot_latest = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.timezone.utc)
+        hot_latest = dt.datetime(2026, 9, 1, 8, 0, tzinfo=dt.UTC)
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value={
-            "hot_latest": hot_latest,
-            "sync_enabled": True,
-            "shadow_table_name": "_shadow_sensor_readings",
-            "committed_lsn": PgLsn(),
-            "wal_lag_bytes": Decimal("128"),
-        })
-        pool.fetchval = AsyncMock(
-            return_value=hot_latest - dt.timedelta(seconds=3)
+        pool.fetchrow = AsyncMock(
+            return_value={
+                "hot_latest": hot_latest,
+                "sync_enabled": True,
+                "shadow_table_name": "_shadow_sensor_readings",
+                "committed_lsn": PgLsn(),
+                "wal_lag_bytes": Decimal("128"),
+            }
         )
+        pool.fetchval = AsyncMock(return_value=hot_latest - dt.timedelta(seconds=3))
 
         section = await lakets_service._cdf_dashboard(pool)
 
@@ -711,15 +773,11 @@ async def test_unique_shadow_migration_is_atomic_and_idempotent_c7238():
     pool.fetchval = AsyncMock(side_effect=[True, True, True])
     pool.execute = AsyncMock(return_value="DO")
 
-    migrated = await lakets_service.reconcile_chronotable_shadow(
-        pool, shadow_table=target
-    )
+    migrated = await lakets_service.reconcile_chronotable_shadow(pool, shadow_table=target)
 
     assert migrated["status"] == "migrated"
     sql_calls = [call.args[0] for call in pool.execute.await_args_list]
-    cutover_index = next(
-        index for index, sql in enumerate(sql_calls) if "DO $reconcile$" in sql
-    )
+    cutover_index = next(index for index, sql in enumerate(sql_calls) if "DO $reconcile$" in sql)
     legacy_copy_index = next(
         index
         for index, sql in enumerate(sql_calls)
@@ -731,9 +789,7 @@ async def test_unique_shadow_migration_is_atomic_and_idempotent_c7238():
         if "FROM public.sensor_readings AS source_rows" in sql
     )
     marker_index = next(
-        index
-        for index, sql in enumerate(sql_calls)
-        if "lakets-cdf-backfill-complete:v1" in sql
+        index for index, sql in enumerate(sql_calls) if "lakets-cdf-backfill-complete:v1" in sql
     )
     cutover_sql = sql_calls[cutover_index]
     legacy_copy_sql = sql_calls[legacy_copy_index]
@@ -751,8 +807,7 @@ async def test_unique_shadow_migration_is_atomic_and_idempotent_c7238():
         for sql in sql_calls
     )
     assert any(
-        "CREATE UNIQUE INDEX CONCURRENTLY "
-        "_shadow_manufacturing_sensor_readings_id_uidx" in sql
+        "CREATE UNIQUE INDEX CONCURRENTLY _shadow_manufacturing_sensor_readings_id_uidx" in sql
         for sql in sql_calls
     )
     assert "DROP TABLE" not in "\n".join(sql_calls)
@@ -776,9 +831,7 @@ async def test_completed_shadow_fast_path_has_no_writes_c7254():
     pool.fetchval = AsyncMock()
     pool.execute = AsyncMock()
 
-    existing = await lakets_service.reconcile_chronotable_shadow(
-        pool, shadow_table=target
-    )
+    existing = await lakets_service.reconcile_chronotable_shadow(pool, shadow_table=target)
 
     assert existing["status"] == "already_exists"
     assert existing["copy_sources"] == []
@@ -808,9 +861,7 @@ async def test_interrupted_backfill_retries_after_cutover_c7255():
         return "OK"
 
     first_pool.execute = AsyncMock(side_effect=fail_during_legacy_copy)
-    interrupted = await lakets_service.reconcile_chronotable_shadow(
-        first_pool, shadow_table=target
-    )
+    interrupted = await lakets_service.reconcile_chronotable_shadow(first_pool, shadow_table=target)
 
     assert interrupted["status"] == "failed"
     assert any("DO $reconcile$" in sql for sql in first_sql)
@@ -829,14 +880,10 @@ async def test_interrupted_backfill_retries_after_cutover_c7255():
     retry_pool.fetchval = AsyncMock(side_effect=[True, True, True])
     retry_pool.execute = AsyncMock(return_value="OK")
 
-    recovered = await lakets_service.reconcile_chronotable_shadow(
-        retry_pool, shadow_table=target
-    )
+    recovered = await lakets_service.reconcile_chronotable_shadow(retry_pool, shadow_table=target)
 
     assert recovered["status"] == "migrated"
-    retry_sql = "\n".join(
-        call.args[0] for call in retry_pool.execute.await_args_list
-    )
+    retry_sql = "\n".join(call.args[0] for call in retry_pool.execute.await_args_list)
     assert "FROM lakets_cdf._shadow_sensor_readings AS source_rows" in retry_sql
     assert "FROM public.sensor_readings AS source_rows" in retry_sql
     assert "lakets-cdf-backfill-complete:v1" in retry_sql
@@ -859,9 +906,7 @@ async def test_new_shadow_without_legacy_copies_public_source_c7250():
     pool.fetchval = AsyncMock(side_effect=[True, False])
     pool.execute = AsyncMock(return_value="OK")
 
-    migrated = await lakets_service.reconcile_chronotable_shadow(
-        pool, shadow_table=target
-    )
+    migrated = await lakets_service.reconcile_chronotable_shadow(pool, shadow_table=target)
 
     assert migrated["status"] == "migrated"
     assert migrated["copy_sources"] == ["public.sensor_readings"]

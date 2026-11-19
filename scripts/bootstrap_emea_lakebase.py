@@ -25,7 +25,8 @@ async def main() -> int:
         results = await provision_lakebase_project_and_branch(project_id, branch_id)
         for r in results:
             mark = {"created": "+", "already_exists": "=", "failed": "!"}.get(
-                r.get("status", "?"), "?",
+                r.get("status", "?"),
+                "?",
             )
             print(f"  [{mark}] {r.get('resource')}: {r.get('status')}")
             if r.get("error"):
@@ -33,6 +34,7 @@ async def main() -> int:
 
     print("\n── endpoint discovery ──")
     from databricks.sdk import WorkspaceClient
+
     w = WorkspaceClient()
     hosts: dict = {}
     for project_id, branch_id in targets:

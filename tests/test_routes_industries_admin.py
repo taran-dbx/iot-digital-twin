@@ -53,11 +53,12 @@ def test_job_status_lookups_run_concurrently_c7251() -> None:
         {"mode": "microbatch", "job_id": "j2"},
     ]
     clients = [MagicMock(), MagicMock()]
-    with patch(
-        f"{MOD}.deployment_service._new_ws", MagicMock(side_effect=clients)
-    ) as new_ws, patch(
-        f"{MOD}.deployment_service.pipeline_status", side_effect=pipeline_status
-    ) as status_mock:
+    with (
+        patch(f"{MOD}.deployment_service._new_ws", MagicMock(side_effect=clients)) as new_ws,
+        patch(
+            f"{MOD}.deployment_service.pipeline_status", side_effect=pipeline_status
+        ) as status_mock,
+    ):
         result = industries_admin._job_running_lookup(deployments)
 
     assert set(result) == {"j1", "j2"}
@@ -77,14 +78,14 @@ def test_runtime_reconciliation_stops_all_tasks_on_failure_c7259() -> None:
         "detail": "data_producer: Driver stopped unexpectedly",
         "tasks": [{"task": "data_producer", "result": "FAILED"}],
     }
-    with patch(
-        f"{MOD}.deployment_service._new_ws", return_value=client
-    ), patch(
-        f"{MOD}.deployment_service.pipeline_status", return_value=degraded
-    ), patch(
-        f"{MOD}.deployment_service.stop_pipeline",
-        return_value={"state": "STOPPED", "paused": True},
-    ) as stop:
+    with (
+        patch(f"{MOD}.deployment_service._new_ws", return_value=client),
+        patch(f"{MOD}.deployment_service.pipeline_status", return_value=degraded),
+        patch(
+            f"{MOD}.deployment_service.stop_pipeline",
+            return_value={"state": "STOPPED", "paused": True},
+        ) as stop,
+    ):
         result = industries_admin._job_running_lookup(
             [{"mode": "realtime", "job_id": "j1"}],
             reconcile_failures=True,
@@ -100,30 +101,32 @@ def test_runtime_reconciliation_stops_all_tasks_on_failure_c7259() -> None:
 def test_public_runtime_lookup_never_mutates_jobs_c7259() -> None:
     """[C7259][security][regression] Read-only public polls cannot stop jobs."""
     client = MagicMock()
-    with patch(
-        f"{MOD}.deployment_service._new_ws", return_value=client
-    ), patch(
-        f"{MOD}.deployment_service.pipeline_status",
-        return_value={"state": "RUNNING", "degraded": True, "tasks": []},
-    ), patch(f"{MOD}.deployment_service.stop_pipeline") as stop:
-        industries_admin._job_running_lookup(
-            [{"mode": "realtime", "job_id": "j1"}]
-        )
+    with (
+        patch(f"{MOD}.deployment_service._new_ws", return_value=client),
+        patch(
+            f"{MOD}.deployment_service.pipeline_status",
+            return_value={"state": "RUNNING", "degraded": True, "tasks": []},
+        ),
+        patch(f"{MOD}.deployment_service.stop_pipeline") as stop,
+    ):
+        industries_admin._job_running_lookup([{"mode": "realtime", "job_id": "j1"}])
 
     stop.assert_not_called()
 
 
 def test_zerobus_failure_cancels_without_continuous_pause_c7259() -> None:
     client = MagicMock()
-    with patch(
-        f"{MOD}.deployment_service._new_ws", return_value=client
-    ), patch(
-        f"{MOD}.deployment_service.pipeline_status",
-        return_value={"state": "RUNNING", "degraded": True, "tasks": []},
-    ), patch(
-        f"{MOD}.deployment_service.stop_pipeline",
-        return_value={"state": "STOPPED"},
-    ) as stop:
+    with (
+        patch(f"{MOD}.deployment_service._new_ws", return_value=client),
+        patch(
+            f"{MOD}.deployment_service.pipeline_status",
+            return_value={"state": "RUNNING", "degraded": True, "tasks": []},
+        ),
+        patch(
+            f"{MOD}.deployment_service.stop_pipeline",
+            return_value={"state": "STOPPED"},
+        ) as stop,
+    ):
         industries_admin._job_running_lookup(
             [{"mode": "zerobus", "job_id": "j1"}],
             reconcile_failures=True,
@@ -172,12 +175,16 @@ class TestGuards:
 class TestCreateOrUpdateSetup:
     async def test_creates_new_draft_setup(self) -> None:
         created = {"id": "s1", "industry": "pharmaceutical", "status": "draft"}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=None),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock(return_value=created)
-        ) as create_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock(return_value=created)
+            ) as create_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -207,12 +214,16 @@ class TestCreateOrUpdateSetup:
             "status": "draft",
             "mode_configs": mode_configs,
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=None),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock(return_value=created)
-        ) as create_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock(return_value=created)
+            ) as create_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -227,12 +238,14 @@ class TestCreateOrUpdateSetup:
         assert create_mock.call_args.kwargs["mode_configs"] == mode_configs
 
     async def test_create_rejects_mode_config_without_selected_modes(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=None),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()
-        ) as create_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=None),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()) as create_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -245,14 +258,17 @@ class TestCreateOrUpdateSetup:
     async def test_updates_existing_setup_in_place(self) -> None:
         existing = {"id": "s1", "industry": "pharmaceutical"}
         updated = {"id": "s1", "industry": "pharmaceutical", "flavor": "classic"}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=existing),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock(return_value=updated)
-        ) as update_mock, patch(
-            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()
-        ) as create_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=existing),
+            ),
+            patch(
+                f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock(return_value=updated)
+            ) as update_mock,
+            patch(f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()) as create_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -275,12 +291,14 @@ class TestCreateOrUpdateSetup:
             "industry": "pharmaceutical",
             "enabled_modes": ["realtime"],
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=existing),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=existing),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -300,12 +318,14 @@ class TestCreateOrUpdateSetup:
                 "zerobus": {"rate_hz": 2400},
             },
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=existing),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=existing),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -317,14 +337,15 @@ class TestCreateOrUpdateSetup:
 
     async def test_create_only_on_existing_industry_rejected_409(self) -> None:
         existing = {"id": "s1", "industry": "pharmaceutical"}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=existing),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()
-        ) as create_mock, patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=existing),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()) as create_mock,
+            patch(f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.post(
                     "/api/admin/industries/pharmaceutical/setup",
@@ -348,13 +369,14 @@ class TestCreateOrUpdateSetup:
 
         setup_uuid = _uuid.UUID("6aa89e69-b749-4480-a5d6-f381b37e3dcf")
         existing = {"id": setup_uuid, "industry": "pharmaceutical"}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=existing),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=existing),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.create_setup", AsyncMock()),
+            patch(f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()),
         ):
             async with _client(_state()) as c:
                 resp = await c.post(
@@ -371,9 +393,7 @@ class TestCreateOrUpdateSetup:
 @pytest.mark.asyncio
 class TestUpdateModeConfig:
     async def test_rejects_frequency_outside_supported_range(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock()
-        ) as get_mock:
+        with _admin(True), patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock()) as get_mock:
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes/zerobus/config",
@@ -384,9 +404,7 @@ class TestUpdateModeConfig:
         get_mock.assert_not_awaited()
 
     async def test_rejects_fractional_frequency(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock()
-        ) as get_mock:
+        with _admin(True), patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock()) as get_mock:
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes/zerobus/config",
@@ -404,17 +422,19 @@ class TestUpdateModeConfig:
             "mode_configs": {"realtime": {"rate_hz": 2000}},
         }
         deployments = [{"mode": "realtime", "job_id": "42"}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}._job_running_lookup",
-            MagicMock(return_value={"42": {"running": True, "starting": False}}),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(
+                f"{MOD}._job_running_lookup",
+                MagicMock(return_value={"42": {"running": True, "starting": False}}),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes/realtime/config",
@@ -433,16 +453,16 @@ class TestUpdateModeConfig:
             "mode_configs": {"realtime": {"rate_hz": 2000}},
         }
         deployments = [{"mode": "realtime", "job_id": "42"}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}._job_running_lookup", MagicMock(return_value={})
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(f"{MOD}._job_running_lookup", MagicMock(return_value={})),
+            patch(f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock()) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes/realtime/config",
@@ -461,19 +481,20 @@ class TestUpdateModeConfig:
             "mode_configs": {"realtime": {"rate_hz": 2000}},
         }
         deployments = [{"mode": "realtime", "job_id": "42"}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}.deployment_service._new_ws", MagicMock(return_value=MagicMock())
-        ), patch(
-            f"{MOD}.deployment_service.pipeline_status",
-            MagicMock(side_effect=RuntimeError("Jobs API unavailable")),
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_mode_config", AsyncMock()
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(f"{MOD}.deployment_service._new_ws", MagicMock(return_value=MagicMock())),
+            patch(
+                f"{MOD}.deployment_service.pipeline_status",
+                MagicMock(side_effect=RuntimeError("Jobs API unavailable")),
+            ),
+            patch(f"{MOD}.pipeline_setup_repo.update_mode_config", AsyncMock()) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes/realtime/config",
@@ -502,19 +523,23 @@ class TestUpdateModeConfig:
         }
         deployments = [{"mode": "realtime", "job_id": "42"}]
         state = _state()
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}._job_running_lookup",
-            MagicMock(return_value={"42": {"running": False, "starting": False}}),
-        ) as runtime_lookup, patch(
-            f"{MOD}.pipeline_setup_repo.update_mode_config",
-            AsyncMock(return_value=updated),
-            create=True,
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(
+                f"{MOD}._job_running_lookup",
+                MagicMock(return_value={"42": {"running": False, "starting": False}}),
+            ) as runtime_lookup,
+            patch(
+                f"{MOD}.pipeline_setup_repo.update_mode_config",
+                AsyncMock(return_value=updated),
+                create=True,
+            ) as update_mock,
+        ):
             async with _client(state) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes/realtime/config",
@@ -552,11 +577,11 @@ class TestUpdatePipelineModes:
                 }
             },
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock()
-        ) as list_deployments:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock()) as list_deployments,
+        ):
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes",
@@ -581,11 +606,11 @@ class TestUpdatePipelineModes:
                 }
             },
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock()
-        ) as list_deployments:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock()) as list_deployments,
+        ):
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes",
@@ -607,13 +632,14 @@ class TestUpdatePipelineModes:
         }
         updated = {**setup, "enabled_modes": ["realtime", "microbatch", "zerobus"]}
 
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock(return_value=updated)
-        ) as update_mock:
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])),
+            patch(
+                f"{MOD}.pipeline_setup_repo.update_setup", AsyncMock(return_value=updated)
+            ) as update_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.patch(
                     "/api/admin/pipelines/s1/modes",
@@ -642,24 +668,29 @@ class TestUpdatePipelineModes:
         }
         delete_job = AsyncMock()
 
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=[deployment]),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources",
-            AsyncMock(return_value=[job_resource]),
-        ), patch(
-            f"{MOD}.deployment_service.make_job_deleter",
-            MagicMock(return_value=delete_job),
-        ), patch(
-            f"{MOD}.deployment_repo.delete_deployment", AsyncMock(return_value=True)
-        ) as delete_deployment, patch(
-            f"{MOD}.resource_ledger.mark_resource_status", AsyncMock()
-        ) as mark_resource, patch(
-            f"{MOD}.pipeline_setup_repo.update_setup",
-            AsyncMock(return_value={**setup, "enabled_modes": ["realtime"]}),
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=[deployment]),
+            ),
+            patch(
+                f"{MOD}.resource_ledger.list_resources",
+                AsyncMock(return_value=[job_resource]),
+            ),
+            patch(
+                f"{MOD}.deployment_service.make_job_deleter",
+                MagicMock(return_value=delete_job),
+            ),
+            patch(
+                f"{MOD}.deployment_repo.delete_deployment", AsyncMock(return_value=True)
+            ) as delete_deployment,
+            patch(f"{MOD}.resource_ledger.mark_resource_status", AsyncMock()) as mark_resource,
+            patch(
+                f"{MOD}.pipeline_setup_repo.update_setup",
+                AsyncMock(return_value={**setup, "enabled_modes": ["realtime"]}),
+            ),
         ):
             async with _client(_state()) as c:
                 resp = await c.patch(
@@ -687,20 +718,22 @@ class TestUpdatePipelineModes:
             "status": "deploying",
             "job_id": None,
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=[deployment]),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}.deployment_service.make_job_deleter"
-        ) as delete_job, patch(
-            f"{MOD}.deployment_repo.delete_deployment", AsyncMock(return_value=True)
-        ) as delete_deployment, patch(
-            f"{MOD}.pipeline_setup_repo.update_setup",
-            AsyncMock(return_value={**setup, "enabled_modes": ["realtime"]}),
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=[deployment]),
+            ),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
+            patch(f"{MOD}.deployment_service.make_job_deleter") as delete_job,
+            patch(
+                f"{MOD}.deployment_repo.delete_deployment", AsyncMock(return_value=True)
+            ) as delete_deployment,
+            patch(
+                f"{MOD}.pipeline_setup_repo.update_setup",
+                AsyncMock(return_value={**setup, "enabled_modes": ["realtime"]}),
+            ),
         ):
             async with _client(_state()) as c:
                 resp = await c.patch(
@@ -719,22 +752,31 @@ class TestUpdatePipelineModes:
 @pytest.mark.asyncio
 class TestGetSetupForIndustry:
     async def test_404_when_no_setup(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=None),
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=None),
+            ),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/industries/pharmaceutical/setup")
         assert resp.status_code == 404
 
     async def test_returns_existing_setup_with_contract(self) -> None:
-        setup = {"id": "s1", "industry": "pharmaceutical", "status": "draft",
-                 "enabled_modes": ["realtime"]}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=setup),
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
+        setup = {
+            "id": "s1",
+            "industry": "pharmaceutical",
+            "status": "draft",
+            "enabled_modes": ["realtime"],
+        }
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=setup),
+            ),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/industries/pharmaceutical/setup")
@@ -751,9 +793,12 @@ class TestGetSetupForIndustry:
 @pytest.mark.asyncio
 class TestProvision:
     async def test_404_when_no_setup(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=None),
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=None),
+            ),
         ):
             async with _client(_state()) as c:
                 resp = await c.post("/api/admin/industries/pharmaceutical/provision")
@@ -762,13 +807,17 @@ class TestProvision:
     async def test_setup_id_must_match_path_industry_c7268(self) -> None:
         """[C7268][defect][security] Prevent cross-industry provisioning."""
         setup = {"id": "s1", "industry": "manufacturing"}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup",
-            AsyncMock(return_value=setup),
-        ), patch(
-            f"{MOD}.industry_provisioning_service.provision_industry",
-            AsyncMock(),
-        ) as provision:
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup",
+                AsyncMock(return_value=setup),
+            ),
+            patch(
+                f"{MOD}.industry_provisioning_service.provision_industry",
+                AsyncMock(),
+            ) as provision,
+        ):
             async with _client(_state()) as client:
                 response = await client.post(
                     "/api/admin/industries/pharmaceutical/provision",
@@ -782,14 +831,17 @@ class TestProvision:
         setup = {"id": "s1", "industry": "pharmaceutical", "warehouse_id": "wh1"}
         summary = {"industry": "pharmaceutical", "sections": [], "catalog": "iot_pharmaceutical"}
         resources = [{"id": "r1", "resource_type": "uc_catalog"}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=setup),
-        ), patch(
-            f"{MOD}.industry_provisioning_service.provision_industry",
-            AsyncMock(return_value=summary),
-        ) as prov_mock, patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=setup),
+            ),
+            patch(
+                f"{MOD}.industry_provisioning_service.provision_industry",
+                AsyncMock(return_value=summary),
+            ) as prov_mock,
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)),
         ):
             async with _client(_state()) as c:
                 resp = await c.post("/api/admin/industries/pharmaceutical/provision")
@@ -806,16 +858,23 @@ class TestProvision:
         # A zerobus-only setup must NOT trigger realtime Lakebase branch
         # provisioning (which may not exist on this workspace) — the route
         # gates enable_realtime on enabled_modes.
-        setup = {"id": "s1", "industry": "pharmaceutical", "warehouse_id": "wh1",
-                 "enabled_modes": ["zerobus"]}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=setup),
-        ), patch(
-            f"{MOD}.industry_provisioning_service.provision_industry",
-            AsyncMock(return_value={"sections": []}),
-        ) as prov_mock, patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        setup = {
+            "id": "s1",
+            "industry": "pharmaceutical",
+            "warehouse_id": "wh1",
+            "enabled_modes": ["zerobus"],
+        }
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=setup),
+            ),
+            patch(
+                f"{MOD}.industry_provisioning_service.provision_industry",
+                AsyncMock(return_value={"sections": []}),
+            ) as prov_mock,
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
         ):
             async with _client(_state()) as c:
                 resp = await c.post("/api/admin/industries/pharmaceutical/provision")
@@ -823,16 +882,23 @@ class TestProvision:
         assert prov_mock.call_args.kwargs["enable_realtime"] is False
 
     async def test_realtime_setup_passes_enable_realtime_true(self) -> None:
-        setup = {"id": "s1", "industry": "pharmaceutical", "warehouse_id": "wh1",
-                 "enabled_modes": ["zerobus", "realtime"]}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=setup),
-        ), patch(
-            f"{MOD}.industry_provisioning_service.provision_industry",
-            AsyncMock(return_value={"sections": []}),
-        ) as prov_mock, patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        setup = {
+            "id": "s1",
+            "industry": "pharmaceutical",
+            "warehouse_id": "wh1",
+            "enabled_modes": ["zerobus", "realtime"],
+        }
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=setup),
+            ),
+            patch(
+                f"{MOD}.industry_provisioning_service.provision_industry",
+                AsyncMock(return_value={"sections": []}),
+            ) as prov_mock,
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
         ):
             async with _client(_state()) as c:
                 resp = await c.post("/api/admin/industries/pharmaceutical/provision")
@@ -841,12 +907,16 @@ class TestProvision:
 
     async def test_failed_preflight_returns_409(self) -> None:
         setup = {"id": "s1", "industry": "pharmaceutical"}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
-            AsyncMock(return_value=setup),
-        ), patch(
-            f"{MOD}.industry_provisioning_service.provision_industry",
-            AsyncMock(side_effect=RuntimeError("external location missing")),
+        with (
+            _admin(True),
+            patch(
+                f"{MOD}.pipeline_setup_repo.get_setup_by_industry",
+                AsyncMock(return_value=setup),
+            ),
+            patch(
+                f"{MOD}.industry_provisioning_service.provision_industry",
+                AsyncMock(side_effect=RuntimeError("external location missing")),
+            ),
         ):
             async with _client(_state()) as c:
                 resp = await c.post("/api/admin/industries/pharmaceutical/provision")
@@ -877,9 +947,7 @@ class TestListPipelines:
 
         with patch(f"{MOD}._refresh_industry_runtime_cache", blocked_refresh):
             async with _client(state) as c:
-                resp = await asyncio.wait_for(
-                    c.get("/api/industries/runtime"), timeout=0.2
-                )
+                resp = await asyncio.wait_for(c.get("/api/industries/runtime"), timeout=0.2)
             await refresh_started.wait()
 
         assert resp.status_code == 200
@@ -905,9 +973,7 @@ class TestListPipelines:
             return []
 
         with patch(f"{MOD}._list_pipeline_items", side_effect=delayed_items):
-            task = asyncio.create_task(
-                industries_admin._refresh_industry_runtime_cache(state, 0)
-            )
+            task = asyncio.create_task(industries_admin._refresh_industry_runtime_cache(state, 0))
             await refresh_started.wait()
             state.invalidate_industry_runtime_cache()
             release_refresh.set()
@@ -951,31 +1017,30 @@ class TestListPipelines:
             "mode_configs": {"realtime": {"rate_hz": 500}},
             "enabled_modes": ["realtime"],
         }
-        deployments = [
-            {"id": "d1", "mode": "realtime", "status": "deployed", "job_id": "j1"}
-        ]
+        deployments = [{"id": "d1", "mode": "realtime", "status": "deployed", "job_id": "j1"}]
         resources = AsyncMock(return_value=[])
-        with _admin(False), patch(
-            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", resources
-        ), patch(
-            f"{MOD}._job_running_lookup",
-            MagicMock(
-                return_value={
-                    "j1": {
-                        "running": False,
-                        "restartable": True,
-                        "detail": "data_producer: driver stopped",
-                        "tasks": [{"task": "producer", "message": "secret detail"}],
-                    }
-                }
+        with (
+            _admin(False),
+            patch(f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
             ),
-        ), patch(
-            f"{MOD}._flowing_lookup", AsyncMock(return_value={"realtime": True})
+            patch(f"{MOD}.resource_ledger.list_resources", resources),
+            patch(
+                f"{MOD}._job_running_lookup",
+                MagicMock(
+                    return_value={
+                        "j1": {
+                            "running": False,
+                            "restartable": True,
+                            "detail": "data_producer: driver stopped",
+                            "tasks": [{"task": "producer", "message": "secret detail"}],
+                        }
+                    }
+                ),
+            ),
+            patch(f"{MOD}._flowing_lookup", AsyncMock(return_value={"realtime": True})),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/industries/runtime")
@@ -988,9 +1053,7 @@ class TestListPipelines:
             "industry": "pharmaceutical",
             "mode_configs": {"realtime": {"rate_hz": 500}},
         }
-        assert pipeline["deployments"] == [
-            {"mode": "realtime", "status": "deployed"}
-        ]
+        assert pipeline["deployments"] == [{"mode": "realtime", "status": "deployed"}]
         assert "job_id" not in pipeline["deployments"][0]
         assert "bootstrap_servers" not in pipeline["setup"]
         assert "resource_health" not in pipeline
@@ -1013,9 +1076,7 @@ class TestListPipelines:
         async def list_deployments(_db, _setup_id):
             nonlocal active_deployments, max_active_deployments
             active_deployments += 1
-            max_active_deployments = max(
-                max_active_deployments, active_deployments
-            )
+            max_active_deployments = max(max_active_deployments, active_deployments)
             await asyncio.sleep(0.01)
             active_deployments -= 1
             return []
@@ -1028,16 +1089,18 @@ class TestListPipelines:
             active_resources -= 1
             return []
 
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(side_effect=list_deployments),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources",
-            AsyncMock(side_effect=list_resources),
-        ), patch(
-            f"{MOD}._job_running_lookup", MagicMock(return_value={})
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(side_effect=list_deployments),
+            ),
+            patch(
+                f"{MOD}.resource_ledger.list_resources",
+                AsyncMock(side_effect=list_resources),
+            ),
+            patch(f"{MOD}._job_running_lookup", MagicMock(return_value={})),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines")
@@ -1047,24 +1110,29 @@ class TestListPipelines:
         assert max_active_resources == industries_admin._LIST_PIPELINE_CONCURRENCY
 
     async def test_lists_with_contract_and_resource_health(self) -> None:
-        setups = [{"id": "s1", "industry": "pharmaceutical", "status": "deployed",
-                   "enabled_modes": ["realtime"]}]
+        setups = [
+            {
+                "id": "s1",
+                "industry": "pharmaceutical",
+                "status": "deployed",
+                "enabled_modes": ["realtime"],
+            }
+        ]
         # Deployed realtime but CDF not done -> unhealthy + not startable + stopped.
-        deployments = [{"id": "d1", "mode": "realtime", "status": "deployed",
-                        "job_id": "j1"}]
+        deployments = [{"id": "d1", "mode": "realtime", "status": "deployed", "job_id": "j1"}]
         resources = [
             {"id": "r1", "resource_type": "uc_catalog", "status": "active"},
             {"id": "r2", "resource_type": "job", "status": "active"},
         ]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)
-        ), patch(
-            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": False})
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)),
+            patch(f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": False})),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines")
@@ -1080,25 +1148,34 @@ class TestListPipelines:
         assert pipe["startable"] is False
         assert pipe["ready"] is False
         assert pipe["modes"][0] == {
-            "mode": "realtime", "status": "stopped",
-            "health": "unhealthy", "startable": False,
-            "runtime_detail": None, "tasks": [],
+            "mode": "realtime",
+            "status": "stopped",
+            "health": "unhealthy",
+            "startable": False,
+            "runtime_detail": None,
+            "tasks": [],
             "restartable": False,
-            "deployed": True, "flowing": False,
+            "deployed": True,
+            "flowing": False,
         }
         # resource ledger rollup preserved under resource_health
         assert pipe["resource_health"]["overall"] == "healthy"
         assert pipe["resource_health"]["jobs_running"] == 1
 
     async def test_draft_pipeline_when_no_deployments(self) -> None:
-        setups = [{"id": "s1", "industry": "pharmaceutical", "status": "draft",
-                   "enabled_modes": ["realtime"]}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
+        setups = [
+            {
+                "id": "s1",
+                "industry": "pharmaceutical",
+                "status": "draft",
+                "enabled_modes": ["realtime"],
+            }
+        ]
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=setups)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines")
@@ -1109,23 +1186,26 @@ class TestListPipelines:
 
     async def test_running_and_flowing_reports_running(self) -> None:
         # Deployed + RUNNING job + fresh data in the sink → running.
-        setup = {"id": "s1", "industry": "pharmaceutical", "status": "deployed",
-                 "enabled_modes": ["microbatch"], "validation_state": {"steps": {
-                     k: {"status": sm.PASSED}
-                     for k in sm.mode_required_keys("microbatch")}}}
-        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed",
-                        "job_id": "j1"}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})
-        ), patch(
-            f"{MOD}._flowing_lookup", AsyncMock(return_value={"microbatch": True})
+        setup = {
+            "id": "s1",
+            "industry": "pharmaceutical",
+            "status": "deployed",
+            "enabled_modes": ["microbatch"],
+            "validation_state": {
+                "steps": {k: {"status": sm.PASSED} for k in sm.mode_required_keys("microbatch")}
+            },
+        }
+        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed", "job_id": "j1"}]
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
+            patch(f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})),
+            patch(f"{MOD}._flowing_lookup", AsyncMock(return_value={"microbatch": True})),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines")
@@ -1141,24 +1221,21 @@ class TestListPipelines:
             "industry": "pharmaceutical",
             "status": "deployed",
             "enabled_modes": ["microbatch"],
-            "validation_state": {"steps": {
-                key: {"status": sm.PASSED}
-                for key in sm.mode_required_keys("microbatch")
-            }},
+            "validation_state": {
+                "steps": {key: {"status": sm.PASSED} for key in sm.mode_required_keys("microbatch")}
+            },
         }
-        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed",
-                        "job_id": "j1"}]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments",
-            AsyncMock(return_value=deployments),
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})
-        ), patch(
-            f"{MOD}._flowing_lookup", AsyncMock(return_value={})
+        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed", "job_id": "j1"}]
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.list_setups", AsyncMock(return_value=[setup])),
+            patch(
+                f"{MOD}.deployment_repo.list_deployments",
+                AsyncMock(return_value=deployments),
+            ),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
+            patch(f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})),
+            patch(f"{MOD}._flowing_lookup", AsyncMock(return_value={})),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines")
@@ -1174,28 +1251,42 @@ class TestListPipelines:
 @pytest.mark.asyncio
 class TestPipelineHealth:
     async def test_404_when_setup_missing(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=None)
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=None)),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines/nope/health")
         assert resp.status_code == 404
 
     async def test_returns_grouped_resource_health(self) -> None:
-        setup = {"id": "s1", "industry": "pharmaceutical", "status": "deployed",
-                 "enabled_modes": ["realtime"]}
+        setup = {
+            "id": "s1",
+            "industry": "pharmaceutical",
+            "status": "deployed",
+            "enabled_modes": ["realtime"],
+        }
         resources = [
-            {"id": "r1", "resource_type": "uc_catalog", "identifier": "iot_x",
-             "status": "active", "metadata": {}},
-            {"id": "r2", "resource_type": "job", "identifier": "j",
-             "status": "error", "metadata": {}},
+            {
+                "id": "r1",
+                "resource_type": "uc_catalog",
+                "identifier": "iot_x",
+                "status": "active",
+                "metadata": {},
+            },
+            {
+                "id": "r2",
+                "resource_type": "job",
+                "identifier": "j",
+                "status": "error",
+                "metadata": {},
+            },
         ]
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=resources)),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines/s1/health")
@@ -1211,23 +1302,25 @@ class TestPipelineHealth:
     async def test_no_ws_falls_back_to_deploy_gate_view(self) -> None:
         # Default path: no WorkspaceClient (no creds) -> Tier-1 checks skipped, the
         # endpoint still returns the ledger view + an empty checks list + e2e desc.
-        setup = {"id": "s1", "industry": "pharmaceutical", "status": "draft",
-                 "enabled_modes": ["realtime"]}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}._gather_api_health", AsyncMock(return_value=None)
+        setup = {
+            "id": "s1",
+            "industry": "pharmaceutical",
+            "status": "draft",
+            "enabled_modes": ["realtime"],
+        }
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
+            patch(f"{MOD}._gather_api_health", AsyncMock(return_value=None)),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines/s1/health")
         body = resp.json()
         assert body["checks"] == []
         assert body["cluster_state"] is None
-        assert body["health"] == "draft"          # deploy-gate view preserved
+        assert body["health"] == "draft"  # deploy-gate view preserved
         assert body["e2e_test"]["tier"] == "e2e"
         assert body["e2e_test"]["spins_interactive_cluster"] is True
 
@@ -1240,38 +1333,30 @@ class TestPipelineHealth:
             "status": "deployed",
             "enabled_modes": ["microbatch"],
             "validation_state": {
-                "steps": {
-                    key: {"status": sm.PASSED}
-                    for key in sm.mode_required_keys("microbatch")
-                }
+                "steps": {key: {"status": sm.PASSED} for key in sm.mode_required_keys("microbatch")}
             },
         }
-        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed",
-                        "job_id": "j1"}]
+        deployments = [{"id": "d1", "mode": "microbatch", "status": "deployed", "job_id": "j1"}]
         api = {
             "checks": [
-                {"name": "uc_catalog_schemas", "tier": "api", "status": "pass",
-                 "detail": "ok"},
-                {"name": "kafka_topics", "tier": "e2e", "status": "skip",
-                 "detail": "cluster-only"},
+                {"name": "uc_catalog_schemas", "tier": "api", "status": "pass", "detail": "ok"},
+                {"name": "kafka_topics", "tier": "e2e", "status": "skip", "detail": "cluster-only"},
             ],
             "health": "healthy",
             "startable": True,
             "cluster_state": "TERMINATED",
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=deployments)
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})
-        ), patch(
-            f"{MOD}._flowing_lookup",
-            AsyncMock(return_value={"microbatch": True}),
-        ), patch(
-            f"{MOD}._gather_api_health", AsyncMock(return_value=api)
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=deployments)),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
+            patch(f"{MOD}._job_running_lookup", MagicMock(return_value={"j1": True})),
+            patch(
+                f"{MOD}._flowing_lookup",
+                AsyncMock(return_value={"microbatch": True}),
+            ),
+            patch(f"{MOD}._gather_api_health", AsyncMock(return_value=api)),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines/s1/health")
@@ -1310,14 +1395,12 @@ class TestPipelineHealth:
             "startable": True,
             "cluster_state": None,
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])
-        ), patch(
-            f"{MOD}._gather_api_health", AsyncMock(return_value=api)
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(f"{MOD}.deployment_repo.list_deployments", AsyncMock(return_value=[])),
+            patch(f"{MOD}.resource_ledger.list_resources", AsyncMock(return_value=[])),
+            patch(f"{MOD}._gather_api_health", AsyncMock(return_value=api)),
         ):
             async with _client(_state()) as c:
                 resp = await c.get("/api/admin/pipelines/s1/health")
@@ -1334,8 +1417,9 @@ class TestPipelineHealth:
 @pytest.mark.asyncio
 class TestDeletePipeline:
     async def test_404_when_setup_missing(self) -> None:
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=None)
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=None)),
         ):
             async with _client(_state()) as c:
                 resp = await c.delete("/api/admin/pipelines/nope")
@@ -1343,14 +1427,15 @@ class TestDeletePipeline:
 
     async def test_tears_down_and_returns_result(self) -> None:
         setup = {"id": "s1", "industry": "pharmaceutical"}
-        teardown_result = {"success": True, "setup_id": "s1", "deleted_setup": True,
-                           "steps": []}
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.teardown_service.teardown_setup",
-            AsyncMock(return_value=teardown_result),
-        ) as td_mock:
+        teardown_result = {"success": True, "setup_id": "s1", "deleted_setup": True, "steps": []}
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.teardown_service.teardown_setup",
+                AsyncMock(return_value=teardown_result),
+            ) as td_mock,
+        ):
             async with _client(_state()) as c:
                 resp = await c.delete("/api/admin/pipelines/s1")
         assert resp.status_code == 200
@@ -1373,11 +1458,13 @@ class TestDeletePipeline:
                 }
             ],
         }
-        with _admin(True), patch(
-            f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)
-        ), patch(
-            f"{MOD}.teardown_service.teardown_setup",
-            AsyncMock(return_value=teardown_result),
+        with (
+            _admin(True),
+            patch(f"{MOD}.pipeline_setup_repo.get_setup", AsyncMock(return_value=setup)),
+            patch(
+                f"{MOD}.teardown_service.teardown_setup",
+                AsyncMock(return_value=teardown_result),
+            ),
         ):
             async with _client(_state()) as c:
                 resp = await c.delete("/api/admin/pipelines/s1")
@@ -1446,8 +1533,11 @@ async def test_smoke_setup_provision_list_delete_roundtrip(schema_ready) -> None
         db, industry="smoke_test_industry", status="draft", enabled_modes=["realtime"]
     )
     await resource_ledger.record_resource(
-        db, setup_id=setup["id"], resource_type="uc_catalog",
-        identifier="iot_smoke", teardown_order=10,
+        db,
+        setup_id=setup["id"],
+        resource_type="uc_catalog",
+        identifier="iot_smoke",
+        teardown_order=10,
     )
 
     resources = await resource_ledger.list_resources(db, setup["id"])

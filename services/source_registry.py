@@ -12,6 +12,7 @@ logger = logging.getLogger("iot_digital_twin.services.source_registry")
 # Key derivation
 # ---------------------------------------------------------------------------
 
+
 def derive_source_key(source_type: str, source_config: dict[str, Any]) -> str:
     """Return a normalized, lowercased key for the given source.
 
@@ -62,6 +63,7 @@ def derive_source_key(source_type: str, source_config: dict[str, Any]) -> str:
 # Availability check
 # ---------------------------------------------------------------------------
 
+
 async def check_source_available(
     db: Any,
     source_type: str,
@@ -97,6 +99,7 @@ async def check_source_available(
 # ---------------------------------------------------------------------------
 # Claim
 # ---------------------------------------------------------------------------
+
 
 async def claim_source(
     db: Any,
@@ -144,9 +147,7 @@ async def claim_source(
         error_name = type(e).__name__
         if "UniqueViolation" in error_name or "unique" in str(e).lower():
             # Race condition: another request claimed it between our check and insert
-            logger.info(
-                "Source claim race detected for pipeline=%s, re-checking", pipeline_id
-            )
+            logger.info("Source claim race detected for pipeline=%s, re-checking", pipeline_id)
             existing = await db.fetchrow(
                 """
                 SELECT pipeline_id, claimed_by
@@ -171,6 +172,7 @@ async def claim_source(
 # ---------------------------------------------------------------------------
 # Release
 # ---------------------------------------------------------------------------
+
 
 async def release_source(db: Any, pipeline_id: str) -> None:
     """Soft-delete all active source bindings for the given pipeline.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,10 +11,9 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from routes.lakets import router as lakets_router
 from core.state import AppState
+from routes.lakets import router as lakets_router
 from services import lakets_service
-
 
 DEPLOYMENT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -27,7 +26,9 @@ async def client():
         yield c
 
 
-def _mock_lb(fetch_return=None, fetchval_return=None, fetch_side=None, fetchval_side=None) -> MagicMock:
+def _mock_lb(
+    fetch_return=None, fetchval_return=None, fetch_side=None, fetchval_side=None
+) -> MagicMock:
     lb = MagicMock()
     lb.fetch = AsyncMock(return_value=fetch_return or [], side_effect=fetch_side)
     lb.fetchval = AsyncMock(return_value=fetchval_return, side_effect=fetchval_side)
@@ -47,12 +48,14 @@ def _patch_pipeline_lakebase(lb):
 
 def _ready_conn() -> MagicMock:
     conn = MagicMock()
-    conn.fetchval = AsyncMock(side_effect=[
-        "databricks_postgres",  # current_database
-        True,                    # wal2delta available
-        "0.1.0",                 # wal2delta installed
-        True,                    # lakets.enable_sync
-    ])
+    conn.fetchval = AsyncMock(
+        side_effect=[
+            "databricks_postgres",  # current_database
+            True,  # wal2delta available
+            "0.1.0",  # wal2delta installed
+            True,  # lakets.enable_sync
+        ]
+    )
     conn.close = AsyncMock(return_value=None)
     return conn
 
@@ -62,9 +65,12 @@ class TestSyncCheckRoute:
     async def test_direct_mode_returns_ready(self, client: AsyncClient) -> None:
         conn = _ready_conn()
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            response = await client.post("/api/lakets/sync/check", json={
-                "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
-            })
+            response = await client.post(
+                "/api/lakets/sync/check",
+                json={
+                    "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
+                },
+            )
         assert response.status_code == 200
         body = response.json()
         assert body["ready_to_enable"] is True
@@ -73,14 +79,22 @@ class TestSyncCheckRoute:
     @pytest.mark.asyncio
     async def test_returns_warning_when_not_ready(self, client: AsyncClient) -> None:
         conn = MagicMock()
-        conn.fetchval = AsyncMock(side_effect=[
-            "custom_db", True, "0.1.0", True,
-        ])
+        conn.fetchval = AsyncMock(
+            side_effect=[
+                "custom_db",
+                True,
+                "0.1.0",
+                True,
+            ]
+        )
         conn.close = AsyncMock(return_value=None)
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            response = await client.post("/api/lakets/sync/check", json={
-                "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
-            })
+            response = await client.post(
+                "/api/lakets/sync/check",
+                json={
+                    "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
+                },
+            )
         body = response.json()
         assert body["ready_to_enable"] is False
         assert "databricks_postgres" in body["reason"]
@@ -91,20 +105,24 @@ class TestSyncCheckRoute:
             "asyncpg.connect",
             new=AsyncMock(side_effect=RuntimeError("host unreachable")),
         ):
-            response = await client.post("/api/lakets/sync/check", json={
-                "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
-            })
+            response = await client.post(
+                "/api/lakets/sync/check",
+                json={
+                    "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
+                },
+            )
         body = response.json()
         assert body["ready_to_enable"] is False
         assert "host unreachable" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_autoscale_missing_project_id_surfaces_error(
-        self, client: AsyncClient
-    ) -> None:
-        response = await client.post("/api/lakets/sync/check", json={
-            "lakebase": {"mode": "autoscale"},
-        })
+    async def test_autoscale_missing_project_id_surfaces_error(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/api/lakets/sync/check",
+            json={
+                "lakebase": {"mode": "autoscale"},
+            },
+        )
         body = response.json()
         assert body["ready_to_enable"] is False
         assert "project_id" in body["error"].lower()
@@ -125,9 +143,7 @@ class TestCdfStatus:
         state = AppState()
         app = _build_app_with_state(state)
         with _patch_pipeline_lakebase(None):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get("/api/pipelines/pipe-1/cdf-status")
         assert resp.status_code == 200
         body = resp.json()
@@ -138,7 +154,7 @@ class TestCdfStatus:
     @pytest.mark.asyncio
     async def test_streaming_reports_latest_hot_timestamp_c7265(self) -> None:
         """[C7265][defect][regression] CDF status uses a cheap latest-row probe."""
-        latest = datetime(2026, 9, 22, 10, 30, tzinfo=timezone.utc)
+        latest = datetime(2026, 9, 22, 10, 30, tzinfo=UTC)
         lb = _mock_lb(
             fetch_return=[{"status": "STREAMING"}],
             fetchval_return=latest,
@@ -146,9 +162,7 @@ class TestCdfStatus:
         state = AppState()
         app = _build_app_with_state(state)
         with _patch_pipeline_lakebase(lb):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get("/api/pipelines/pipe-1/cdf-status")
         assert resp.status_code == 200
         body = resp.json()
@@ -210,9 +224,7 @@ class TestCdfStatus:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
-                response = await client.get(
-                    "/api/pipelines/legacy-pipeline/cdf-status"
-                )
+                response = await client.get("/api/pipelines/legacy-pipeline/cdf-status")
 
         query = lb.fetch.await_args.args[0]
         assert response.json()["status"] == "STREAMING"
@@ -229,9 +241,7 @@ class TestCdfStatus:
         state = AppState()
         app = _build_app_with_state(state)
         with _patch_pipeline_lakebase(lb):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get("/api/pipelines/pipe-1/cdf-status")
         body = resp.json()
         assert body["status"] == "SNAPSHOTTING"
@@ -244,9 +254,7 @@ class TestCdfStatus:
         state = AppState()
         app = _build_app_with_state(state)
         with _patch_pipeline_lakebase(lb):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get("/api/pipelines/pipe-1/cdf-status")
         assert resp.status_code == 200
         body = resp.json()
@@ -271,12 +279,15 @@ class TestCdfStatus:
         lb.fetch = AsyncMock(side_effect=fetch)
         state = AppState()
         app = _build_app_with_state(state)
-        with patch(
-            "routes.lakets.get_industry_lakebase",
-            new=AsyncMock(return_value=lb),
-        ), patch(
-            "routes.lakets._is_realtime_industry_deployment",
-            new=AsyncMock(return_value=True),
+        with (
+            patch(
+                "routes.lakets.get_industry_lakebase",
+                new=AsyncMock(return_value=lb),
+            ),
+            patch(
+                "routes.lakets._is_realtime_industry_deployment",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -384,23 +395,24 @@ class TestLaketsDashboard:
         legacy_resolver = AsyncMock()
         dashboard_service = AsyncMock(return_value=dashboard)
 
-        with patch(
-            "routes.lakets.get_industry_lakebase",
-            industry_resolver,
-        ), patch(
-            "routes.lakets.get_pipeline_lakebase",
-            legacy_resolver,
-        ), patch(
-            "routes.lakets.lakets_service.get_dashboard",
-            dashboard_service,
-            create=True,
+        with (
+            patch(
+                "routes.lakets.get_industry_lakebase",
+                industry_resolver,
+            ),
+            patch(
+                "routes.lakets.get_pipeline_lakebase",
+                legacy_resolver,
+            ),
+            patch(
+                "routes.lakets.lakets_service.get_dashboard",
+                dashboard_service,
+                create=True,
+            ),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
-                    f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard"
-                    "?industry=pharmaceutical"
+                    f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard?industry=pharmaceutical"
                 )
 
         assert resp.status_code == 200, resp.text
@@ -430,12 +442,8 @@ class TestLaketsDashboard:
         app = _build_app_with_state(state)
 
         with patch("routes.lakets.get_industry_lakebase", resolver):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
-                unknown = await c.get(
-                    "/api/pipelines/pipe-1/lakets/dashboard?industry=pharma"
-                )
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                unknown = await c.get("/api/pipelines/pipe-1/lakets/dashboard?industry=pharma")
                 malformed = await c.get(
                     "/api/pipelines/pipe-1/lakets/dashboard?industry=pharmaceutical%2F.."
                 )
@@ -456,12 +464,9 @@ class TestLaketsDashboard:
         app = _build_app_with_state(state)
 
         with patch("routes.lakets.get_industry_lakebase", resolver):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
-                    f"/api/pipelines/{DEPLOYMENT_ID}"
-                    "/lakets/dashboard?industry=pharmaceutical"
+                    f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard?industry=pharmaceutical"
                 )
 
         assert resp.status_code == 404
@@ -483,12 +488,9 @@ class TestLaketsDashboard:
         app = _build_app_with_state(state)
 
         with patch("routes.lakets.get_industry_lakebase", resolver):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
-                    "/api/pipelines/not-a-uuid/lakets/dashboard"
-                    "?industry=pharmaceutical"
+                    "/api/pipelines/not-a-uuid/lakets/dashboard?industry=pharmaceutical"
                 )
 
         assert resp.status_code == 400
@@ -507,12 +509,9 @@ class TestLaketsDashboard:
         app = _build_app_with_state(state)
 
         with patch("routes.lakets.get_industry_lakebase", resolver):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get(
-                    f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard"
-                    "?industry=pharmaceutical"
+                    f"/api/pipelines/{DEPLOYMENT_ID}/lakets/dashboard?industry=pharmaceutical"
                 )
 
         assert resp.status_code == 503
@@ -532,9 +531,7 @@ class TestLaketsDashboard:
             "routes.lakets.get_pipeline_lakebase",
             AsyncMock(return_value=None),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as c:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 resp = await c.get("/api/pipelines/pipe-1/lakets/dashboard")
 
         assert resp.status_code == 200

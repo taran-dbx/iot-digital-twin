@@ -1118,4 +1118,3 @@ export function FactoryPrototype() {
     </main>
   );
 }
-

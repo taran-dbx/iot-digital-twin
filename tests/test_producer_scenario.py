@@ -87,7 +87,9 @@ def _spindle_samples(ns: dict, ticks: int) -> list[float]:
 
 
 def _spindle_limit() -> tuple[float, float]:
-    rule = next(r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp")
+    rule = next(
+        r for r in list_alert_rules("manufacturing") if r.rule_id == "mfg-alert-spindle-temp"
+    )
     return rule.threshold, rule.hysteresis
 
 
@@ -145,7 +147,11 @@ class TestProducerSignal:
     def test_other_sensors_are_untouched_c7323_regression(self) -> None:
         """[C7323][regression] Only Spindle 3 temperature carries the heat event."""
         ns, s = _namespace("manufacturing")
-        payload = {"sensor_name": "cnc_1_vibration", "value": 2.0, "timestamp": float(s["normalSeconds"] + 40)}
+        payload = {
+            "sensor_name": "cnc_1_vibration",
+            "value": 2.0,
+            "timestamp": float(s["normalSeconds"] + 40),
+        }
         assert ns["_apply_scenario"](dict(payload)) == payload
 
     def test_non_manufacturing_has_no_scenario_c7324_regression(self) -> None:
@@ -158,7 +164,9 @@ class TestProducerSignal:
     def test_msk_iam_producer_applies_scenario_after_device_stamp_c7325_regression(self) -> None:
         """[C7325][regression] The live producer stamps device time, then applies the event."""
         source = PRODUCER_TS.read_text()
-        stamp = source.index('payload["timestamp"] = time.time()\n        payload = _apply_scenario(payload)')
+        stamp = source.index(
+            'payload["timestamp"] = time.time()\n        payload = _apply_scenario(payload)'
+        )
         assert stamp > 0
         assert "${producerSignalPython(industry)}" in source
         assert "_calibrate_simulator(sim, disable_random_faults=SCENARIO_ENABLED)" in source
@@ -226,7 +234,9 @@ class TestProductionGate:
         """[C7443][regression] The live producer drops stopped records before stamping; other industries are ungated."""
         source = PRODUCER_TS.read_text()
         gate = source.index("if not _production_allows(payload):\n            continue")
-        assert gate < source.index('payload["timestamp"] = time.time()\n        payload = _apply_scenario(payload)')
+        assert gate < source.index(
+            'payload["timestamp"] = time.time()\n        payload = _apply_scenario(payload)'
+        )
         ns, _ = _namespace("pharmaceutical")
         assert ns["_production_allows"]({"sensor_name": "cnc_1_spindle_temp"}) is True
         assert "PRODUCTION_CONTROL_FILE" not in ns

@@ -184,17 +184,13 @@ PRODUCTION_EVENT_INDEXES = (
 )
 
 ALERT_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS idx_alert_status_updated "
-    "ON alert (status, updated_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_alert_industry "
-    "ON alert (industry)",
-    "CREATE INDEX IF NOT EXISTS idx_alert_pipeline "
-    "ON alert (pipeline_id)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_status_updated ON alert (status, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_industry ON alert (industry)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_pipeline ON alert (pipeline_id)",
 )
 
 ALERT_EVENT_INDEXES = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_event_fingerprint "
-    "ON alert_event (fingerprint)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_event_fingerprint ON alert_event (fingerprint)",
     "CREATE INDEX IF NOT EXISTS idx_alert_event_alert_created "
     "ON alert_event (alert_id, created_at)",
 )
@@ -207,8 +203,7 @@ async def ensure_pipeline_setup_table(db: _Executor) -> None:
     """Create or additively upgrade the ``pipeline_setup`` table."""
     await db.execute(PIPELINE_SETUP_DDL)
     await db.execute(
-        "ALTER TABLE pipeline_setup "
-        "ADD COLUMN IF NOT EXISTS mode_configs JSONB DEFAULT '{}'::jsonb"
+        "ALTER TABLE pipeline_setup ADD COLUMN IF NOT EXISTS mode_configs JSONB DEFAULT '{}'::jsonb"
     )
 
 

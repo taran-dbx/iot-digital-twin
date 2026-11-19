@@ -43,9 +43,7 @@ class TestAlertDdlContract:
 
 class TestAlertSchemaLive:
     @pytest.mark.asyncio
-    async def test_ensure_creates_alert_tables_c7401_regression(
-        self, app_backend_conn
-    ) -> None:
+    async def test_ensure_creates_alert_tables_c7401_regression(self, app_backend_conn) -> None:
         """[C7401][regression] ensure_app_schema creates alert and alert_event."""
         await app_schema.ensure_app_schema(app_backend_conn)
         schema = await app_backend_conn.fetchval("SELECT current_schema()")
@@ -59,9 +57,7 @@ class TestAlertSchemaLive:
             assert exists
 
     @pytest.mark.asyncio
-    async def test_alert_status_check_rejects_invalid_c7401_defect(
-        self, app_backend_conn
-    ) -> None:
+    async def test_alert_status_check_rejects_invalid_c7401_defect(self, app_backend_conn) -> None:
         """[C7401][defect] Invalid status/severity fail closed."""
         await app_schema.ensure_app_schema(app_backend_conn)
         with pytest.raises(Exception):
@@ -98,9 +94,7 @@ class TestAlertSchemaLive:
             )
 
     @pytest.mark.asyncio
-    async def test_ensure_alert_schema_is_idempotent_c7401_smoke(
-        self, app_backend_conn
-    ) -> None:
+    async def test_ensure_alert_schema_is_idempotent_c7401_smoke(self, app_backend_conn) -> None:
         """[C7401][smoke] Re-running ensure_app_schema does not raise."""
         await app_schema.ensure_app_schema(app_backend_conn)
         await app_schema.ensure_app_schema(app_backend_conn)

@@ -55,27 +55,28 @@ from services import (
 )
 from services.app_repo_common import DBExecutor
 from services.databricks_sdk import detect_cloud
-from services.production_control import PRODUCTION_CONTROL_TOKEN, control_file_path
-from services.resource_ledger import record_resource
 
 # Validation hard-gate (spec §1.12) lives in its own module; re-exported here so
 # callers can use ``deployment_service.assert_gate_passed`` / ``REQUIRED_STEPS``.
 from services.deployment_gate import (  # noqa: F401  (re-export)
     COMMON_STEPS,
-    DeployGateError,
     REQUIRED_STEPS,
     VALID_MODES,
+    DeployGateError,
     assert_gate_passed,
     gate_passed,
     gate_status,
     outstanding_steps,
 )
+from services.production_control import PRODUCTION_CONTROL_TOKEN, control_file_path
+from services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.deployment")
 
 
 class RuntimeOAuthCredentialError(RuntimeError):
     """The app SP OAuth pair cannot be synchronized for a pipeline run."""
+
 
 # --- Compute constants (spec §1.3 RTM cluster, verified 2026-07-05) ----------
 # DBR 18.2 (Spark 4.1.0; latest 18.x GA) — service credentials verified on
@@ -130,9 +131,7 @@ _WS_SUBDIR = ".iot-digital-twin"
 
 
 # --- Worker sizing (M1) ------------------------------------------------------
-def compute_workers(
-    partition_count: int | None, cores_per_worker: int = CORES_PER_WORKER
-) -> int:
+def compute_workers(partition_count: int | None, cores_per_worker: int = CORES_PER_WORKER) -> int:
     """Return worker count per M1: ``clamp(ceil(partitions/cores), 1, 8)``.
 
     Guarantees ``workers × cores ≥ partitions`` so every Kafka partition has a
@@ -180,8 +179,7 @@ async def sync_runtime_oauth_secret(w: Any | None = None) -> dict:
     missing = [name for name, value in values.items() if not value]
     if missing:
         raise RuntimeOAuthCredentialError(
-            "Cannot run pipeline: missing runtime OAuth configuration "
-            + ", ".join(missing)
+            "Cannot run pipeline: missing runtime OAuth configuration " + ", ".join(missing)
         )
     result = await uc_secrets.put_secret(
         values["UC_CATALOG"],
@@ -205,10 +203,7 @@ def _current_user(w: Any) -> str:
 
 def _notebook_path(username: str, industry: str, mode: str, kind: str) -> str:
     ts = int(time.time())
-    return (
-        f"/Workspace/Users/{username}/{_WS_SUBDIR}/"
-        f"{industry}_{mode}_{kind}_{ts}"
-    )
+    return f"/Workspace/Users/{username}/{_WS_SUBDIR}/{industry}_{mode}_{kind}_{ts}"
 
 
 def _normalize_consumer_credentials(source: str) -> str:
@@ -219,9 +214,7 @@ def _normalize_consumer_credentials(source: str) -> str:
         "sss-industries-client-secret",
     )
     has_legacy_secret = any(marker in source for marker in legacy_markers)
-    has_baked_zerobus_id = bool(
-        re.search(r"^\s*ZB_CLIENT_ID\s*=", source, flags=re.MULTILINE)
-    )
+    has_baked_zerobus_id = bool(re.search(r"^\s*ZB_CLIENT_ID\s*=", source, flags=re.MULTILINE))
     if not has_legacy_secret and not has_baked_zerobus_id:
         return source
 
@@ -238,27 +231,20 @@ def _normalize_consumer_credentials(source: str) -> str:
     missing = [key for key, value in required.items() if not value]
     if missing:
         raise RuntimeOAuthCredentialError(
-            "Cannot deploy realtime consumer: missing runtime configuration "
-            + ", ".join(missing)
+            "Cannot deploy realtime consumer: missing runtime configuration " + ", ".join(missing)
         )
 
     normalized = re.sub(
         r"^(\s*ZB_CLIENT_ID\s*=\s*).*$",
-        lambda match: (
-            f"{match.group(1)}{json.dumps(runtime_config['DATABRICKS_CLIENT_ID'])}"
-        ),
+        lambda match: f"{match.group(1)}{json.dumps(runtime_config['DATABRICKS_CLIENT_ID'])}",
         source,
         flags=re.MULTILINE,
     )
     if not has_legacy_secret:
         return normalized
 
-    legacy_client_call = (
-        'dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
-    )
-    injected_config = (
-        f"_APP_SP_CLIENT_ID = {json.dumps(runtime_config['DATABRICKS_CLIENT_ID'])}"
-    )
+    legacy_client_call = 'dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")'
+    injected_config = f"_APP_SP_CLIENT_ID = {json.dumps(runtime_config['DATABRICKS_CLIENT_ID'])}"
     if re.search(r"^APP_SECRET_SCOPE = .*$", normalized, flags=re.MULTILINE):
         normalized = re.sub(
             r"^APP_SECRET_SCOPE = .*$",
@@ -513,9 +499,7 @@ def _create_or_reset_continuous_job(w: Any, job_name: str, tasks: list) -> tuple
         try:
             w.jobs.update(
                 job_id=existing,
-                new_settings=JobSettings(
-                    continuous=Continuous(pause_status=PauseStatus.PAUSED)
-                ),
+                new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.PAUSED)),
             )
         except Exception as exc:  # pragma: no cover - best-effort
             logger.warning("pause existing job %s skipped: %s", existing, exc)
@@ -525,14 +509,10 @@ def _create_or_reset_continuous_job(w: Any, job_name: str, tasks: list) -> tuple
             logger.warning("cancel existing job %s skipped: %s", existing, exc)
         w.jobs.reset(
             job_id=existing,
-            new_settings=JobSettings(
-                name=job_name, continuous=continuous, tasks=tasks, tags=tags
-            ),
+            new_settings=JobSettings(name=job_name, continuous=continuous, tasks=tasks, tags=tags),
         )
         return existing, "updated"
-    created = w.jobs.create(
-        name=job_name, continuous=continuous, tasks=tasks, tags=tags
-    )
+    created = w.jobs.create(name=job_name, continuous=continuous, tasks=tasks, tags=tags)
     return created.job_id, "created"
 
 
@@ -552,9 +532,7 @@ def _create_or_reset_serverless_job(
             ),
         )
         return existing, "updated"
-    created = w.jobs.create(
-        name=job_name, tasks=[task], environments=environments, tags=tags
-    )
+    created = w.jobs.create(name=job_name, tasks=[task], environments=environments, tags=tags)
     return created.job_id, "created"
 
 
@@ -794,21 +772,15 @@ async def deploy_pipeline(
         )
 
     if mode == "realtime":
-        await cdf_reconciliation_service.reconcile_realtime_cdf(
-            db, setup_id, ws=w
-        )
+        await cdf_reconciliation_service.reconcile_realtime_cdf(db, setup_id, ws=w)
 
     # realtime / microbatch — sized classic job cluster.
     partition_count = deployment.get("partition_count")
     if partition_count is None:
         partition_count = (setup.get("derived") or {}).get("partitions")
-    resolved_workers = (
-        num_workers if num_workers is not None else compute_workers(partition_count)
-    )
+    resolved_workers = num_workers if num_workers is not None else compute_workers(partition_count)
     resolved_node = (
-        node_type
-        or (setup.get("cluster_spec") or {}).get("node_type")
-        or DEFAULT_NODE_TYPE
+        node_type or (setup.get("cluster_spec") or {}).get("node_type") or DEFAULT_NODE_TYPE
     )
     return await _deploy_spark_pipeline(
         db,
@@ -827,17 +799,13 @@ async def deploy_pipeline(
 
 
 # --- Lifecycle: start / stop / status ----------------------------------------
-def start_pipeline(
-    job_id: Any, *, w: Any | None = None, continuous: bool = True
-) -> dict:
+def start_pipeline(job_id: Any, *, w: Any | None = None, continuous: bool = True) -> dict:
     """Unpause a Continuous job or trigger a run-once job."""
     w = w or _new_ws()
     if continuous:
         w.jobs.update(
             job_id=int(job_id),
-            new_settings=JobSettings(
-                continuous=Continuous(pause_status=PauseStatus.UNPAUSED)
-            ),
+            new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.UNPAUSED)),
         )
         logger.info("Unpaused continuous job %s", job_id)
         return {"job_id": job_id, "run_id": None, "state": "STARTING"}
@@ -865,18 +833,14 @@ async def start_deployment(
     await sync_runtime_oauth_secret(client)
     binding = None
     if mode == "realtime":
-        binding = await cdf_reconciliation_service.reconcile_realtime_cdf(
-            db, setup_id, ws=client
-        )
+        binding = await cdf_reconciliation_service.reconcile_realtime_cdf(db, setup_id, ws=client)
     started = start_pipeline(job_id, w=client, continuous=mode != "zerobus")
     if binding is not None:
         started["cdf"] = binding
     return started
 
 
-def stop_pipeline(
-    job_id: Any, *, w: Any | None = None, continuous: bool = True
-) -> dict:
+def stop_pipeline(job_id: Any, *, w: Any | None = None, continuous: bool = True) -> dict:
     """Pause a Continuous job, then cancel every active run.
 
     Pausing first prevents the Continuous scheduler from replacing the run
@@ -890,18 +854,12 @@ def stop_pipeline(
     try:
         w.jobs.update(
             job_id=int(job_id),
-            new_settings=JobSettings(
-                continuous=Continuous(pause_status=PauseStatus.PAUSED)
-            ),
+            new_settings=JobSettings(continuous=Continuous(pause_status=PauseStatus.PAUSED)),
         )
     except Exception as exc:
         status_code = getattr(exc, "status_code", None)
         message = str(exc).lower()
-        if (
-            status_code == 404
-            or "not found" in message
-            or "does not exist" in message
-        ):
+        if status_code == 404 or "not found" in message or "does not exist" in message:
             logger.info("Job %s already absent while stopping", job_id)
             return {
                 "job_id": job_id,
@@ -964,8 +922,15 @@ def pipeline_status(job_id: Any, *, w: Any | None = None) -> dict:
     w = w or _new_ws()
     runs = list(w.jobs.list_runs(job_id=int(job_id), active_only=False, limit=1))
     if not runs:
-        return {"job_id": job_id, "state": "IDLE", "life_cycle_state": None,
-                "degraded": False, "restartable": False, "detail": None, "tasks": []}
+        return {
+            "job_id": job_id,
+            "state": "IDLE",
+            "life_cycle_state": None,
+            "degraded": False,
+            "restartable": False,
+            "detail": None,
+            "tasks": [],
+        }
     run = runs[0]
     lcs = None
     rs = None
@@ -999,7 +964,7 @@ def pipeline_status(job_id: Any, *, w: Any | None = None) -> dict:
 
     tasks: list[dict] = []
     broken: list[str] = []
-    for tr in (task_list or []):
+    for tr in task_list or []:
         tlc = tr.state.life_cycle_state.value if tr.state and tr.state.life_cycle_state else None
         trs = tr.state.result_state.value if tr.state and tr.state.result_state else None
         tmsg = (tr.state.state_message if tr.state else None) or None
@@ -1077,11 +1042,7 @@ def make_job_deleter(w: Any | None = None):
             except Exception as exc:
                 status_code = getattr(exc, "status_code", None)
                 message = str(exc).lower()
-                if (
-                    status_code == 404
-                    or "not found" in message
-                    or "does not exist" in message
-                ):
+                if status_code == 404 or "not found" in message or "does not exist" in message:
                     logger.info("Notebook %s already absent during teardown", path)
                     continue
                 raise
