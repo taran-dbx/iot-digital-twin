@@ -5,7 +5,7 @@ autoscale OAuth (or direct PG creds), discovers tables with retention policies,
 and invokes ``lakets.execute_retention`` for each.
 
 Usage (local, against iot-lakets-demo):
-    DATABRICKS_CONFIG_PROFILE=e2-demo-field-eng \\
+    DATABRICKS_CONFIG_PROFILE=<cli-profile> \\
     LAKETS_PROJECT_ID=iot-lakets-demo \\
     .venv/bin/python -m scripts.run_lakets_retention
 """

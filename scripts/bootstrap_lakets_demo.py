@@ -11,9 +11,8 @@ connection) in two modes:
     Option B — direct    (role + password saved during step 3)
 
 Usage:
-    DATABRICKS_CONFIG_PROFILE=e2-demo-field-eng \\
-    LAKETS_SQL_PATH=/Users/.../Lakebase/timeseries/dist/lakets.sql \\
-    .venv/bin/python -m scripts.bootstrap_lakets_demo
+    LAKETS_SQL_PATH=/path/to/lakets.sql \\
+    .venv/bin/python -m scripts.bootstrap_lakets_demo --profile <cli-profile>
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from scripts._profile import require_profile
 from services.provisioning_service import (
     provision_lakebase_project_and_branch,
     provision_lakebase_role,
@@ -37,9 +37,7 @@ from services.provisioning_service import (
 PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
 DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
-DEFAULT_LAKETS_SQL = (
-    "/Users/taranpreetsingh.grover/Documents/Claude Projects/Lakebase/timeseries/dist/lakets.sql"
-)
+DEFAULT_LAKETS_SQL = str(_ROOT / "databricks" / "vendor" / "lakets.sql")
 
 
 def _print_header(title: str) -> None:
@@ -164,4 +162,5 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    require_profile()  # --profile <name> or $DATABRICKS_CONFIG_PROFILE; no default workspace
     sys.exit(asyncio.run(main()))

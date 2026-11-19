@@ -10,9 +10,8 @@ policy.  Afterwards the script inspects ``lakets.*`` registries to prove the
 end-to-end write landed.
 
 Usage:
-    DATABRICKS_CONFIG_PROFILE=e2-demo-field-eng \\
-    LAKETS_SQL_PATH=/Users/.../Lakebase/timeseries/dist/lakets.sql \\
-    .venv/bin/python -m scripts.smoke_pipeline_deploy
+    LAKETS_SQL_PATH=/path/to/lakets.sql \\
+    .venv/bin/python -m scripts.smoke_pipeline_deploy --profile <cli-profile>
 """
 
 from __future__ import annotations
@@ -33,6 +32,7 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 from routes.provisioning import router as provisioning_router
+from scripts._profile import require_profile
 
 PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
@@ -40,7 +40,7 @@ DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
 TABLE = os.getenv("PG_TABLE", "sensor_readings")
 LAKETS_SQL_PATH = os.getenv(
     "LAKETS_SQL_PATH",
-    "/Users/taranpreetsingh.grover/Documents/Claude Projects/Lakebase/timeseries/dist/lakets.sql",
+    str(_ROOT / "databricks" / "vendor" / "lakets.sql"),
 )
 
 
@@ -153,4 +153,5 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    require_profile()  # --profile <name> or $DATABRICKS_CONFIG_PROFILE; no default workspace
     sys.exit(asyncio.run(main()))

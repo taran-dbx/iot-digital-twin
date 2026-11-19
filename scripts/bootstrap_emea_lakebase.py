@@ -1,10 +1,9 @@
-"""Bootstrap iot-digital-twin + iot-lakets-demo Lakebase projects on e2-demo-emea."""
+"""Bootstrap iot-digital-twin + iot-lakets-demo Lakebase projects on example-demo-emea."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -12,6 +11,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from scripts._profile import require_profile
 from services.provisioning_service import provision_lakebase_project_and_branch
 
 
@@ -58,5 +58,5 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "e2-demo-emea")
+    require_profile()
     sys.exit(asyncio.run(main()))
