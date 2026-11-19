@@ -61,7 +61,8 @@ def _require_conversation(
     state: AppState, conversation_id: str, owner: str, industry: str | None = None
 ) -> dict[str, str]:
     record = state.genie_conversations.get(conversation_id)
-    if record is None:
+    if record is None or record.get("setup_id"):
+        # Pipeline-scoped conversations belong to routes.genie_pipelines.
         raise HTTPException(status_code=404, detail="unknown conversation")
     if record.get("owner") != owner:
         raise HTTPException(status_code=404, detail="unknown conversation")
@@ -70,7 +71,9 @@ def _require_conversation(
     return record
 
 
-async def _pack_for(state: AppState, parsed: genie_service.GenieRequest) -> dict[str, Any]:
+async def _pack_for(
+    state: AppState, parsed: genie_service.GenieRequest, user: str = ""
+) -> dict[str, Any]:
     alert = await _alert_record(state, parsed.alert_id)
     _assert_alert_industry(alert, parsed.industry)
     pack = genie_service.build_context_pack(
@@ -81,11 +84,13 @@ async def _pack_for(state: AppState, parsed: genie_service.GenieRequest) -> dict
         alert=alert,
     )
     sensor_names = [sensor["name"] for sensor in pack["catalog"]["sensors"]]
-    pack["telemetry_summary"] = await genie_service.fetch_telemetry_summary(
+    pack["telemetry_summary"] = await genie_service.bounded_telemetry_summary(
         parsed.industry,
         parsed.mode,
         sensor_names,
-        warehouse_id=None,
+        db=state.app_backend_db,
+        db_available=state.app_backend_available,
+        user_email=user,
     )
     return pack
 
@@ -121,7 +126,7 @@ async def start_conversation(
         await _require_conversations_authorized(state)
         body: dict[str, Any] = await request.json()
         parsed = genie_service.validate_request(body)
-        pack = await _pack_for(state, parsed)
+        pack = await _pack_for(state, parsed, user)
         result = await _sdk_call(state, genie_service.start_conversation, parsed.question, pack)
         _remember(state, result["conversation_id"], user, parsed.industry)
         return result
@@ -145,7 +150,7 @@ async def add_message(
         body: dict[str, Any] = await request.json()
         parsed = genie_service.validate_request(body)
         _require_conversation(state, conversation_id, user, parsed.industry)
-        pack = await _pack_for(state, parsed)
+        pack = await _pack_for(state, parsed, user)
         return await _sdk_call(
             state,
             genie_service.create_message,

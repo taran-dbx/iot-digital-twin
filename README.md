@@ -144,6 +144,7 @@ run locally through `pre-commit`.
 | [docs/README.md](docs/README.md) | Index of the documentation |
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, alerts, Genie copilot, auth, storage |
 | [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites, troubleshooting |
+| [docs/genie.md](docs/genie.md) | Shared copilot space, per-pipeline Genie spaces, permissions, API |
 | [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
 | [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |

@@ -254,3 +254,35 @@ def test_update_pipeline_config_no_db_returns_empty_dict():
         isvc.update_pipeline_config(FakeState(), "pid-1", {"rate_hz": 5})
     )
     assert merged == {}
+
+
+def test_get_catalog_exposes_industry_first_setup_id(monkeypatch):
+    """Genie per-pipeline routes need pipeline_setup.id next to deployment_id."""
+
+    class FakeBackendDb:
+        async def fetch(self, query):
+            assert "ps.id AS setup_id" in query
+            return [
+                {
+                    "deployment_id": "22222222-2222-2222-2222-222222222222",
+                    "setup_id": "11111111-1111-1111-1111-111111111111",
+                    "industry": "manufacturing",
+                    "mode": "realtime",
+                }
+            ]
+
+    class FakeState:
+        app_backend_db = FakeBackendDb()
+
+    async def fake_list(_state):
+        return []
+
+    monkeypatch.setattr(isvc, "_list_pipelines", fake_list)
+    cat = asyncio.get_event_loop().run_until_complete(isvc.get_catalog(FakeState()))
+    mfg = next(c for c in cat if c["id"] == "manufacturing")
+    realtime = next(m for m in mfg["modes"] if m["id"] == "realtime")
+    idle = next(m for m in mfg["modes"] if m["id"] == "zerobus")
+
+    assert realtime["setup_id"] == "11111111-1111-1111-1111-111111111111"
+    assert realtime["deployment_id"] == "22222222-2222-2222-2222-222222222222"
+    assert idle["setup_id"] is None and idle["deployment_id"] is None

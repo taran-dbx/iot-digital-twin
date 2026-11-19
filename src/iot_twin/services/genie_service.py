@@ -12,9 +12,12 @@ Genie may explain and recommend.  It cannot mutate alerts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,7 +31,7 @@ from iot_twin.domain.catalog import (
     list_maintenance_history,
     list_sensors,
 )
-from iot_twin.services.dbsql_service import execute_dbsql
+from iot_twin.services.dbsql_service import execute_dbsql, resolve_warehouse_id
 from iot_twin.services.industry.industry_catalog_service import TABLE_KINDS, industry_table
 from iot_twin.services.industry.industry_templates import MODES
 from iot_twin.services.intelligence_catalog_service import reference_tables
@@ -43,6 +46,10 @@ _INJECTION_KEYS = frozenset({"tables", "context", "table", "uc_tables", "allowed
 MAX_QUESTION_CHARS = 4000
 SDK_TIMEOUT_S = 20.0
 ALLOWLIST_CONFIRM_ENV = "GENIE_ALLOWLIST_CONFIRMED"
+ALLOWLIST_CACHE_TTL_S = 60.0
+TELEMETRY_TIMEOUT_S = 5.0
+_KNOWN_DATA_SOURCE_KINDS = ("tables", "metric_views")
+UNSUPPORTED_SOURCE_PREFIX = "unsupported_data_source:"
 
 
 class GenieDisabledError(RuntimeError):
@@ -122,30 +129,88 @@ def _status_value(status: object) -> str:
     return str(status)
 
 
+def _field(item: object, name: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def _attachment_text(item: object) -> str | None:
+    text = _field(item, "text")
+    if text is None or isinstance(text, str):
+        return text
+    content = _field(text, "content")
+    return str(content) if content is not None else None
+
+
+def _attachment_query(item: object) -> dict[str, Any] | None:
+    query = _field(item, "query")
+    if query is None:
+        return None
+    if isinstance(query, str):
+        return {"sql": query, "description": None}
+    sql = _field(query, "query")
+    if sql is None:
+        sql = _field(query, "sql")
+    description = _field(query, "description")
+    return {
+        "sql": str(sql) if sql is not None else None,
+        "description": str(description) if description is not None else None,
+    }
+
+
+def _attachment_suggestions(item: object) -> list[str]:
+    suggested = _field(item, "suggested_questions")
+    if suggested is None:
+        return []
+    questions = suggested if isinstance(suggested, list) else _field(suggested, "questions")
+    return [str(q) for q in (questions or [])]
+
+
+def _serialize_attachment(item: object) -> dict[str, Any]:
+    attachment_id = _field(item, "attachment_id")
+    return {
+        "attachment_id": str(attachment_id) if attachment_id is not None else None,
+        "text": _attachment_text(item),
+        "query": _attachment_query(item),
+        "suggested_questions": _attachment_suggestions(item),
+    }
+
+
 def _serialize_attachments(attachments: object) -> list[dict[str, Any]]:
+    """Normalize SDK/dict attachments to ``{attachment_id, text, query, suggested_questions}``."""
     if not attachments:
         return []
-    out: list[dict[str, Any]] = []
-    for item in attachments:
-        if isinstance(item, dict):
-            out.append(item)
-            continue
-        raw = {}
-        for field in ("text", "query", "attachment_id", "query_result"):
-            value = getattr(item, field, None)
-            if value is not None:
-                raw[field] = (
-                    value if isinstance(value, (str, int, float, bool, list, dict)) else str(value)
-                )
-        if raw:
-            out.append(raw)
-    return out
+    return [_serialize_attachment(item) for item in attachments]
+
+
+_WRAPPER_OPEN = "[TRUSTED_CONTEXT]"
+_UNTRUSTED_CLOSE = "[/UNTRUSTED_OBSERVATIONS]"
+_QUESTION_MARKER = "\n\nUser question:\n"
+
+
+def extract_user_question(content: str | None) -> str | None:
+    """Return only the user's question from a :func:`render_trusted_prompt` text.
+
+    Plain content passes through.  The marker is searched after the untrusted
+    block (JSON there cannot hold a raw newline), so observation data cannot
+    forge it.  A wrapper without the marker yields None — never the wrapper.
+    """
+    if not content or _WRAPPER_OPEN not in content:
+        return content
+    tail_start = content.find(_UNTRUSTED_CLOSE)
+    marker = content.find(_QUESTION_MARKER, max(tail_start, 0))
+    if tail_start < 0 or marker < 0:
+        return None
+    question = content[marker + len(_QUESTION_MARKER) :]
+    return question[:-1] if question.endswith("\n") else question
 
 
 def serialize_message(message: object, *, conversation_id: str, message_id: str) -> dict[str, Any]:
     content = getattr(message, "content", None)
     if content is None:
         content = getattr(message, "text", None)
+    content = extract_user_question(content) if isinstance(content, str) else content
     error = getattr(message, "error", None)
     if error is not None and not isinstance(error, str):
         error = getattr(error, "message", None) or str(error)
@@ -222,60 +287,76 @@ def allowed_uc_tables(industry: str, mode: str) -> list[str]:
     return list(reference_tables().values())
 
 
+def parse_space_tables(serialized: object) -> list[str] | None:
+    """Return sorted table/metric-view identifiers from a ``serialized_space`` JSON.
+
+    Returns None when the payload is missing or not a recognizable space.
+    """
+    if not isinstance(serialized, str) or not serialized.strip():
+        return None
+    try:
+        payload = json.loads(serialized)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    sources = payload.get("data_sources", {})
+    if not isinstance(sources, dict):
+        return None
+    names: list[str] = []
+    for key in _KNOWN_DATA_SOURCE_KINDS:
+        for item in sources.get(key) or []:
+            identifier = item.get("identifier") if isinstance(item, dict) else None
+            if identifier:
+                names.append(str(identifier))
+    # Any other non-empty data-source kind can never be in an expected set, so
+    # it forces a mismatch (fail closed) instead of being silently ignored.
+    unknown = [
+        f"{UNSUPPORTED_SOURCE_PREFIX}{key}"
+        for key, value in sources.items()
+        if key not in _KNOWN_DATA_SOURCE_KINDS and value
+    ]
+    return sorted(names) + sorted(unknown)
+
+
+def _legacy_table_names(space: object) -> list[str] | None:
+    raw = getattr(space, "tables", None)
+    if not isinstance(raw, (list, tuple)):
+        return None
+    names: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            names.append(item)
+            continue
+        for attr in ("identifier", "name", "table_name", "full_name", "fqn"):
+            value = item.get(attr) if isinstance(item, dict) else getattr(item, attr, None)
+            if value:
+                names.append(str(value))
+                break
+    return names
+
+
 def inspect_space_tables(
     client: Any | None = None, space_id: str | None = None
 ) -> list[str] | None:
-    """Best-effort SDK inspection of Genie space table attachments.
+    """Return the Genie space's data-source tables via ``get_space``.
 
-    Returns None when the SDK cannot list space tables reliably.
+    Uses ``include_serialized_space=True`` and parses ``data_sources``.  Returns
+    None when the space cannot be inspected (disabled, SDK error, no payload).
     """
     try:
         sid = require_enabled(space_id)
         api = client or _workspace_client()
-        genie = getattr(api, "genie", None)
-        if genie is None:
-            return None
-        space = None
-        for method_name in ("get_space", "get", "get_space_detail"):
-            method = getattr(genie, method_name, None)
-            if callable(method):
-                try:
-                    space = method(sid) if method_name != "get" else method(space_id=sid)
-                    break
-                except TypeError:
-                    try:
-                        space = method(space_id=sid)
-                        break
-                    except Exception:
-                        continue
-                except Exception:
-                    continue
-        if space is None:
-            return None
-        raw = (
-            getattr(space, "tables", None)
-            or getattr(space, "warehouse_tables", None)
-            or getattr(space, "data_sources", None)
-            or getattr(space, "serialized_space", None)
-        )
-        names: list[str] = []
-        if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
-            return None
-        for item in raw:
-            if isinstance(item, str):
-                names.append(item)
-                continue
-            for attr in ("name", "table_name", "full_name", "fqn"):
-                value = getattr(item, attr, None) if not isinstance(item, dict) else item.get(attr)
-                if value:
-                    names.append(str(value))
-                    break
-        return names
+        space = api.genie.get_space(sid, include_serialized_space=True)
     except GenieDisabledError:
         return None
-    except Exception:
-        logger.info("Genie space table inspection is unavailable")
+    except Exception as exc:
+        logger.info("Genie space table inspection is unavailable: %s", type(exc).__name__)
         return None
+    parsed = parse_space_tables(getattr(space, "serialized_space", None))
+    if parsed is not None:
+        return parsed
+    return _legacy_table_names(space)
 
 
 def _allowlist_manually_confirmed() -> bool:
@@ -283,10 +364,46 @@ def _allowlist_manually_confirmed() -> bool:
     return raw in {"1", "true", "yes"}
 
 
+_STATIC_REQUIREMENT = (
+    "Configure the Genie space data sources to exactly the dedicated "
+    "intelligence_* tables/views listed in expected_tables. Prompt "
+    "text does not enforce Unity Catalog authorization."
+)
+_STATIC_MANUAL_REQUIREMENT = (
+    "Genie space table inspection is unavailable. Set "
+    f"{ALLOWLIST_CONFIRM_ENV}=true only after an admin verifies "
+    "the space data sources equal the intelligence tables in "
+    "expected_tables. Prompt text does not grant table access."
+)
+_PIPELINE_MISMATCH = (
+    "Genie space data sources do not match the tables expected for this "
+    "pipeline. Redeploy the pipeline to refresh its Genie space."
+)
+_PIPELINE_UNINSPECTABLE = (
+    "Genie space tables could not be inspected, so this pipeline's space "
+    "stays disabled. Try again shortly."
+)
+
+
+def _verdict(discovered: list[str], expected: list[str]) -> bool:
+    return bool(expected) and set(discovered) == set(expected)
+
+
 def space_table_allowlist_status(
-    client: Any | None = None, space_id: str | None = None
+    client: Any | None = None,
+    space_id: str | None = None,
+    expected_tables: list[str] | None = None,
+    allow_manual: bool | None = None,
 ) -> dict[str, Any]:
-    expected = sorted(allowed_uc_tables("", ""))
+    """Compare the space's tables with ``expected_tables``.
+
+    ``expected_tables`` defaults to the static copilot's intelligence_* set.
+    Per-pipeline spaces pass their own set; for them the manual
+    ``GENIE_ALLOWLIST_CONFIRMED`` override is never honored (fail closed).
+    """
+    pipeline = expected_tables is not None
+    manual_ok = (not pipeline) if allow_manual is None else allow_manual
+    expected = sorted(allowed_uc_tables("", "") if expected_tables is None else expected_tables)
     discovered = inspect_space_tables(client, space_id)
     payload: dict[str, Any] = {
         "authorization_enforced": False,
@@ -294,44 +411,85 @@ def space_table_allowlist_status(
         "space_tables": discovered,
         "verified": False,
         "manual_confirmed": False,
-        "requirement": (
-            "Configure the Genie space data sources to exactly the dedicated "
-            "intelligence_* tables/views listed in expected_tables. Prompt "
-            "text does not enforce Unity Catalog authorization."
-        ),
     }
     if discovered is None:
-        confirmed = _allowlist_manually_confirmed()
-        payload["status"] = "manual_required"
-        payload["manual_confirmed"] = confirmed
-        payload["authorization_enforced"] = confirmed
-        if not confirmed:
-            payload["requirement"] = (
-                "Genie space table inspection is unavailable. Set "
-                f"{ALLOWLIST_CONFIRM_ENV}=true only after an admin verifies "
-                "the space data sources equal the intelligence tables in "
-                "expected_tables. Prompt text does not grant table access."
-            )
-        return payload
-    expected_set = set(expected)
-    found_set = set(discovered)
-    payload["verified"] = expected_set == found_set and bool(expected_set)
-    payload["authorization_enforced"] = payload["verified"]
-    payload["status"] = "matched" if payload["verified"] else "mismatch"
-    if not payload["verified"]:
-        payload["requirement"] = (
-            "Genie space data sources must exactly match the dedicated "
-            "intelligence_* tables/views in expected_tables. Prompt text "
-            "does not enforce Unity Catalog authorization."
-        )
-    return payload
+        confirmed = manual_ok and _allowlist_manually_confirmed()
+        unconfirmed = _PIPELINE_UNINSPECTABLE if pipeline else _STATIC_MANUAL_REQUIREMENT
+        return {
+            **payload,
+            "status": "manual_required",
+            "manual_confirmed": confirmed,
+            "authorization_enforced": confirmed,
+            "requirement": _STATIC_REQUIREMENT if confirmed else unconfirmed,
+        }
+    verified = _verdict(discovered, expected)
+    return {
+        **payload,
+        "verified": verified,
+        "authorization_enforced": verified,
+        "status": "matched" if verified else "mismatch",
+        "requirement": _PIPELINE_MISMATCH if pipeline else _STATIC_REQUIREMENT,
+    }
+
+
+# --- Verified-allowlist cache (per-pipeline spaces only) ---------------------
+_cache_lock = threading.Lock()
+_allowlist_cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, Any]]] = {}
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def invalidate_allowlist_cache(space_id: str | None = None) -> None:
+    """Drop cached verifications for ``space_id`` (or all when None)."""
+    global _allowlist_cache
+    with _cache_lock:
+        _allowlist_cache = {
+            key: value
+            for key, value in _allowlist_cache.items()
+            if space_id is not None and key[0] != space_id
+        }
+
+
+def _cached_verification(key: tuple[str, tuple[str, ...]]) -> dict[str, Any] | None:
+    with _cache_lock:
+        entry = _allowlist_cache.get(key)
+    if entry is None or _monotonic() - entry[0] > ALLOWLIST_CACHE_TTL_S:
+        return None
+    return entry[1]
+
+
+def _store_verification(key: tuple[str, tuple[str, ...]], payload: dict[str, Any]) -> None:
+    global _allowlist_cache
+    with _cache_lock:
+        _allowlist_cache = {**_allowlist_cache, key: (_monotonic(), payload)}
+
+
+def cached_allowlist_status(
+    client: Any | None, space_id: str, expected_tables: list[str]
+) -> dict[str, Any]:
+    """Pipeline allowlist status; only *verified* results are cached (~60s)."""
+    key = (str(space_id), tuple(sorted(expected_tables)))
+    cached = _cached_verification(key)
+    if cached is not None:
+        return cached
+    status = space_table_allowlist_status(client, space_id, expected_tables)
+    if status.get("authorization_enforced"):
+        _store_verification(key, status)
+    return status
 
 
 def require_table_allowlist(
-    client: Any | None = None, space_id: str | None = None
+    client: Any | None = None,
+    space_id: str | None = None,
+    expected_tables: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Block conversations unless the intelligence table allowlist is authorized."""
-    allowlist = space_table_allowlist_status(client, space_id)
+    """Block conversations unless the space's table allowlist is authorized."""
+    if expected_tables is not None and space_id:
+        allowlist = cached_allowlist_status(client, space_id, expected_tables)
+    else:
+        allowlist = space_table_allowlist_status(client, space_id, expected_tables)
     if allowlist.get("authorization_enforced"):
         return allowlist
     raise GenieDisabledError(
@@ -467,9 +625,10 @@ def start_conversation(
     *,
     space_id: str | None = None,
     client: Any | None = None,
+    expected_tables: list[str] | None = None,
 ) -> dict[str, str]:
     sid = require_enabled(space_id)
-    require_table_allowlist(client, sid)
+    require_table_allowlist(client, sid, expected_tables)
     api = client or _workspace_client()
     content = render_trusted_prompt(question, context_pack)
     wait = api.genie.start_conversation(space_id=sid, content=content)
@@ -484,9 +643,10 @@ def create_message(
     *,
     space_id: str | None = None,
     client: Any | None = None,
+    expected_tables: list[str] | None = None,
 ) -> dict[str, str]:
     sid = require_enabled(space_id)
-    require_table_allowlist(client, sid)
+    require_table_allowlist(client, sid, expected_tables)
     api = client or _workspace_client()
     content = render_trusted_prompt(question, context_pack)
     wait = api.genie.create_message(
@@ -509,9 +669,10 @@ def get_message(
     *,
     space_id: str | None = None,
     client: Any | None = None,
+    expected_tables: list[str] | None = None,
 ) -> dict[str, Any]:
     sid = require_enabled(space_id)
-    require_table_allowlist(client, sid)
+    require_table_allowlist(client, sid, expected_tables)
     api = client or _workspace_client()
     message = api.genie.get_message(
         space_id=sid,
@@ -521,6 +682,40 @@ def get_message(
     return serialize_message(message, conversation_id=conversation_id, message_id=message_id)
 
 
+def get_attachment_query_result(
+    conversation_id: str,
+    message_id: str,
+    attachment_id: str,
+    *,
+    space_id: str | None = None,
+    client: Any | None = None,
+    expected_tables: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return ``{columns, rows, truncated}`` for a query attachment (rows capped)."""
+    from iot_twin.services.genie.genie_space_service import query_result_payload
+
+    sid = require_enabled(space_id)
+    require_table_allowlist(client, sid, expected_tables)
+    api = client or _workspace_client()
+    response = api.genie.get_message_attachment_query_result(
+        space_id=sid,
+        conversation_id=conversation_id,
+        message_id=message_id,
+        attachment_id=attachment_id,
+    )
+    return query_result_payload(response)
+
+
+def _telemetry_source(industry: str, mode: str, pipeline_scope: bool) -> tuple[str, str | None]:
+    """``(table FQN, row filter)`` for the telemetry summary query."""
+    if not pipeline_scope:
+        return industry_table(industry, mode), None
+    from iot_twin.services.genie.genie_space_content import telemetry_row_filter
+    from iot_twin.services.genie.genie_space_service import telemetry_table
+
+    return telemetry_table(industry, mode), telemetry_row_filter(mode, industry)
+
+
 async def fetch_telemetry_summary(
     industry: str,
     mode: str,
@@ -528,11 +723,24 @@ async def fetch_telemetry_summary(
     *,
     execute_sql: Any | None = None,
     warehouse_id: str | None = None,
+    db: Any | None = None,
+    db_available: bool = False,
+    user_email: str = "",
+    pipeline_scope: bool = False,
 ) -> list[dict[str, Any]]:
-    """Best-effort recent telemetry from the allowlisted industry table."""
+    """Best-effort recent telemetry from the allowlisted industry table.
+
+    ``pipeline_scope`` reads the table the per-pipeline Genie space uses
+    (``genie_space_service.telemetry_table`` — the CDC shadow table for
+    realtime, with the dashboard's change-type/industry row filter).
+
+    The warehouse comes from ``warehouse_id`` when given, else
+    :func:`services.dbsql_service.resolve_warehouse_id` (env override →
+    app-global settings → the caller's saved warehouse).
+    """
     if not sensor_names or mode not in TABLE_KINDS:
         return []
-    warehouse = warehouse_id or os.getenv("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    warehouse = warehouse_id or await resolve_warehouse_id(db, db_available, user_email)
     if not warehouse:
         return []
     catalog = get_uc_catalog()
@@ -540,15 +748,16 @@ async def fetch_telemetry_summary(
     if not catalog or not schema:
         return []
     try:
-        fqn = industry_table(industry, mode)
+        fqn, row_filter = _telemetry_source(industry, mode, pipeline_scope)
     except (RuntimeError, ValueError):
         return []
     quoted_names = ", ".join("'" + name.replace("'", "''") + "'" for name in sensor_names)
     table_sql = sql_fqn(*fqn.split("."))
+    extra = f"AND {row_filter} " if row_filter else ""
     sql = (
         f"SELECT sensor_name, AVG(value) AS avg_value, MAX(value) AS max_value, "
         f"COUNT(*) AS n FROM {table_sql} "
-        f"WHERE sensor_name IN ({quoted_names}) "
+        f"WHERE sensor_name IN ({quoted_names}) {extra}"
         f"AND event_time > current_timestamp() - INTERVAL 15 MINUTES "
         f"GROUP BY sensor_name LIMIT 50"
     )
@@ -562,6 +771,20 @@ async def fetch_telemetry_summary(
     if not rows:
         return []
     return [dict(row) for row in rows]
+
+
+async def bounded_telemetry_summary(
+    industry: str, mode: str, sensor_names: list[str], **kwargs: Any
+) -> list[dict[str, Any]]:
+    """:func:`fetch_telemetry_summary` capped at ``TELEMETRY_TIMEOUT_S`` (→ ``[]``)."""
+    try:
+        return await asyncio.wait_for(
+            fetch_telemetry_summary(industry, mode, sensor_names, **kwargs),
+            timeout=TELEMETRY_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.info("Genie telemetry summary timed out after %ss", TELEMETRY_TIMEOUT_S)
+        return []
 
 
 def status_payload(client: Any | None = None) -> dict[str, Any]:

@@ -219,3 +219,13 @@ async def app_backend_conn():
             await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         finally:
             await conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_genie_allowlist_cache():
+    """Per-pipeline Genie allowlist verifications are process-cached; isolate tests."""
+    from iot_twin.services import genie_service
+
+    genie_service.invalidate_allowlist_cache()
+    yield
+    genie_service.invalidate_allowlist_cache()

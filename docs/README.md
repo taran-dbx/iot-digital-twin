@@ -4,6 +4,7 @@
 |---|---|
 | [architecture.md](architecture.md) | Components and data flow for the three pipeline flavors, alerts, Genie copilot, intelligence catalog, production control, auth |
 | [deployment.md](deployment.md) | Declarative Automation Bundle deploys, variables, binding, prerequisites, troubleshooting |
+| [genie.md](genie.md) | Shared copilot space, per-pipeline Genie spaces for every industry, permissions, API, limits |
 | [api.md](api.md) | API routes grouped by router module; live OpenAPI at `/docs` and `/openapi.json` |
 
 Related documents elsewhere in the repo: [../README.md](../README.md),

@@ -37,6 +37,7 @@ RESOURCE_TYPES = (
     "grant",
     "cdf_sync",
     "metrics_table",
+    "genie_space",
 )
 
 

@@ -35,6 +35,7 @@ Additive only — this module does not touch ``app.yaml`` / ``core/lakebase.py``
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -757,7 +758,7 @@ async def deploy_pipeline(
     single_user_name = single_user_name or _current_user(w)
 
     if mode == "zerobus":
-        return await _deploy_zerobus_pipeline(
+        result = await _deploy_zerobus_pipeline(
             db,
             setup_id=setup_id,
             deployment_id=deployment_id,
@@ -766,6 +767,15 @@ async def deploy_pipeline(
             single_user_name=single_user_name,
             w=w,
             base_parameters=base_parameters,
+        )
+        return await _attach_genie_space(
+            db,
+            setup=setup,
+            setup_id=setup_id,
+            deployment_id=deployment_id,
+            mode=mode,
+            result=result,
+            w=w,
         )
 
     if mode == "realtime":
@@ -779,7 +789,7 @@ async def deploy_pipeline(
     resolved_node = (
         node_type or (setup.get("cluster_spec") or {}).get("node_type") or DEFAULT_NODE_TYPE
     )
-    return await _deploy_spark_pipeline(
+    result = await _deploy_spark_pipeline(
         db,
         setup_id=setup_id,
         deployment_id=deployment_id,
@@ -793,6 +803,74 @@ async def deploy_pipeline(
         w=w,
         cloud=cloud,
     )
+    return await _attach_genie_space(
+        db,
+        setup=setup,
+        setup_id=setup_id,
+        deployment_id=deployment_id,
+        mode=mode,
+        result=result,
+        w=w,
+    )
+
+
+# --- Per-pipeline Genie space (best-effort, every industry) --------------
+GENIE_SPACE_TIMEOUT_S = 60.0
+
+
+def _with_warning(result: dict, message: str) -> dict:
+    return {**result, "warnings": [*(result.get("warnings") or []), message]}
+
+
+async def _attach_genie_space(
+    db: DBExecutor,
+    *,
+    setup: dict,
+    setup_id: Any,
+    deployment_id: Any,
+    mode: str,
+    result: dict,
+    w: Any,
+) -> dict:
+    """Create/refresh the pipeline's Genie space after a successful deploy.
+
+    Never fails the deploy: any error is returned as a ``warnings`` entry.
+    """
+    from iot_twin.services.genie import genie_space_service
+
+    industry = setup.get("industry")
+    if not genie_space_service.industry_supported(industry):
+        return result
+    try:
+        warehouse_id = await genie_space_service.genie_warehouse(db, setup)
+        space = await asyncio.wait_for(
+            genie_space_service.ensure_pipeline_space(
+                db,
+                setup_id=setup_id,
+                deployment_id=deployment_id,
+                industry=str(industry),
+                mode=mode,
+                warehouse_id=warehouse_id,
+                w=w,
+            ),
+            timeout=GENIE_SPACE_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning("Genie space provisioning timed out for setup %s mode %s", setup_id, mode)
+        return _with_warning(
+            result,
+            f"Genie space provisioning timed out after {GENIE_SPACE_TIMEOUT_S:g}s; "
+            "redeploy to retry",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Genie space provisioning failed for setup %s mode %s: %s",
+            setup_id,
+            mode,
+            exc,
+        )
+        return _with_warning(result, f"Genie space was not provisioned: {str(exc)[:300]}")
+    return {**result, "genie_space": space}
 
 
 # --- Lifecycle: start / stop / status ----------------------------------------

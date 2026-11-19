@@ -62,6 +62,17 @@ are not workspace-specific.
 | `zerobus_secret_key` | `ZEROBUS_SECRET_KEY` | Default `zerobus-client-secret` (the runtime default). `app.yaml` emits it empty, but the Apps API rejects empty env values in a bundle `config` |
 | `industries`, `admin_group`, `admin_emails` | `INDUSTRIES`, `ADMIN_GROUP`, `ADMIN_EMAILS` | |
 
+**Per-pipeline Genie spaces** need no extra bundle variable or app resource:
+after each deploy the app creates one Genie space per `(pipeline, mode)` for every
+industry, using its own service principal. That principal needs the permission to
+create Genie spaces, `CAN_USE` on the `warehouse_id` warehouse (the `sql-warehouse`
+resource already grants it) and `SELECT` on the industry and `intelligence_*` tables
+in `uc_catalog`.`uc_schema` (granted by industry provisioning). Provisioning is
+best-effort: a failure shows up as a warning on the deploy result, never as a failed
+deploy. The optional `GENIE_SPACE_PARENT_PATH` (workspace folder for new spaces) is
+not in the bundle for the same empty-value reason as below; add an `env` entry with a
+real value to use it. See [genie.md](genie.md).
+
 **Not in the bundle:** `ZEROBUS_TABLE_NAME`, `ZEROBUS_SECRET_SCOPE`, `UC_STORAGE_BASE`
 and `UC_EXTERNAL_LOCATION` are empty in `app.yaml` (unset-equivalent at runtime),
 and the Apps API rejects empty env values for bundle `config` (deploy fails with
