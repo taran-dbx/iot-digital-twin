@@ -81,19 +81,35 @@ SNAPSHOT deployment. Full runbook, prerequisites, and troubleshooting:
 
 ### Workspace profiles
 
-Workspace-specific values live in `config/workspaces/<name>.profile` (JSON, no secrets).
-Render `app.yaml` before syncing:
+Real workspace values (hosts, warehouse id, client ids, broker lists, catalog) are **not**
+committed. Only `config/workspaces/*.profile.example` templates with placeholders are tracked;
+your real `config/workspaces/<name>.profile` files are gitignored (JSON, no secrets).
 
 ```bash
-# fe-vm-shared-interop (current target)
-python scripts/render_app_yaml.py fe-vm-shared-interop
+# 1. create your profile from a template and fill in your workspace values
+cp config/workspaces/example-us-east.profile.example config/workspaces/my-workspace.profile
 
-# classic-stable (eu-central-1)
-python scripts/render_app_yaml.py classic-stable
+# 2. render app.yaml from it (do this right before `databricks sync`)
+python scripts/render_app_yaml.py my-workspace
 
 # verify without writing
-python scripts/render_app_yaml.py fe-vm-shared-interop --check
+python scripts/render_app_yaml.py my-workspace --check
+
+# 3. after deploying, restore the placeholder app.yaml so real values are never committed
+git checkout -- app.yaml
 ```
+
+`app.yaml` stays **tracked** (with placeholder values) on purpose: `databricks sync`
+honors `.gitignore`, so a gitignored `app.yaml` would silently not be uploaded and the
+app would fail to start. `scripts/check_identifiers.py` (pre-commit + CI) and
+`tests/test_render_app_yaml.py` fail if workspace-specific values are committed.
+
+Admin access is group-based: members of `ADMIN_GROUP` (default `iot-admins`) are admins.
+`ADMIN_EMAILS` remains supported as an optional comma-separated override; leave it out of
+committed files.
+
+Dev scripts under `scripts/` never default to a Databricks CLI profile: pass
+`--profile <name>` or set `DATABRICKS_CONFIG_PROFILE`.
 
 `databricks sync` honors `.gitignore` and `.databricksignore`. Only `static/dist`,
 `databricks/vendor/lakets.sql`, the wheels, and the Python backend ship to the deployed

@@ -141,7 +141,7 @@ def metrics_table_location(catalog: str, storage_base: str, mode: str) -> str:
     """Return the S3 location for the per-mode external metrics table.
 
     ``storage_base`` is the shared external-location root (e.g.
-    ``s3://taran-shared-interop``).  Layout (spec §1.11)::
+    ``s3://example-shared-bucket``).  Layout (spec §1.11)::
 
         <base>/iot-digital-twin/<catalog>/metrics/streaming_metrics_<mode>/
     """

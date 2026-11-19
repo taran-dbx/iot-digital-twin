@@ -145,7 +145,7 @@ async def test_metrics_table_drops_table_and_deletes_s3_prefix() -> None:
         run_sql=run_sql,
         delete_s3_prefix=delete_s3,
     )
-    loc = "s3://taran-shared-interop/iot-digital-twin/iot_p/metrics/streaming_metrics/"
+    loc = "s3://example-shared-bucket/iot-digital-twin/iot_p/metrics/streaming_metrics/"
     await reg["metrics_table"](
         {
             "identifier": "iot_p.metrics.streaming_metrics",

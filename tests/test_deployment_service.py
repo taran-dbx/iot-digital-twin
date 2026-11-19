@@ -30,7 +30,7 @@ def _all_passed(mode: str) -> dict:
 
 def _ws() -> MagicMock:
     w = MagicMock()
-    w.current_user.me.return_value = MagicMock(user_name="taran@databricks.com")
+    w.current_user.me.return_value = MagicMock(user_name="user@example.com")
     w.workspace.mkdirs = MagicMock(return_value=None)
     w.workspace.import_ = MagicMock(return_value=None)
     w.jobs.list.return_value = []
@@ -243,7 +243,7 @@ class TestClusterSpec:
         spec = ds.build_job_cluster_spec(
             node_type="m5d.large",
             num_workers=2,
-            single_user_name="taran@databricks.com",
+            single_user_name="user@example.com",
             realtime=True,
             cloud="aws",
         )
@@ -251,7 +251,7 @@ class TestClusterSpec:
 
         assert spec.spark_version == "18.2.x-scala2.13"
         assert spec.data_security_mode == DataSecurityMode.SINGLE_USER
-        assert spec.single_user_name == "taran@databricks.com"
+        assert spec.single_user_name == "user@example.com"
         # real-time mode ON
         assert spec.spark_conf["spark.databricks.streaming.realTimeMode.enabled"] == "true"
         # Photon OFF

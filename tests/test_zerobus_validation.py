@@ -24,8 +24,8 @@ def _snippet(**overrides) -> str:
         industry="pharmaceutical",
         catalog="iot_pharmaceutical",
         table_fqn="iot_pharmaceutical.zerobus.iot_sensor_data",
-        workspace_url="https://fe-vm-shared-interop.cloud.databricks.com",
-        server_endpoint="332040261549026.zerobus.us-east-1.cloud.databricks.com",
+        workspace_url="https://example-us-east.cloud.databricks.com",
+        server_endpoint="111111111111111.zerobus.us-east-1.cloud.databricks.com",
         num_records=25,
         source="validation",
     )
@@ -89,7 +89,7 @@ def test_snippet_timestamp_is_epoch_micros_int_not_iso_string():
 
 
 def test_snippet_workspace_url_gets_https_prefix_guard():
-    code = _snippet(workspace_url="fe-vm-shared-interop.cloud.databricks.com")
+    code = _snippet(workspace_url="example-us-east.cloud.databricks.com")
     assert 'WORKSPACE_URL.startswith("http")' in code
 
 
@@ -115,8 +115,8 @@ def test_snippet_uses_secret_scope_and_keys(monkeypatch):
         industry="pharmaceutical",
         catalog="iot_pharmaceutical",
         table_fqn="iot_pharmaceutical.zerobus.iot_sensor_data",
-        workspace_url="https://fe-vm-shared-interop.cloud.databricks.com",
-        server_endpoint="332040261549026.zerobus.us-east-1.cloud.databricks.com",
+        workspace_url="https://example-us-east.cloud.databricks.com",
+        server_endpoint="111111111111111.zerobus.us-east-1.cloud.databricks.com",
         secret_scope="custom-scope",
         client_id_key="custom-id-key",
         client_secret_key="custom-secret-key",

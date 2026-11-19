@@ -1205,7 +1205,7 @@ class TestStreamingMetrics:
         state = _state_with_db(db)
         app = _build_app_with_state(state)
         transport = ASGITransport(app=app)
-        logical_table = "taran-interop.rtm_lakets_zb.pharmaceutical_metrics"
+        logical_table = "example-catalog.rtm_lakets_zb.pharmaceutical_metrics"
         empty_result = {"columns": [], "data": [], "row_count": 0}
         exec_mock = AsyncMock(side_effect=[empty_result, empty_result])
 
@@ -1231,7 +1231,7 @@ class TestStreamingMetrics:
         assert resp.status_code == 200
         assert resp.json()["table"] == logical_table
         assert exec_mock.await_count == 2
-        expected_from = "FROM `taran-interop`.rtm_lakets_zb.pharmaceutical_metrics"
+        expected_from = "FROM `example-catalog`.rtm_lakets_zb.pharmaceutical_metrics"
         assert expected_from in exec_mock.await_args_list[0].args[0]
         assert expected_from in exec_mock.await_args_list[1].args[0]
         assert f"FROM {logical_table}" not in exec_mock.await_args_list[0].args[0]
@@ -1242,7 +1242,7 @@ class TestStreamingMetrics:
 # DBSQL time-series — mode-aware per-mode table selection (the raw.sensor_data
 # bug fix: realtime/microbatch/zerobus each land in their own schema/table).
 # ---------------------------------------------------------------------------
-_UC_CATALOG = "classic_stable_realtime_demos_catalog"
+_UC_CATALOG = "example_eu_catalog"
 _UC_SCHEMA = "rtm_lakets_zb"
 
 

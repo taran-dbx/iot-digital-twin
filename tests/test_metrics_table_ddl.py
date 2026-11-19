@@ -84,7 +84,7 @@ class TestManagedMetricsDdl:
     def test_industry_prefix_in_fqn(self) -> None:
         """FQN is ``{catalog}.{schema}.{industry}_metrics`` (one-schema layout)."""
         ddl = ms.metrics_managed_table_ddl(
-            "classic_stable_realtime_demos_catalog.rtm_lakets_zb.pharmaceutical_metrics"
+            "example_eu_catalog.rtm_lakets_zb.pharmaceutical_metrics"
         )
         assert "pharmaceutical_metrics" in ddl
 

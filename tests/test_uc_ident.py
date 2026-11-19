@@ -7,7 +7,7 @@ from services.uc_ident import sql_fqn, sql_ident
 
 class TestSqlIdent:
     def test_hyphenated_catalog_is_backtick_quoted(self) -> None:
-        assert sql_ident("taran-interop") == "`taran-interop`"
+        assert sql_ident("example-catalog") == "`example-catalog`"
 
     def test_simple_identifier_stays_unquoted(self) -> None:
         assert sql_ident("rtm_lakets_zb") == "rtm_lakets_zb"
@@ -16,6 +16,6 @@ class TestSqlIdent:
 class TestSqlFqn:
     def test_hyphenated_catalog_part_is_quoted(self) -> None:
         assert (
-            sql_fqn("taran-interop", "rtm_lakets_zb", "pharmaceutical_microbatch")
-            == "`taran-interop`.rtm_lakets_zb.pharmaceutical_microbatch"
+            sql_fqn("example-catalog", "rtm_lakets_zb", "pharmaceutical_microbatch")
+            == "`example-catalog`.rtm_lakets_zb.pharmaceutical_microbatch"
         )

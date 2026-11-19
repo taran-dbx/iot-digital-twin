@@ -53,19 +53,19 @@ class TestMetricsDdl:
         assert ms.metrics_table_fqn("iot_spiketest", mode) == (
             f"iot_spiketest.metrics.streaming_metrics_{mode}"
         )
-        loc = ms.metrics_table_location("iot_spiketest", "s3://taran-shared-interop", mode)
+        loc = ms.metrics_table_location("iot_spiketest", "s3://example-shared-bucket", mode)
         assert loc == (
-            "s3://taran-shared-interop/iot-digital-twin/iot_spiketest/metrics/"
+            "s3://example-shared-bucket/iot-digital-twin/iot_spiketest/metrics/"
             f"streaming_metrics_{mode}/"
         )
 
     def test_ddl_is_external_with_location(self) -> None:
         ddl = ms.metrics_external_table_ddl(
-            "iot_spiketest", "s3://taran-shared-interop", "realtime"
+            "iot_spiketest", "s3://example-shared-bucket", "realtime"
         )
         assert "CREATE TABLE IF NOT EXISTS iot_spiketest.metrics.streaming_metrics_realtime" in ddl
         assert "USING DELTA" in ddl
-        assert "LOCATION 's3://taran-shared-interop/iot-digital-twin/" in ddl
+        assert "LOCATION 's3://example-shared-bucket/iot-digital-twin/" in ddl
         assert "streaming_metrics_realtime/" in ddl
         assert "progress STRING" in ddl
 

@@ -1,7 +1,7 @@
 """End-to-end integration test for the industry provisioning engine.
 
 Provisions a THROWAWAY industry (``spiketest``) against the real
-``fe-vm-shared-interop`` workspace + ``iot-pipelines`` Lakebase project:
+``example-us-east`` workspace + ``iot-pipelines`` Lakebase project:
 
 - canonical ``iot_spiketest`` catalog + 5 schemas + checkpoint volume +
   external metrics table,
@@ -37,7 +37,7 @@ def _ws_or_skip():
         from databricks.sdk import WorkspaceClient
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"databricks-sdk unavailable: {exc}")
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
+    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
     os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", profile)
     try:
         ws = WorkspaceClient(profile=profile)

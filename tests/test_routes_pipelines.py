@@ -463,7 +463,7 @@ class TestDeletePipelineUcSafety:
         db = _mock_db_for_delete(
             _delete_pipeline_row(
                 resources={
-                    "uc_catalog": "classic_stable_realtime_demos_catalog",
+                    "uc_catalog": "example_eu_catalog",
                     "uc_schema": "rtm_lakets_zb",
                 }
             )

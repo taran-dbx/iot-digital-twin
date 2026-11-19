@@ -1,7 +1,7 @@
 # IoT Digital Twin — New Workspace Deployment Playbook
 
 > Lessons learned from deploying the IoT Digital Twin Databricks App to
-> `fe-sandbox-rtm-msk-demo.cloud.databricks.com` on 2026-03-17.
+> `example-sandbox.cloud.databricks.com` on 2026-03-17.
 > This document captures every issue encountered, the root cause, the fix applied,
 > and recommendations for making future deployments smoother.
 
@@ -43,7 +43,7 @@ When deployed to a **new workspace**, the app needs:
 
 ### 2.1 Lakebase: SP Cannot Authenticate via SDK OAuth Tokens
 
-**Symptom:** `InvalidPasswordError: password authentication failed for user '1e553aac-...'`
+**Symptom:** `InvalidPasswordError: password authentication failed for user '00000000-...'`
 
 **Root cause:** The app's service principal (SP) calls `w.postgres.generate_database_credential()`
 to get a short-lived JWT token, then connects to Lakebase with that token as the password.
@@ -76,7 +76,7 @@ connection-string-based auth.
 
 **Root cause:** Every Databricks App has **two** identity values:
 - `oauth2_app_client_id` (`c5790c95-...`) — the OAuth2 application client ID
-- `service_principal_client_id` (`1e553aac-...`) — the actual SP identity used at runtime
+- `service_principal_client_id` (`00000000-...`) — the actual SP identity used at runtime
 
 The `DATABRICKS_CLIENT_ID` env var injected at runtime contains the **service_principal_client_id**,
 not the `oauth2_app_client_id`. When we set `PGUSER` to the wrong one, the SDK-generated
@@ -99,7 +99,7 @@ hardcode `PGUSER` to the `oauth2_app_client_id`.
 **Symptom:** `InsufficientPrivilegeError: must be owner of table pipelines`
 
 **Root cause:** During initial debugging, the `pipelines` and `sensor_readings` tables
-were pre-created by the human user (`taranpreetsingh.grover@databricks.com`). When the
+were pre-created by the human user (`admin@example.com`). When the
 app (running as `iot_app_user`) tried to run `CREATE TABLE IF NOT EXISTS` with additional
 DDL (like creating indexes), PostgreSQL rejected it because the table owner was different.
 
@@ -122,15 +122,15 @@ handle creation on first deploy.
 when creating tables in a catalog.
 
 **Root cause:** Catalogs created without an explicit `storage_root` use the metastore's
-default managed storage location (`s3://dbstorage-prod-g4igq/...`). This is a shared
+default managed storage location (`s3://example-default-storage/...`). This is a shared
 Databricks-managed bucket that service principals typically cannot write to directly.
 
-This affected both `taran_explore` (human-created catalog) and the app's per-pipeline
+This affected both `example_explore` (human-created catalog) and the app's per-pipeline
 catalogs.
 
 **Fix applied:**
 1. Added `UC_STORAGE_ROOT` env var to `app.yaml` pointing to the workspace's external
-   S3 bucket: `s3://rtm-msk-demo-ext-s3-332745928618-p7zdpf`
+   S3 bucket: `s3://example-ext-bucket`
 2. Updated both provisioning endpoints in `app.py` (`/api/provision/uc` and
    `/api/provision/pipeline-catalog`) to pass `storage_root` when calling
    `w.catalogs.create()`:
@@ -201,8 +201,8 @@ since the SP owned it) and the broken pipeline DB record.
 
 **Symptom:** `Folder Users is protected` when syncing to the wrong path.
 
-**Root cause:** The workspace username was `taranpreetsingh.grover@databricks.com`,
-not `taran.grover@databricks.com`. The sync target path must match exactly.
+**Root cause:** The workspace username was `admin@example.com`,
+not `user@example.com`. The sync target path must match exactly.
 
 **Fix applied:** Used `databricks current-user me` to get the correct username.
 
@@ -259,7 +259,7 @@ the first deployment.
 ```
                                  ┌─────────────────────────┐
                                  │   Databricks App (SP)    │
-                                 │  1e553aac-e130-...       │
+                                 │  00000000-0000-...       │
                                  └────┬──────────┬──────────┘
                                       │          │
                     PGUSER/PGPASSWORD │          │ SDK (DATABRICKS_CLIENT_ID/SECRET)
@@ -569,24 +569,28 @@ caused the PGUSER mismatch.
 
 ## 7. Environment Reference
 
-### MSK Demo Workspace (deployed 2026-03-17)
+Workspace-specific values are **not** committed. Keep your real values in the gitignored
+`config/workspaces/<name>.profile` (start from a `*.profile.example` template) and render
+`app.yaml` from it. The table below lists what an environment needs; `<...>` entries are
+placeholders for your own workspace.
 
 | Resource | Value |
 |----------|-------|
-| Workspace | `https://fe-sandbox-rtm-msk-demo.cloud.databricks.com` |
-| Workspace ID | `7474649530865514` |
-| CLI Profile | `msk-demo` |
-| App URL | `https://iot-digital-twin-7474649530865514.aws.databricksapps.com` |
-| App SP client_id | `1e553aac-e130-4be4-8707-cab5ccb0b413` |
-| App SP id (numeric) | `70586883243382` |
-| Lakebase Project | `iot-digital-twin` |
-| Lakebase Endpoint | `projects/iot-digital-twin/branches/production/endpoints/primary` |
-| Lakebase Host | `ep-ancient-dust-d1ch7tek.database.us-west-2.cloud.databricks.com` |
-| PG User | `iot_app_user` |
-| Metastore ID | `646f2b9a-d861-4deb-92f2-9927875bcc60` |
-| External Location | `rtm-msk-demo-ext-role-332745928618-p7zdpf-el-explss` |
-| Storage Credential | `rtm-msk-demo-ext-role-332745928618-p7zdpf--explss` |
-| S3 Bucket | `s3://rtm-msk-demo-ext-s3-332745928618-p7zdpf` |
-| Zerobus SP client_id | `182192cb-5feb-40f0-82a0-6e02067019f6` |
-| Zerobus Endpoint | `7474649530865514.zerobus.us-west-2.cloud.databricks.com` |
-| UC Catalog (Zerobus) | `taran_explore.iot_simulator.iot_sensor_data` |
+| Workspace | `https://<workspace-host>` |
+| Workspace ID | `<workspace-id>` |
+| CLI Profile | `<cli-profile>` |
+| App URL | `https://<app-host>` |
+| App SP client_id | `<app-sp-client-id>` |
+| App SP id (numeric) | `<app-sp-numeric-id>` |
+| Lakebase Project | `<lakebase-project>` |
+| Lakebase Endpoint | `projects/<lakebase-project>/branches/production/endpoints/primary` |
+| Lakebase Host | `<lakebase-host>.database.<region>.cloud.databricks.com` |
+| PG User | `<pg-user>` |
+| Metastore ID | `<metastore-id>` |
+| External Location | `<external-location>` |
+| Storage Credential | `<storage-credential>` |
+| S3 Bucket | `s3://<bucket>` |
+| Zerobus SP client_id | `<zerobus-sp-client-id>` |
+| Zerobus Endpoint | `<workspace-id>.zerobus.<region>.cloud.databricks.com` |
+| UC Catalog | `<catalog>` (schema `<schema>`) |
+| Admin access | group `ADMIN_GROUP` (default `iot-admins`); `ADMIN_EMAILS` is optional |

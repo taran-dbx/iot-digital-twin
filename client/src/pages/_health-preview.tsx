@@ -65,7 +65,7 @@ const SETUP: PipelineSetup = {
   bootstrap_servers: "b-1.iotdemo.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
   enabled_modes: ["realtime", "microbatch", "zerobus"],
   warehouse_id: "abc123warehouse",
-  user_email: "taranpreetsingh.grover@databricks.com",
+  user_email: "admin@example.com",
   created_at: null,
   updated_at: null,
 };

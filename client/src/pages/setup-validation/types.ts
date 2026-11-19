@@ -83,7 +83,7 @@ export const SOURCE_DEFAULTS = {
   replicationFactor: 3,
   brokerCount: 3,
   partitions: 6,
-  mskArn: "arn:aws:kafka:us-east-1:984752964297:cluster/iotdemo/abc123-…-4",
+  mskArn: "arn:aws:kafka:us-east-1:123456789012:cluster/iotdemo/abc123-…-4",
   serviceCredential: "iot-msk-service-cred",
 } as const;
 

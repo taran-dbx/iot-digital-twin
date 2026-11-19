@@ -18,8 +18,8 @@ Layout (spec §2.5)::
 
 Provisioning notes (spike-verified 2026-07-05):
 - This metastore has **no default storage root**, so ``CREATE CATALOG`` must
-  supply an explicit ``MANAGED LOCATION`` — ``s3://taran-shared-interop/<catalog>``
-  (external location ``taran-shared-interop``, ``us-east-1``).
+  supply an explicit ``MANAGED LOCATION`` — ``s3://example-shared-bucket/<catalog>``
+  (external location ``example-shared-bucket``, ``us-east-1``).
 - Each mode gets its own EXTERNAL ``metrics.streaming_metrics_<mode>`` table
   (delta-rs writes via UC temp-table-credentials) → any writer SP (streaming SP
   for the streaming query listener, app SP for the app-hosted listener) needs

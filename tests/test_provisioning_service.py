@@ -20,7 +20,7 @@ from services import lakets_service, provisioning_service
 # ---------------------------------------------------------------------------
 
 
-SP_CLIENT_ID = "180fab56-0000-0000-0000-000000000000"
+SP_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
 PROJECT_ID = "iot-demo"
 BRANCH_ID = "production"
 ENDPOINT_NAME = f"projects/{PROJECT_ID}/branches/{BRANCH_ID}/endpoints/primary"

@@ -8,7 +8,7 @@ interface LakebaseSinkHealthProps {
   pipelineId: string;
   /** Poll frequency in seconds.  ``0`` disables polling. */
   refreshSec: number;
-  /** Databricks workspace host, e.g. ``e2-demo-field-eng.cloud.databricks.com``. */
+  /** Databricks workspace host, e.g. ``example-demo.cloud.databricks.com``. */
   databricksHost: string;
   /** Optional Spark job id used to build the "Open Spark UI" link. */
   jobId?: string | null;

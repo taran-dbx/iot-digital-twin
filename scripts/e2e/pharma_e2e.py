@@ -1,7 +1,7 @@
 """Phase 7 end-to-end functional validation driver for the admin pipeline flow.
 
 Drives the *integrated service code* (not ad-hoc reimplementations) for one
-throwaway industry (``pharmaceutical``) on ``fe-vm-shared-interop``:
+throwaway industry (``pharmaceutical``) on ``example-us-east``:
 
   setup      -> services.pipeline_setup_repo.create_setup
   provision  -> services.industry_provisioning_service.provision_industry
@@ -12,8 +12,7 @@ throwaway industry (``pharmaceutical``) on ``fe-vm-shared-interop``:
 Run one stage at a time so long-running Databricks work (cluster spin-up, job
 runs) can be observed:
 
-    DATABRICKS_CONFIG_PROFILE=fe-vm-shared-interop .venv/bin/python \
-        scripts/e2e/pharma_e2e.py <stage>
+    .venv/bin/python scripts/e2e/pharma_e2e.py --profile <cli-profile> <stage>
 
 State (the created setup_id) is persisted to a scratchpad JSON file so stages
 are independent.  This script is committed, but the *run* is the deliverable.
@@ -28,20 +27,22 @@ import os
 import sys
 from pathlib import Path
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
-
 # Repo root on path.
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts._profile import require_profile  # noqa: E402
+
+require_profile()  # --profile <name> or $DATABRICKS_CONFIG_PROFILE; no default workspace
+
 STATE_FILE = Path(os.getenv("E2E_STATE_FILE", "/tmp/pharma_e2e_state.json"))
 
 INDUSTRY = "pharmaceutical"
-WAREHOUSE_ID = os.getenv("E2E_WAREHOUSE_ID", "31df823c0f824066")  # lakets-demo-wh (RUNNING)
+WAREHOUSE_ID = os.getenv("E2E_WAREHOUSE_ID", "0123456789abcdef")  # lakets-demo-wh (RUNNING)
 BOOTSTRAP_PUBLIC = (
-    "b-2-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198,"
-    "b-3-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198,"
-    "b-1-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198"
+    "b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
+    "b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
+    "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198"
 )
 
 
@@ -97,7 +98,7 @@ async def stage_setup():
             cluster_spec={"partition_count": 3},
             warehouse_id=WAREHOUSE_ID,
             status="draft",
-            user_email="taranpreetsingh.grover@databricks.com",
+            user_email="admin@example.com",
         )
         _pp("created setup", setup)
         st = _load_state()

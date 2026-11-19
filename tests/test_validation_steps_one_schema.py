@@ -15,7 +15,7 @@ from services import validation_state_machine as sm
 from services import validation_steps as vsteps
 from services.validation_service import StepContext
 
-UC_CATALOG = "classic_stable_realtime_demos_catalog"
+UC_CATALOG = "example_eu_catalog"
 UC_SCHEMA = "rtm_lakets_zb"
 INDUSTRY = "pharmaceutical"
 

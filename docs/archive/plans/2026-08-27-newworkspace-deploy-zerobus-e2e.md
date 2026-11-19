@@ -1,10 +1,15 @@
 # New-Workspace Deploy + Zerobus E2E — Implementation Plan (Plan 1 of 3)
 
+> **Historical document.** Written during an earlier workspace migration and kept for
+> reference only. Workspace-specific identifiers have been replaced with placeholders;
+> behavior described here may be out of date. See `docs/deployment-playbook.md` and the
+> workspace profile templates in `config/workspaces/` for current guidance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deploy the IoT Digital Twin app to the new workspace and run one **zerobus** pipeline end-to-end (produce → `{industry}_zerobus` Delta, metrics → `{industry}_metrics` via Zerobus, dashboard cold read) — exercising the config/identity/catalog/secrets decisions without needing MSK.
 
-**Architecture:** Collapse the two Lakebase connections into one OAuth connection to a single `iot-app-backend` project; make every workspace value config-driven; provision into the **pre-existing** UC catalog `classic_stable_realtime_demos_catalog` (create only schema `rtm_lakets_zb`); use the **single app SP** for all auth; store the app SP's own client secret as a **UC secret**; write zerobus data + streaming metrics as **managed** tables via the Zerobus SDK.
+**Architecture:** Collapse the two Lakebase connections into one OAuth connection to a single `iot-app-backend` project; make every workspace value config-driven; provision into the **pre-existing** UC catalog `example_eu_catalog` (create only schema `rtm_lakets_zb`); use the **single app SP** for all auth; store the app SP's own client secret as a **UC secret**; write zerobus data + streaming metrics as **managed** tables via the Zerobus SDK.
 
 **Tech Stack:** FastAPI + psycopg/asyncpg (Lakebase OAuth), Databricks SDK (Python) / `databricks api` CLI, Zerobus Ingest SDK, React/TS SPA, Databricks Apps, Unity Catalog, pytest.
 
@@ -13,12 +18,12 @@ Design source of truth: **`docs/app-end-to-end.md`** (decided callouts in §2.1,
 ## Global Constraints
 
 - **Nothing hardcoded** — every workspace value in `app.yaml`/env behind a config module. No hosts, bucket/EL names, project names, SP ids, MSK bootstrap, secret-scope names, or workspace ids in source.
-- **Target workspace:** `fevm-classic-stable-realtime-demos` (id `7474659563748021`, **eu-central-1**), CLI profile `fevm-classic-stable-realtime-demos`.
-- **UC:** catalog `classic_stable_realtime_demos_catalog` (**already exists, owned by another SP — do NOT `CREATE CATALOG`**), schema `rtm_lakets_zb` (create it). All tables **managed**, **`{industry}_`-prefixed**, one schema.
-- **Identity:** single app SP `7c59807d-7f0d-47ab-8e83-6d91add2f35c` (numeric `72852008785762`). No `iot-sss-industries`/zerobus SP creation.
-- **Secrets:** UC secrets in `classic_stable_realtime_demos_catalog.rtm_lakets_zb` (`/api/2.1/unity-catalog/secrets`); no legacy `iot-secrets` scope.
-- **Warehouse:** `0864d7304e74ad76`.
-- **Zerobus:** endpoint `7474659563748021.zerobus.eu-central-1.cloud.databricks.com`; timestamp fields = **epoch-microseconds int**.
+- **Target workspace:** `example-eu-workspace` (id `2222222222222222`, **eu-central-1**), CLI profile `example-eu-workspace`.
+- **UC:** catalog `example_eu_catalog` (**already exists, owned by another SP — do NOT `CREATE CATALOG`**), schema `rtm_lakets_zb` (create it). All tables **managed**, **`{industry}_`-prefixed**, one schema.
+- **Identity:** single app SP `00000000-0000-0000-0000-00000000000a` (numeric `000000000000001`). No `iot-sss-industries`/zerobus SP creation.
+- **Secrets:** UC secrets in `example_eu_catalog.rtm_lakets_zb` (`/api/2.1/unity-catalog/secrets`); no legacy `iot-secrets` scope.
+- **Warehouse:** `0123456789abcdef`.
+- **Zerobus:** endpoint `2222222222222222.zerobus.eu-central-1.cloud.databricks.com`; timestamp fields = **epoch-microseconds int**.
 - **Clusters:** no spot, no Photon (n/a for zerobus serverless, but keep the rule for shared helpers).
 - **Git:** conventional commits, **no attribution** (no Isaac/Claude/AI mentions).
 - Run tests with the repo `.venv`; `python -m pytest -q`. Deploy via `databricks sync` + `POST /api/2.0/apps/iot-digital-twin/deployments {mode:SNAPSHOT}` on the target profile.
@@ -30,7 +35,7 @@ Design source of truth: **`docs/app-end-to-end.md`** (decided callouts in §2.1,
 **Files:**
 - Create: `core/workspace_config.py`
 - Modify: `app.yaml`
-- Modify: `services/app_backend_db.py` (remove hardcoded host default), `services/industry_catalog_service.py` (remove `s3://taran-shared-interop` / EL literals), `services/pipelines_project_service.py` (project name from config), `client/src/lib/industry-deploy-config.ts` (MSK bootstrap / service-credential / project / zerobus endpoint from injected config), `services/simulator_service.py:94` (drop `e2-demo-field-eng` fallback)
+- Modify: `services/app_backend_db.py` (remove hardcoded host default), `services/industry_catalog_service.py` (remove `s3://example-shared-bucket` / EL literals), `services/pipelines_project_service.py` (project name from config), `client/src/lib/industry-deploy-config.ts` (MSK bootstrap / service-credential / project / zerobus endpoint from injected config), `services/simulator_service.py:94` (drop `example-demo` fallback)
 - Test: `tests/test_workspace_config.py`
 
 **Interfaces:**
@@ -39,8 +44,8 @@ Design source of truth: **`docs/app-end-to-end.md`** (decided callouts in §2.1,
 - [ ] **Step 1:** Write `tests/test_workspace_config.py` asserting `get_config()` reads each field from env and raises `RuntimeError` naming the missing var when a required one is unset (monkeypatch `os.environ`).
 - [ ] **Step 2:** Run `python -m pytest tests/test_workspace_config.py -q` → FAIL (module missing).
 - [ ] **Step 3:** Implement `core/workspace_config.py` (frozen dataclass + `get_config()` reading `UC_CATALOG`, `UC_SCHEMA`, `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT`, `PGHOST`, `DATABRICKS_SQL_WAREHOUSE_ID`, `ZEROBUS_SERVER_ENDPOINT`, `DATABRICKS_CLIENT_ID`, `INDUSTRIES`).
-- [ ] **Step 4:** Grep the repo for the hardcoded literals (`taran-shared-interop`, `iot-pipelines`, `iot-lakets-demo`, `ep-mute-scene`, `ep-fancy-king`, `332040261549026`, `e2-demo-field-eng`, `iot-rtm-sc`, `iot-secrets`, `9927a7fa`) and route each through config/env. For the TS generators, inject values via the deploy payload (they already receive `appDefaults`).
-- [ ] **Step 5:** Write `app.yaml` for the new workspace: `UC_CATALOG=classic_stable_realtime_demos_catalog`, `UC_SCHEMA=rtm_lakets_zb`, `LAKEBASE_PROJECT=iot-app-backend`, `LAKEBASE_ENDPOINT=projects/iot-app-backend/branches/production/endpoints/primary`, `DATABRICKS_SQL_WAREHOUSE_ID=0864d7304e74ad76`, `ZEROBUS_SERVER_ENDPOINT=7474659563748021.zerobus.eu-central-1.cloud.databricks.com`, `INDUSTRIES=pharmaceutical,manufacturing`, `ADMIN_EMAILS=taranpreetsingh.grover@databricks.com`, `LAKETS_SQL_PATH=/app/python/source_code/databricks/vendor/lakets.sql`. `PGHOST` left blank until Task 2 creates the Lakebase project.
+- [ ] **Step 4:** Grep the repo for the hardcoded literals (`example-shared-bucket`, `iot-pipelines`, `iot-lakets-demo`, `example-lakebase`, `example-lakebase`, `111111111111111`, `example-demo`, `iot-rtm-sc`, `iot-secrets`, `9927a7fa`) and route each through config/env. For the TS generators, inject values via the deploy payload (they already receive `appDefaults`).
+- [ ] **Step 5:** Write `app.yaml` for the new workspace: `UC_CATALOG=example_eu_catalog`, `UC_SCHEMA=rtm_lakets_zb`, `LAKEBASE_PROJECT=iot-app-backend`, `LAKEBASE_ENDPOINT=projects/iot-app-backend/branches/production/endpoints/primary`, `DATABRICKS_SQL_WAREHOUSE_ID=0123456789abcdef`, `ZEROBUS_SERVER_ENDPOINT=2222222222222222.zerobus.eu-central-1.cloud.databricks.com`, `INDUSTRIES=pharmaceutical,manufacturing`, `ADMIN_EMAILS=admin@example.com`, `LAKETS_SQL_PATH=/app/python/source_code/databricks/vendor/lakets.sql`. `PGHOST` left blank until Task 2 creates the Lakebase project.
 - [ ] **Step 6:** Run `python -m pytest -q` (full suite) → fix any test referencing the removed literals.
 - [ ] **Step 7:** Commit: `refactor: centralize workspace config, remove hardcoded workspace literals`.
 
@@ -60,7 +65,7 @@ Design source of truth: **`docs/app-end-to-end.md`** (decided callouts in §2.1,
 - [ ] **Step 2:** Run it → FAIL.
 - [ ] **Step 3:** First provision the project (one-off, record for the runbook):
 ```bash
-P=fevm-classic-stable-realtime-demos
+P=example-eu-workspace
 databricks api post /api/2.0/postgres/projects -p $P --json '{"project":{"project_id":"iot-app-backend","display_name":"IoT App Backend"}}'
 # read the primary endpoint host once ready:
 databricks api get "/api/2.0/postgres/projects/iot-app-backend/branches/production/endpoints/primary" -p $P
@@ -84,7 +89,7 @@ Put the returned host into `app.yaml` `PGHOST`.
 - Consumes: `core/workspace_config`, the app SP identity.
 
 - [ ] **Step 1:** Write `tests/test_uc_secrets.py` (mock the SDK/api call) asserting `put_secret`/`get_secret` hit `POST`/`GET /api/2.1/unity-catalog/secrets(/…)` with `catalog_name`/`schema_name`/`name`.
-- [ ] **Step 2:** Write `tests/test_provision_catalog_exists.py`: provisioning issues `CREATE SCHEMA IF NOT EXISTS classic_stable_realtime_demos_catalog.rtm_lakets_zb`, **never** `CREATE CATALOG`, and creates managed tables (no `LOCATION`) named `{industry}_…`.
+- [ ] **Step 2:** Write `tests/test_provision_catalog_exists.py`: provisioning issues `CREATE SCHEMA IF NOT EXISTS example_eu_catalog.rtm_lakets_zb`, **never** `CREATE CATALOG`, and creates managed tables (no `LOCATION`) named `{industry}_…`.
 - [ ] **Step 3:** Run both → FAIL.
 - [ ] **Step 4:** Implement `services/uc_secrets.py`; update `industry_catalog_service` to the catalog-exists + one-schema + managed-table + industry-prefixed path and single-SP grants (`USE CATALOG`, `USE SCHEMA`, `CREATE TABLE`, `MODIFY`, `SELECT` on the schema, `READ SECRET` on `app_sp_oauth`); in `provisioning_service`, remove the shared-SP + zerobus-SP creation and grant only the app SP the branch role; write the app SP's `DATABRICKS_CLIENT_SECRET` (from env) into UC secret `app_sp_oauth` during provisioning.
 - [ ] **Step 5:** Run both tests → PASS; then full suite.
@@ -121,7 +126,7 @@ Put the returned host into `app.yaml` `PGHOST`.
 - Consumes: Task 3 `industry_table`.
 - Produces: dashboard cold-tier + metrics reads resolve to the one-schema prefixed tables.
 
-- [ ] **Step 1:** Write `tests/test_dbsql_table_resolution.py` asserting the zerobus cold table resolves to `classic_stable_realtime_demos_catalog.rtm_lakets_zb.{industry}_zerobus` and metrics to `…{industry}_metrics`.
+- [ ] **Step 1:** Write `tests/test_dbsql_table_resolution.py` asserting the zerobus cold table resolves to `example_eu_catalog.rtm_lakets_zb.{industry}_zerobus` and metrics to `…{industry}_metrics`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3:** Implement the table-resolution changes across the routes/services + the client metrics read (tiles and charts on `{industry}_metrics`).
 - [ ] **Step 4:** `python -m pytest tests/test_dbsql_table_resolution.py -q` → PASS; full suite; `npx tsc --noEmit` + `npm run build`.
@@ -136,7 +141,7 @@ Put the returned host into `app.yaml` `PGHOST`.
 - [ ] **Step 1:** Build the SPA: `cd client && npm run build`.
 - [ ] **Step 2:** Sync + deploy to the target:
 ```bash
-P=fevm-classic-stable-realtime-demos
+P=example-eu-workspace
 USER=$(databricks current-user me -p $P -o json | python3 -c "import sys,json;print(json.load(sys.stdin)['userName'])")
 TARGET="/Workspace/Users/$USER/iot-digital-twin"
 databricks sync . "$TARGET" --watch=false -p $P
@@ -145,7 +150,7 @@ databricks api post /api/2.0/apps/iot-digital-twin/deployments -p $P --json '{"s
 - [ ] **Step 2b:** Poll deployment to SUCCEEDED; hit `GET <app-url>/api/health` → `db_available:true`, `db_error:null`.
 - [ ] **Step 3:** Provision an industry (pharmaceutical) via `POST /api/admin/industries/pharmaceutical/setup` then `/provision`; verify: schema `rtm_lakets_zb` exists, managed tables `pharmaceutical_zerobus` + `pharmaceutical_metrics` created, app-SP grants present, UC secret `app_sp_oauth` written.
 - [ ] **Step 4:** Deploy + run zerobus mode: `POST /api/admin/pipelines/{setup_id}/deploy/zerobus` then start; wait for the run.
-- [ ] **Step 5:** Verify data: DBSQL `SELECT count(*) FROM classic_stable_realtime_demos_catalog.rtm_lakets_zb.pharmaceutical_zerobus` > 0, and `…pharmaceutical_metrics` has rows with `mode='zerobus'`? (zerobus mode has no streaming metrics — confirm metrics table exists but stays empty for zerobus; ingest metrics come from `system.lakeflow.zerobus_ingest`).
+- [ ] **Step 5:** Verify data: DBSQL `SELECT count(*) FROM example_eu_catalog.rtm_lakets_zb.pharmaceutical_zerobus` > 0, and `…pharmaceutical_metrics` has rows with `mode='zerobus'`? (zerobus mode has no streaming metrics — confirm metrics table exists but stays empty for zerobus; ingest metrics come from `system.lakeflow.zerobus_ingest`).
 - [ ] **Step 6:** Load the pharmaceutical **zerobus** dashboard → Cold Rows / historical DBSQL populate.
 - [ ] **Step 7:** Tear down the test pipeline (`DELETE /api/admin/pipelines/{setup_id}`) to confirm teardown drops the schema tables + revokes grants cleanly (shared project/SP survive).
 - [ ] **Step 8:** Commit any runbook notes: `docs: record new-workspace zerobus e2e runbook`.

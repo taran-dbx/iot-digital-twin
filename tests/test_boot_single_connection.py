@@ -48,7 +48,7 @@ async def _run_lifespan(monkeypatch, mock_mgr: MagicMock):
 
     Returns (AppState, ensure_app_schema_mock).
     """
-    monkeypatch.setenv("PGHOST", "ep-test.database.cloud.databricks.com")
+    monkeypatch.setenv("PGHOST", "example-pg.database.cloud.databricks.com")
     monkeypatch.setenv("INDUSTRIES", "pharmaceutical")
 
     mock_ensure_schema = AsyncMock()

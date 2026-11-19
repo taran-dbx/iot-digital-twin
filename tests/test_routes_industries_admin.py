@@ -367,7 +367,7 @@ class TestCreateOrUpdateSetup:
         """
         import uuid as _uuid
 
-        setup_uuid = _uuid.UUID("6aa89e69-b749-4480-a5d6-f381b37e3dcf")
+        setup_uuid = _uuid.UUID("00000000-0000-0000-0000-00000000000f")
         existing = {"id": setup_uuid, "industry": "pharmaceutical"}
         with (
             _admin(True),

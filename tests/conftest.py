@@ -190,7 +190,7 @@ async def app_backend_conn():
     except Exception as exc:  # pragma: no cover - deps missing
         pytest.skip(f"integration deps unavailable: {exc}")
 
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
+    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
     try:
         w = WorkspaceClient(profile=profile)
         endpoint = w.postgres.get_endpoint(name=APP_BACKEND_ENDPOINT)

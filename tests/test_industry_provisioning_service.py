@@ -8,7 +8,7 @@ import pytest
 
 from services import industry_provisioning_service as ips
 
-CATALOG = "classic_stable_realtime_demos_catalog"
+CATALOG = "example_eu_catalog"
 SCHEMA = "rtm_lakets_zb"
 
 
