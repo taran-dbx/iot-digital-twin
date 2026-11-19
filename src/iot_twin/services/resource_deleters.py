@@ -38,6 +38,7 @@ from databricks.sdk.errors import NotFound
 
 from iot_twin.services import cdf_config_service
 from iot_twin.services.deployment.deployment_service import make_job_deleter
+from iot_twin.services.genie.genie_space_service import make_genie_space_deleter
 from iot_twin.services.teardown_service import Deleter, SkipResource
 
 logger = logging.getLogger("iot_digital_twin.services.resource_deleters")
@@ -315,6 +316,7 @@ def make_all_deleters(
         "secret": del_secret,
         "kafka_topic": del_kafka_topic,
         "cdf_sync": del_cdf_sync,
+        "genie_space": make_genie_space_deleter(ws),
     }
 
 

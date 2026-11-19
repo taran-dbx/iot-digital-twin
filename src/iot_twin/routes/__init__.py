@@ -8,6 +8,7 @@ from iot_twin.routes.alerts import router as alerts_router
 from iot_twin.routes.cluster import router as cluster_router
 from iot_twin.routes.deployment import router as deployment_router
 from iot_twin.routes.genie import router as genie_router
+from iot_twin.routes.genie_pipelines import router as genie_pipelines_router
 from iot_twin.routes.health import router as health_router
 from iot_twin.routes.industries import router as industries_router
 from iot_twin.routes.industries_admin import router as industries_admin_router
@@ -61,6 +62,7 @@ def create_api_router() -> APIRouter:
     api.include_router(alerts_router)
     api.include_router(production_router)
     api.include_router(genie_router)
+    api.include_router(genie_pipelines_router)
     api.include_router(intelligence_router)
     # One-click Lakebase + LakeTS pipeline setup (POST /api/setup/...)
     api.include_router(setup_router)
