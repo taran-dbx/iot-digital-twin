@@ -9,8 +9,7 @@
 
 The app is deployed with the bundle in `databricks.yml` + `resources/app.yml`.
 It replaces manual `databricks sync`, `.databricksignore` and static
-`PGPASSWORD` logins (see [deployment-playbook.md](deployment-playbook.md) for
-the historical issue log).
+`PGPASSWORD` logins.
 
 ## Layout
 
@@ -122,3 +121,18 @@ and serves `/api/health` but reports `db_available: false` and DBSQL calls fail:
 * Unity Catalog: `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE`/`SELECT` on
   `uc_catalog.uc_schema`, plus the external location/service credential grants.
 * Workspace: membership in `admin_group` is for users, not the SP.
+
+## Troubleshooting
+
+Each item below was checked against the current code.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `/api/health` returns `db_available: false` with a `db_error` | The app's service principal has no Lakebase role or privileges yet (see *Fresh app prerequisites*) | Bind the `postgres` app resource, then grant the SP `USAGE`/`CREATE` on `public`. The app authenticates with SDK OAuth tokens; no static `PGPASSWORD` is needed |
+| `InvalidPasswordError ... user '<uuid>'` | `PGUSER` is set to the wrong identity. The runtime `DATABRICKS_CLIENT_ID` is the app's `service_principal_client_id`, not its `oauth2_app_client_id` (`core/lakebase.py` falls back to `DATABRICKS_CLIENT_ID` when `PGUSER` is unset) | Leave `PGUSER` unset, or set it to `service_principal_client_id` from `databricks apps get <app>` |
+| `must be owner of table ...` at startup | Tables were pre-created by a different Postgres user than the one the app connects as | Do not pre-create app tables. Let the app create them on first start, or drop them and redeploy so the SP owns them |
+| Catalog creation fails with `403 Forbidden` from the cloud storage provider, or the "no default storage root" hint | The metastore default managed storage is not writable by the SP | Set a storage root: Settings > Unity Catalog, or the `UC_STORAGE_ROOT` env var. Catalogs are created at `<storage_root>/<catalog_name>` (`routes/provisioning.py`; precedence: request body, saved settings, env) |
+| `User does not have CREATE MANAGED STORAGE on External Location` | The SP lacks grants on the external location | Grant the SP `CREATE_CATALOG` on the metastore, and on the external location `CREATE_MANAGED_STORAGE`, `READ_FILES`, `WRITE_FILES`, `BROWSE`, `CREATE_EXTERNAL_TABLE`. Grant these up front rather than one error at a time |
+| `Catalog '<name>' already exists` on retry after a failed provision | A previous run created the catalog but failed later (for example on volume creation) | Fix the underlying permission and retry; catalog and schema creation treat `AlreadyExists` as success. If the catalog is half-built and unwanted, delete it (transfer ownership first if the SP owns it) |
+| First bundle deploy hangs or fails right after the app is created | App compute takes a few minutes to reach `ACTIVE` | Wait for `compute_status.state == ACTIVE` (`databricks apps get <app>`), then deploy |
+| App starts but the UI is missing or stale | `static/dist` is stale or was not synced | Run `make frontend-build`, commit `static/dist`, redeploy. The bundle `sync` includes `static/dist/**` and `lib/*.whl` |

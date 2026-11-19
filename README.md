@@ -143,7 +143,6 @@ run locally through `pre-commit`.
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, auth, storage |
 | [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites |
-| [docs/deployment-playbook.md](docs/deployment-playbook.md) | Legacy manual runbook and troubleshooting notes (partly superseded) |
 | [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |
