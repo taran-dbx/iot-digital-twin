@@ -293,3 +293,52 @@ def test_real_profile_lookup_ignores_example_templates(renderer, tmp_path: Path)
     with pytest.raises(renderer.ProfileError, match="profile.example"):
         renderer.load_profile("only", tmp_path)
     assert renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "test_schema"
+
+
+def _bundle_env_names() -> set[str]:
+    names: set[str] = set()
+    for line in (ROOT / "resources" / "app.yml").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- name: ") and stripped[8:].isupper():
+            names.add(stripped[8:])
+    return names
+
+
+def _app_yaml_env_names() -> set[str]:
+    return {
+        line.split("name:", 1)[1].strip()
+        for line in (ROOT / "app.yaml").read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("- name:")
+    }
+
+
+def test_bundle_env_matches_app_yaml() -> None:
+    """resources/app.yml must carry the same env names as app.yaml (no silent drift)."""
+    bundle, app_yaml = _bundle_env_names(), _app_yaml_env_names()
+    # ADMIN_EMAILS is an optional profile key the committed app.yaml omits when unset.
+    # The Apps API rejects empty env values for bundle `config`, so the entries that
+    # app.yaml sets to "" (unset-equivalent at runtime) cannot be expressed in the
+    # bundle; they are listed explicitly so any other drift still fails.
+    empty_only = {
+        "ZEROBUS_TABLE_NAME",
+        "ZEROBUS_SECRET_SCOPE",
+        "UC_STORAGE_BASE",
+        "UC_EXTERNAL_LOCATION",
+    }
+    assert bundle - {"ADMIN_EMAILS"} == app_yaml - {"ADMIN_EMAILS"} - empty_only, (
+        f"drift: only in bundle={bundle - app_yaml}, only in app.yaml={app_yaml - bundle}"
+    )
+
+
+def test_bundle_example_overrides_cover_required_variables() -> None:
+    import json
+    import re
+
+    text = (ROOT / "databricks.yml").read_text(encoding="utf-8")
+    block = text.split("variables:", 1)[1].split("\nsync:", 1)[0]
+    required = {
+        m.group(1)
+        for m in re.finditer(r"^  (\w+):\n    description: .*\n(?!    default)", block, re.M)
+    }
+    example = json.loads((ROOT / "variable-overrides.json.example").read_text(encoding="utf-8"))
+    assert required - set(example) == set(), "example overrides missing required variables"

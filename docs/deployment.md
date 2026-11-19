@@ -1,5 +1,12 @@
 # Deploying with Declarative Automation Bundles (DABs)
 
+> **WARNING: `prod` resolves to the live app name (`iot-digital-twin`).** Always
+> `databricks bundle deployment bind` first, review `databricks bundle plan -t prod`,
+> and never deploy without prod overrides
+> (`.databricks/bundle/prod/variable-overrides.json`). Workspace variables have no
+> defaults, so validation fails until they are supplied; do not work around that
+> with placeholder values.
+
 The app is deployed with the bundle in `databricks.yml` + `resources/app.yml`.
 It replaces manual `databricks sync`, `.databricksignore` and static
 `PGPASSWORD` logins (see [deployment-playbook.md](deployment-playbook.md) for
@@ -32,13 +39,18 @@ Validation needs workspace auth, so it is **not** run in CI; run it locally
 
 ## Variables
 
-Placeholders live in git. Set real values in the gitignored
-`.databricks/bundle/<target>/variable-overrides.json`, with `--var name=value`,
-or `BUNDLE_VAR_<name>` env vars.
+Workspace-specific variables have **no default**; a missing value fails
+validation. Copy `variable-overrides.json.example` (placeholders only) to the
+gitignored `.databricks/bundle/<target>/variable-overrides.json` and fill in real
+values (or use `--var name=value` / `BUNDLE_VAR_<name>`). `make bundle-validate`
+stops with a clear message when the file for `BUNDLE_TARGET` is missing.
+Variables with defaults (`uc_schema`, `lakebase_branch`, `lakebase_database`,
+`industries`, `admin_group`, `admin_emails`, `zerobus_secret_key`)
+are not workspace-specific.
 
 | Variable | Env var / resource it feeds | Notes |
 | --- | --- | --- |
-| `app_name` | App name | Workspace-global, max 30 chars. Dev default `iot-twin-<user>`; `prod` is fixed to `iot-digital-twin` |
+| `app_name` | App name | Workspace-global, max 30 chars. Dev default is the fixed `iot-twin-dev`, so override it per developer (e.g. `iot-twin-dev-<initials>`, check `bundle validate --output json`); `prod` is fixed to `iot-digital-twin` |
 | `uc_catalog`, `uc_schema` | `UC_CATALOG`, `UC_SCHEMA` | |
 | `warehouse_id` | `sql-warehouse` resource (CAN_USE) → `DATABRICKS_SQL_WAREHOUSE_ID` via `value_from` | |
 | `genie_space_id` | `genie-space` resource (CAN_VIEW) → `GENIE_SPACE_ID` via `value_from` | |
@@ -48,7 +60,16 @@ or `BUNDLE_VAR_<name>` env vars.
 | `msk_bootstrap_servers` | `MSK_BOOTSTRAP_SERVERS` | |
 | `zerobus_server_endpoint`, `zerobus_client_id` | `ZEROBUS_SERVER_ENDPOINT`, `ZEROBUS_CLIENT_ID` | |
 | `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | |
+| `zerobus_secret_key` | `ZEROBUS_SECRET_KEY` | Default `zerobus-client-secret` (the runtime default). `app.yaml` emits it empty, but the Apps API rejects empty env values in a bundle `config` |
 | `industries`, `admin_group`, `admin_emails` | `INDUSTRIES`, `ADMIN_GROUP`, `ADMIN_EMAILS` | |
+
+**Not in the bundle:** `ZEROBUS_TABLE_NAME`, `ZEROBUS_SECRET_SCOPE`, `UC_STORAGE_BASE`
+and `UC_EXTERNAL_LOCATION` are empty in `app.yaml` (unset-equivalent at runtime),
+and the Apps API rejects empty env values for bundle `config` (deploy fails with
+"Must specify environment variable source"). They are therefore left unset, which
+the runtime treats identically. To use one, add an `env` entry with a real value
+in `resources/app.yml` and a matching variable (and update the drift test's
+`empty_only` set in `tests/test_render_app_yaml.py`).
 
 `LAKETS_SQL_PATH` is no longer set: `lakets.sql` is resolved relative to the
 package (`iot_twin.core.paths`). The env var still overrides it.

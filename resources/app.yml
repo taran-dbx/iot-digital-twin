@@ -30,6 +30,8 @@ resources:
             value: ${var.zerobus_server_endpoint}
           - name: ZEROBUS_CLIENT_ID
             value: ${var.zerobus_client_id}
+          - name: ZEROBUS_SECRET_KEY
+            value: ${var.zerobus_secret_key}
           - name: UC_SERVICE_CREDENTIAL
             value: ${var.uc_service_credential}
           - name: PIPELINES_LAKEBASE_PROJECT

@@ -42,5 +42,8 @@ check: lint typecheck test frontend-build ## All gates, as CI runs them
 	@git diff --quiet -- static/dist && test -z "$$(git status --porcelain -- static/dist)" \
 		|| (echo "static/dist is stale; commit the rebuilt bundle" && exit 1)
 
-bundle-validate: ## Validate the DAB (needs auth: make bundle-validate PROFILE=<cli-profile>)
+bundle-validate: ## Validate the DAB (needs auth + overrides: make bundle-validate PROFILE=<cli-profile>)
+	@test -f .databricks/bundle/$(BUNDLE_TARGET)/variable-overrides.json || { \
+		echo "missing .databricks/bundle/$(BUNDLE_TARGET)/variable-overrides.json"; \
+		echo "copy variable-overrides.json.example there and fill in your workspace values"; exit 1; }
 	$(DATABRICKS) bundle validate --strict -t $(BUNDLE_TARGET) $(if $(PROFILE),--profile $(PROFILE))

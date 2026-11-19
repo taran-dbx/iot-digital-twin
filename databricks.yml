@@ -1,7 +1,9 @@
 # Declarative Automation Bundle for the IoT Digital Twin app.
 # All workspace-specific values are variables with placeholders; real values
-# come from the (gitignored) .databricks/bundle/<target>/variable-overrides.json,
-# `--var name=value` or BUNDLE_VAR_<name> env vars. See docs/deployment.md.
+# come from the (gitignored) .databricks/bundle/<target>/variable-overrides.json
+# (copy variable-overrides.json.example), `--var name=value` or BUNDLE_VAR_<name>.
+# Workspace-specific variables deliberately have NO default, so a missing value
+# fails validation instead of deploying placeholders. See docs/deployment.md.
 bundle:
   name: iot-digital-twin
 
@@ -10,23 +12,19 @@ include:
 
 variables:
   app_name:
-    description: Databricks App name (workspace-global, <= 30 chars, lowercase/digits/hyphens).
-    default: iot-twin-${workspace.current_user.domain_friendly_name}
+    description: "Databricks App name (workspace-global, <= 30 chars, lowercase/digits/hyphens). Dev default is shared: override per developer (e.g. iot-twin-dev-<initials>). Prod pins iot-digital-twin."
+    default: iot-twin-dev
   uc_catalog:
     description: Unity Catalog catalog holding the twin data.
-    default: example-catalog
   uc_schema:
     description: Unity Catalog schema holding the twin data.
     default: rtm_lakets_zb
   warehouse_id:
     description: SQL warehouse id the app queries (granted CAN_USE).
-    default: "0123456789abcdef"
   genie_space_id:
     description: Genie space id for the copilot (granted CAN_VIEW).
-    default: "00000000000000000000000000000000"
   lakebase_project:
     description: Lakebase (Postgres) project backing the app.
-    default: iot-app-backend-example
   lakebase_branch:
     description: Lakebase branch id.
     default: production
@@ -35,22 +33,19 @@ variables:
     default: databricks-postgres
   pghost:
     description: Lakebase endpoint host (PGHOST).
-    default: example-lakebase.database.us-east-1.cloud.databricks.com
   pipelines_lakebase_project:
     description: Lakebase project used for per-pipeline streaming sinks.
-    default: iot-pipelines-example
   msk_bootstrap_servers:
     description: Comma-separated MSK bootstrap servers.
-    default: b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198
   zerobus_server_endpoint:
     description: Zerobus ingest endpoint host.
-    default: 111111111111111.zerobus.us-east-1.cloud.databricks.com
   zerobus_client_id:
     description: Service principal client id used by Zerobus producers.
-    default: 00000000-0000-0000-0000-00000000000b
   uc_service_credential:
     description: UC service credential used for MSK access.
-    default: iot-rtm-sc
+  zerobus_secret_key:
+    description: "Secret key for the Zerobus client secret. Non-empty by necessity (the Apps API rejects empty env values); default equals the runtime default."
+    default: zerobus-client-secret
   industries:
     description: Comma-separated enabled industries.
     default: pharmaceutical,manufacturing
@@ -89,6 +84,11 @@ targets:
     default: true
     # workspace host is taken from --profile / DATABRICKS_CONFIG_PROFILE; never committed.
 
+  # WARNING: prod resolves to the LIVE app name (iot-digital-twin). Always run
+  # `databricks bundle deployment bind iot_twin iot-digital-twin -t prod` first,
+  # review `databricks bundle plan -t prod`, and never deploy without prod
+  # overrides (.databricks/bundle/prod/variable-overrides.json): the workspace
+  # variables have no defaults and validation fails until they are provided.
   prod:
     mode: production
     workspace:
