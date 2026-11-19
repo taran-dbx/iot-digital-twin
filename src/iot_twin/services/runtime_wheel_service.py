@@ -17,14 +17,14 @@ import zipfile
 from io import BytesIO, StringIO
 from pathlib import Path
 
+from iot_twin.core.paths import LIB_DIR, PACKAGE_ROOT
+
 _RECORD_BASENAMES = frozenset({"RECORD", "RECORD.jws", "RECORD.p7s"})
 
 WHEEL_FILENAME = "iot_data_simulator-0.1.0-py3-none-any.whl"
-_PACKAGE_ROOT = Path(__file__).resolve().parents[1]  # src/iot_twin
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 # Job clusters import these as TOP-LEVEL packages (``import domain``), so wheel
 # members are named ``domain/...`` / ``scenario_engine/...`` (relative to
-# ``_PACKAGE_ROOT``) and their intra-repo imports are rewritten accordingly.
+# ``PACKAGE_ROOT``) and their intra-repo imports are rewritten accordingly.
 _PACKAGE_DIRS = ("domain", "scenario_engine")
 _RUNTIME_IMPORT_RE = re.compile(r"\biot_twin\.(domain|scenario_engine)\b")
 MAX_WHEEL_MEMBERS = 2000
@@ -39,7 +39,7 @@ class RuntimeWheelError(ValueError):
 
 def bundled_wheel_path() -> Path:
     """Return the packaged simulator wheel under ``lib/``."""
-    return _REPO_ROOT / "lib" / WHEEL_FILENAME
+    return LIB_DIR / WHEEL_FILENAME
 
 
 def _record_digest(data: bytes) -> str:
@@ -58,11 +58,11 @@ def _to_toplevel_imports(source: str) -> bytes:
 def _package_files() -> list[tuple[str, bytes]]:
     entries: list[tuple[str, bytes]] = []
     for package in _PACKAGE_DIRS:
-        root = _PACKAGE_ROOT / package
+        root = PACKAGE_ROOT / package
         for path in sorted(root.rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue
-            rel = path.relative_to(_PACKAGE_ROOT).as_posix()
+            rel = path.relative_to(PACKAGE_ROOT).as_posix()
             entries.append((rel, _to_toplevel_imports(path.read_text(encoding="utf-8"))))
     return entries
 

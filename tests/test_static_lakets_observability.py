@@ -31,7 +31,7 @@ def test_index_loads_observer_before_main_bundle_c7226_smoke_regression() -> Non
     assert module_bundle is not None
     assert observer_script < module_bundle.start()
     assert 'href="/static/dist/lakets-observability.css"' in index
-    assert 'app.mount("/static", StaticFiles(directory="static")' in app_source
+    assert 'app.mount("/static", StaticFiles(directory=STATIC_DIR)' in app_source
     assert OBSERVABILITY_JS.is_file()
     assert OBSERVABILITY_CSS.is_file()
 

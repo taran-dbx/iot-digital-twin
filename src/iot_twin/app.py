@@ -17,18 +17,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from iot_twin.core.config import INDUSTRIES, UPDATE_RATE_HZ
+from iot_twin.core.paths import SPA_DIST_DIR, SPA_INDEX, STATIC_DIR
 from iot_twin.core.shutdown import install_sigterm_handler, shutdown
 from iot_twin.core.state import AppState
 from iot_twin.routes import create_api_router
-from iot_twin.routes.industries_admin import (
-    router as industries_admin_router,
-)
-from iot_twin.routes.industries_admin import (
-    start_industry_runtime_refresh,
-)
-from iot_twin.routes.setup import router as setup_router
-from iot_twin.routes.static_files import router as static_files_router
-from iot_twin.routes.validation_admin import router as validation_admin_router
+from iot_twin.routes.industries_admin import start_industry_runtime_refresh
 from iot_twin.services.alerts.alert_snapshot_sync import start_alert_snapshot_sync
 from iot_twin.services.deployment.deployment_service import (
     RuntimeOAuthCredentialError,
@@ -136,32 +129,19 @@ async def lifespan(application: FastAPI):
 # ---------------------------------------------------------------------------
 app = FastAPI(title="IoT Digital Twin", lifespan=lifespan)
 
-# API routes (health, websocket, sources, sensor_data, simulator, producers,
-# provisioning, cluster, deployment, jobs, industries, user, settings,
-# warehouses, pipelines)
+# Every router (API, setup, admin, validation, SPA root) is registered by
+# create_api_router(), in a fixed order.
 app.include_router(create_api_router())
 
-# One-click Lakebase + LakeTS pipeline-setup router (POST /api/setup/...)
-app.include_router(setup_router)
-
-# Admin pipeline management router (POST /api/admin/industries/...,
-# GET/DELETE /api/admin/pipelines/...) — app-backend data model + provisioning.
-app.include_router(industries_admin_router)
-app.include_router(validation_admin_router)
-
-# Static file routes (/)
-app.include_router(static_files_router)
-
 # Static file mounts — must come after route registration
-app.mount("/assets", StaticFiles(directory="static/dist/assets"), name="spa-assets")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/assets", StaticFiles(directory=SPA_DIST_DIR / "assets"), name="spa-assets")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # Vite copies client/public/* to the dist root; serve brand SVGs from there so
 # the SPA catch-all below doesn't swallow /brand/*.svg and return index.html.
-if os.path.isdir("static/dist/brand"):
-    app.mount("/brand", StaticFiles(directory="static/dist/brand"), name="brand")
+if (SPA_DIST_DIR / "brand").is_dir():
+    app.mount("/brand", StaticFiles(directory=SPA_DIST_DIR / "brand"), name="brand")
 
 # SPA catch-all — must be the very last route
-SPA_INDEX = "static/dist/index.html"
 
 
 @app.get("/{path:path}")

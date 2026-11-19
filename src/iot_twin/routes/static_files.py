@@ -5,9 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
-router = APIRouter()
+from iot_twin.core.paths import SPA_INDEX
 
-SPA_INDEX = "static/dist/index.html"
+router = APIRouter()
 
 
 @router.get("/")
