@@ -38,14 +38,14 @@ def _rules(checker, text: str) -> list[str]:
 # Offending values are assembled at runtime so this file itself stays clean.
 _LAKEBASE_HOST = "ep-" + "quiet-river-" + "a1b2c3d4" + ".database.us-east-1.cloud.databricks.com"
 _ARN = "arn:aws:kafka:us-east-1:" + "984752964297" + ":cluster/x"
-_OWNER_EMAIL = "taran" + "preetsingh.grover@" + "databricks.com"
+_OWNER_EMAIL = "tar" + "anpreetsingh.grover@" + "databricks.com"
 
 
 @pytest.mark.parametrize(
     ("text", "rule"),
     [
         (_LAKEBASE_HOST, "lakebase-endpoint-host"),
-        ("https://my-app-" + "1234567890123456.aws.databricksapps.com", "databricksapps-host"),
+        ("https://my-app-1234567890123456.aws." + "databricksapps.com", "databricksapps-host"),
         ("host = real-ws-1" + ".cloud.databricks.com", "databricks-cloud-host"),
         (
             "zerobus: " + "7474659563748021" + ".zerobus.eu-central-1.cloud.databricks.com",
