@@ -66,3 +66,6 @@ env:
 
   - name: GENIE_SPACE_ID
     valueFrom: genie-space
+
+  - name: USAGE_TRACKING_ENABLED
+    value: "true"

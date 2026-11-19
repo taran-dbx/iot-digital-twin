@@ -52,9 +52,12 @@ variables:
   admin_group:
     description: Workspace group whose members are app admins.
     default: iot-admins
+  usage_tracking_enabled:
+    description: Usage tracking via dbdemos-tracker ("false" to opt out).
+    default: "true"
 
 # Ships the built SPA (static/dist is tracked), the package, app.yaml, the
-# simulator wheel and requirements. Replaces .databricksignore.
+# vendored wheels (simulator, dbdemos-tracker) and requirements. Replaces .databricksignore.
 sync:
   include:
     - static/dist/**
