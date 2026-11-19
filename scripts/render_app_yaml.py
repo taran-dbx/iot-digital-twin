@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render app.yaml from a named workspace deployment profile.
 
-Profiles live in config/workspaces/<name>.profile (JSON, no secrets). The real
+Profiles live in deploy/workspaces/<name>.profile (JSON, no secrets). The real
 ``*.profile`` files are gitignored; only ``*.profile.example`` templates with
 placeholder values are committed. To create a profile::
 
-    cp config/workspaces/example-us-east.profile.example config/workspaces/<name>.profile
-    $EDITOR config/workspaces/<name>.profile
+    cp deploy/workspaces/example-us-east.profile.example deploy/workspaces/<name>.profile
+    $EDITOR deploy/workspaces/<name>.profile
     python scripts/render_app_yaml.py <name>
 
 The committed app.yaml is rendered from an example profile (placeholders). Render
@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILES_DIR = REPO_ROOT / "config" / "workspaces"
+DEFAULT_PROFILES_DIR = REPO_ROOT / "deploy" / "workspaces"
 DEFAULT_OUTPUT = REPO_ROOT / "app.yaml"
 
 REQUIRED_PROFILE_KEYS: tuple[str, ...] = (
@@ -201,12 +201,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "profile",
-        help="Profile name (config/workspaces/<name>.profile)",
+        help="Profile name (deploy/workspaces/<name>.profile)",
     )
     parser.add_argument(
         "--example",
         action="store_true",
-        help="Load config/workspaces/<name>.profile.example (placeholder values)",
+        help="Load deploy/workspaces/<name>.profile.example (placeholder values)",
     )
     parser.add_argument(
         "--profiles-dir",

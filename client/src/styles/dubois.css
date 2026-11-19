@@ -1,7 +1,7 @@
 /* ================================================================
    Databricks DuBois — design tokens + component CSS
-   Vendored from design-ref/_ds/colors_and_type.css (tokens + base/type
-   rules) and design-ref/Digital Twin Platform.dc.html (component CSS:
+   Vendored from the original design reference (colors_and_type.css: tokens + base/type
+   rules) and the original design reference (component CSS:
    app-shell/top-bar/card/panel/fcard/arch/dashboard/modal classes +
    the tier palette and its [data-theme="dark"] overrides).
 
@@ -296,7 +296,7 @@ code, .code {
 .dubois-spin { animation: dubois-spin 1s steps(60, end) infinite; }
 
 /* ================================================================
-   Component CSS — vendored from design-ref/Digital Twin Platform.dc.html
+   Component CSS — vendored from the original design reference
    (the <helmet><style> block: app-shell/top-bar/card/panel/fcard/arch/
    dashboard/modal classes + tier palette + dark-mode tier overrides)
    ================================================================ */

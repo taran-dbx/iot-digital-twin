@@ -1,6 +1,6 @@
 /**
  * Shared modal overlay — ports `#tw-modal` / `openModal()` / `closeModal()`
- * from the design reference (`design-ref/Digital Twin Platform.dc.html`).
+ * from the original design reference (kept outside this repo).
  * The design renders this once as a sibling of `.app-shell` and reuses it
  * for both the "View data flow" (`.fc-info` on a pipeline card) and "View
  * sample" (setup screen's `su-sample` button) triggers — same here via a

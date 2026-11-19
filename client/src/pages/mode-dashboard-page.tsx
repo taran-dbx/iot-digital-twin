@@ -1,7 +1,7 @@
 /**
  * Per-mode dashboard — the payoff screen for a curated industry's streaming
  * mode (`/i/:industry/:mode/dashboard`). Ports the `#view-dashboard` chrome
- * from the design reference (`design-ref/Digital Twin Platform.dc.html`:
+ * from the original design reference (kept outside this repo:
  * `.topbar-db`, `.kpis`, `.twin-grid`, `.sec` tier sections, `.cdf` banner)
  * using the DuBois classes already global in `dubois.css`, and mounts the
  * **existing** dashboard data components (`components/dashboard/*`,
@@ -146,7 +146,7 @@ const MODE_META: Record<PipelineMode, ModeMeta> = {
 };
 
 /** Inline SVG twins for non-pharma industries, ported verbatim from the
- * design script's `TWIN` map (`design-ref/Digital Twin Platform.dc.html`).
+ * design script's `TWIN` map (the original design reference).
  * Pharmaceutical uses the real `PharmaPlant` r3f twin instead — this map only
  * covers the other three curated industries. */
 const TWIN_SVG: Record<string, string> = {

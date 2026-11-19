@@ -28,7 +28,7 @@ INDUSTRY = "spiketest"
 CATALOG = os.getenv("UC_CATALOG", "")
 SCHEMA = os.getenv("UC_SCHEMA", "")
 _VENDORED_LAKETS = str(
-    Path(__file__).resolve().parent.parent / "src" / "iot_twin" / "resources" / "lakets.sql"
+    Path(__file__).resolve().parent.parent / "src" / "iot_twin" / "assets" / "lakets.sql"
 )
 
 

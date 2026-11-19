@@ -25,9 +25,9 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.txt
-            requirements-dev.txt
+            pyproject.toml
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -r requirements.txt -e ".[dev]"
       - name: Ruff lint
         run: ruff check .
       - name: Ruff format

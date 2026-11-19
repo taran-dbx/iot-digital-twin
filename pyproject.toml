@@ -25,6 +25,9 @@ dependencies = [
     "databricks-zerobus-ingest-sdk==0.2.0",
 ]
 
+# Dev/CI tooling; install with: pip install -r requirements.txt -e ".[dev]"
+# (requirements.txt also pulls in the bundled ./lib simulator wheel).
+# Keep ruff in lockstep with .pre-commit-config.yaml.
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
@@ -40,14 +43,14 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-iot_twin = ["resources/*.sql"]
+iot_twin = ["assets/*.sql"]
 
 # ── Ruff ───────────────────────────────────────────────────────────────────
 [tool.ruff]
 target-version = "py311"
 src = ["src"]
 line-length = 100
-extend-exclude = ["client", "qa", "static", "design-ref", "lib"]
+extend-exclude = ["client", "tests/e2e", "static", "lib"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
@@ -92,6 +95,8 @@ docstring-code-format = false
 # ── Pytest ─────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Browser tests are Node/Playwright, not pytest: never collect them.
+norecursedirs = ["e2e", "node_modules"]
 pythonpath = ["src"]
 # Async tests opt in explicitly with @pytest.mark.asyncio.
 asyncio_mode = "strict"

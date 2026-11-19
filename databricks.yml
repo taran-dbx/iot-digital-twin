@@ -1,7 +1,7 @@
 # Declarative Automation Bundle for the IoT Digital Twin app.
 # All workspace-specific values are variables with placeholders; real values
 # come from the (gitignored) .databricks/bundle/<target>/variable-overrides.json
-# (copy variable-overrides.json.example), `--var name=value` or BUNDLE_VAR_<name>.
+# (copy deploy/variable-overrides.json.example), `--var name=value` or BUNDLE_VAR_<name>.
 # Workspace-specific variables deliberately have NO default, so a missing value
 # fails validation instead of deploying placeholders. See docs/deployment.md.
 bundle:
@@ -66,14 +66,12 @@ sync:
     - client/
     - docs/
     - tests/
-    - qa/
+    - tests/e2e/
     - scripts/
-    - config/
-    - design-ref/
+    - deploy/
     - .github/
     - Makefile
     - README.md
-    - requirements-dev.txt
     - .pre-commit-config.yaml
     - .gitleaks.toml
     - .editorconfig

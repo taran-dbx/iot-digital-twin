@@ -3,7 +3,7 @@
 Layout (repo root == the Databricks Apps sync root)::
 
     <root>/src/iot_twin/core/paths.py   <- this file
-    <root>/src/iot_twin/resources/      <- packaged data (lakets.sql)
+    <root>/src/iot_twin/assets/         <- packaged data (lakets.sql)
     <root>/static/dist/                 <- built SPA served by the app
     <root>/lib/                         <- bundled simulator wheel
 
@@ -26,5 +26,5 @@ SPA_INDEX = SPA_DIST_DIR / "index.html"
 
 LIB_DIR = REPO_ROOT / "lib"
 
-RESOURCES_DIR = PACKAGE_ROOT / "resources"
-LAKETS_SQL_PATH = RESOURCES_DIR / "lakets.sql"
+ASSETS_DIR = PACKAGE_ROOT / "assets"
+LAKETS_SQL_PATH = ASSETS_DIR / "lakets.sql"

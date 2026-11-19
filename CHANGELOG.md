@@ -20,6 +20,15 @@ All notable changes to this project are documented here. The format follows
 - Workspace profiles are templates (`*.profile.example`); real profiles are gitignored.
 - `LAKETS_SQL_PATH` is optional and falls back to the packaged `lakets.sql`.
 - Dev scripts require an explicit CLI profile.
+- Repository layout tidied with no behaviour change: `design-ref/` removed (kept locally, outside the repo),
+  `config/workspaces/` and `variable-overrides.json.example` -> `deploy/`, `qa/playwright/` ->
+  `tests/e2e/playwright/`, packaged `src/iot_twin/resources/` -> `src/iot_twin/assets/`, and
+  `requirements-dev.txt` folded into the `dev` extra in `pyproject.toml`
+  (`pip install -r requirements.txt -e ".[dev]"`).
+- `docs/` now holds only current documentation: archived plans, the legacy deployment playbook
+  (its valid parts are a Troubleshooting section in `deployment.md`) and the stale diagrams were
+  removed; added `docs/api.md`, `docs/README.md`, an inline architecture diagram and sections for
+  alerts, the Genie copilot, the intelligence catalog and production control.
 
 ### Removed
 - Legacy static pages and `/legacy` routes, unused modules, the duplicate simulator wheel,

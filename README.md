@@ -44,17 +44,17 @@ src/iot_twin/            Python package (run as iot_twin.app:app)
     alerts/ validation/ industry/ pipelines/ lakets/ deployment/ db/
   domain/                simulator domain catalog (also shipped to job clusters)
   scenario_engine/       scenario engine (also shipped to job clusters)
-  resources/             packaged data files (lakets.sql)
+  assets/                packaged data files (lakets.sql)
 client/                  React + Vite + TypeScript SPA source
 static/dist/             built SPA served by the app (committed; CI checks it is fresh)
 lib/                     simulator wheel installed by requirements.txt
-tests/                   pytest suite
-qa/playwright/           browser QA against the built SPA
+tests/                   pytest suite (e2e/playwright = browser tests)
+requirements.txt         runtime deps installed by Databricks Apps (dev extra: pyproject.toml)
 scripts/                 ops and end-to-end tooling (profile-driven)
-config/workspaces/       workspace profile templates (*.profile.example)
+deploy/                  workspaces/*.profile.example + variable-overrides.json.example
 databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
-docs/                    guides, architecture, archived history
+docs/                    architecture, deployment and API documentation
 ```
 
 ## Quick start
@@ -64,7 +64,7 @@ Requirements: Python 3.11+, Node (see `client/.nvmrc`), and the Databricks CLI f
 ```bash
 # 1. Python environment
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -e ".[dev]"
 
 # 2. Frontend dependencies
 cd client && npm ci && cd ..
@@ -110,7 +110,7 @@ set `DATABRICKS_CONFIG_PROFILE`.
 
 Deployment uses **Declarative Automation Bundles**. Quick version:
 
-Workspace-specific values have no defaults. Copy `variable-overrides.json.example` to
+Workspace-specific values have no defaults. Copy `deploy/variable-overrides.json.example` to
 `.databricks/bundle/<target>/variable-overrides.json` (gitignored) and fill it in first.
 
 ```bash
@@ -121,7 +121,7 @@ databricks bundle run -t dev --profile <cli-profile>
 
 Do not point `prod` at an existing app without binding it first
 (`databricks bundle deployment bind`); see [docs/deployment.md](docs/deployment.md) for
-variables, targets, binding, prerequisites (service-principal grants) and rollback.
+variables, targets, binding, prerequisites (service-principal grants) and troubleshooting.
 
 ## Testing and quality gates
 
@@ -129,7 +129,7 @@ variables, targets, binding, prerequisites (service-principal grants) and rollba
 make check          # everything CI runs
 make test           # pytest only
 cd client && npm run lint && npm run typecheck && npm run build
-cd qa/playwright && npm install && npx playwright install chromium && npm test
+cd tests/e2e/playwright && npm ci && npx playwright install chromium && npm test
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff (lint and format), mypy on `core` and `models`,
@@ -141,11 +141,11 @@ run locally through `pre-commit`.
 
 | Document | What it covers |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | Components, data flow, auth, storage |
-| [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites |
-| [docs/deployment-playbook.md](docs/deployment-playbook.md) | Legacy manual runbook and troubleshooting notes (partly superseded) |
-| [qa/playwright/README.md](qa/playwright/README.md) | Browser QA |
-| [docs/archive/](docs/archive/) | Historical plans and snapshots |
+| [docs/README.md](docs/README.md) | Index of the documentation |
+| [docs/architecture.md](docs/architecture.md) | Components, data flow, alerts, Genie copilot, auth, storage |
+| [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites, troubleshooting |
+| [docs/api.md](docs/api.md) | API routes by router; live OpenAPI at `/docs` and `/openapi.json` |
+| [tests/e2e/playwright/README.md](tests/e2e/playwright/README.md) | Browser QA |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |
 
