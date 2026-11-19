@@ -1,16 +1,21 @@
 # IoT Digital Twin — End-to-End Behavior (As-Built)
 
+> **Historical document.** Written during an earlier workspace migration and kept for
+> reference only. Workspace-specific identifiers have been replaced with placeholders;
+> behavior described here may be out of date. See `docs/deployment-playbook.md` and the
+> workspace profile templates in `config/workspaces/` for current guidance.
+
 > **Purpose.** A faithful, code-grounded description of what the app does *today* — every
 > resource it creates, every data path, every backend it talks to — so we can walk through
 > it function by function, decide what "correct" is, and fix it before redeploying to the
-> new workspace (`fevm-classic-stable-realtime-demos`, id `7474659563748021`, region
+> new workspace (`example-eu-workspace`, id `2222222222222222`, region
 > `eu-central-1`).
 >
 > Every claim is anchored to `file:line`. **`❓` callouts** mark places where I need *your*
 > intended behavior (or where the code is ambiguous / half-finished / hardcoded to the old
 > workspace). A consolidated question list is at the end (§11).
 >
-> Old workspace `fe-vm-shared-interop` (us-east-1) and all its assets were **torn down
+> Old workspace `example-us-east` (us-east-1) and all its assets were **torn down
 > 2026-08-24** — so anything hardcoded to it is now dead.
 
 ---
@@ -36,7 +41,7 @@ The app is a **FastAPI backend + React SPA** deployed as a Databricks App. It is
 **Four identities**
 - **App SP** — injected at runtime as `DATABRICKS_CLIENT_ID`. Does UC work (SDK auth), owns the app-backend Lakebase connection (OAuth), and gets a per-branch Lakebase role `iot-app-user`.
 - **Shared streaming SP** — `iot-sss-industries` (fallback app-id `9927a7fa-…`, `services/industry_catalog_service.py:66`). The realtime consumer authenticates to Lakebase as this; also granted on UC. Secret scope `iot-secrets`, keys `sss-industries-client-id/-secret`.
-- **Zerobus SP** — `ZEROBUS_CLIENT_ID` (was `01329a59-…`). Secret `iot-secrets/zerobus-client-secret`.
+- **Zerobus SP** — `ZEROBUS_CLIENT_ID` (was `00000000-…`). Secret `iot-secrets/zerobus-client-secret`.
 - **Human user** — admin via forwarded token (§9).
 
 **Two backend Lakebase connections** (metadata only, no sensor data) — see §2.
@@ -52,7 +57,7 @@ The app is a **FastAPI backend + React SPA** deployed as a Databricks App. It is
 | Project | `iot-lakets-demo` | `iot-app-backend` (`:31`) |
 | Endpoint env | `LAKEBASE_ENDPOINT` (`app.yaml:15`) | `APP_BACKEND_LAKEBASE_ENDPOINT` (`:32`) |
 | Host env | `PGHOST` | `APP_BACKEND_PGHOST` (`:36`) |
-| Host default | none in code; `app.yaml:10` = `ep-fancy-king-…` (**dead ws**) | **hardcoded in source** `ep-mute-scene-d2cvnr0v…` (`:38`, **dead ws**) |
+| Host default | none in code; `app.yaml:10` = `example-lakebase-…` (**dead ws**) | **hardcoded in source** `example-lakebase…` (`:38`, **dead ws**) |
 | Auth | static (if `PGUSER`+`PGPASSWORD`) **or** SDK OAuth + 50-min refresh (`backend.py:84-90,111-135`) | **always** SDK OAuth (`:51-77`) — ignores injected static creds |
 
 **Legacy tables** (created at boot, DDL-privilege-tolerant):
@@ -90,13 +95,13 @@ Neither DB failure crashes the app — status is recorded in `AppState` for trut
 ### 2.3 Workspace-hardcoded values that MUST change for redeploy
 | Value | Where | Note |
 |---|---|---|
-| `PGHOST=ep-fancy-king-…` | `app.yaml:10` | dead ws host |
-| `APP_BACKEND_PGHOST` default `ep-mute-scene-…` | **`app_backend_db.py:38` (source)** | worse — a code default, not just config |
+| `PGHOST=example-lakebase-…` | `app.yaml:10` | dead ws host |
+| `APP_BACKEND_PGHOST` default `example-lakebase-…` | **`app_backend_db.py:38` (source)** | worse — a code default, not just config |
 | `LAKEBASE_ENDPOINT=projects/iot-lakets-demo/…` | `app.yaml:15` | dead project |
-| `ZEROBUS_SERVER_ENDPOINT=332040261549026.zerobus…` | `app.yaml:22` | embeds old ws id |
-| `ZEROBUS_CLIENT_ID=01329a59-…` | `app.yaml:26` | deleted SP |
-| `DATABRICKS_HOST` fallback `e2-demo-field-eng…` | `simulator_service.py:94` | stale, wrong ws |
-| `s3://taran-shared-interop` + ext-location `taran-shared-interop` | `industry_catalog_service.py:57-58` | **not env-driven**; provisioning pre-flight fails without it |
+| `ZEROBUS_SERVER_ENDPOINT=111111111111111.zerobus…` | `app.yaml:22` | embeds old ws id |
+| `ZEROBUS_CLIENT_ID=00000000-…` | `app.yaml:26` | deleted SP |
+| `DATABRICKS_HOST` fallback `example-demo…` | `simulator_service.py:94` | stale, wrong ws |
+| `s3://example-shared-bucket` + ext-location `example-shared-bucket` | `industry_catalog_service.py:57-58` | **not env-driven**; provisioning pre-flight fails without it |
 | MSK bootstrap `b-{1,2,3}-public.iotdemo…:9198` | `industry-deploy-config.ts:41-44` | old MSK |
 | service credential `iot-rtm-sc` | `industry-deploy-config.ts:47` | UC service credential |
 | Lakebase project `iot-pipelines` | `industry-deploy-config.ts:52`, `pipelines_project_service.py:38` | hardcoded name |
@@ -107,7 +112,7 @@ Neither DB failure crashes the app — status is recorded in `AppState` for trut
 > `app.yaml`/env behind a **config module** — no hosts, S3 bucket / external-location names, Lakebase
 > project names, SP client-ids, MSK bootstrap servers, service-credential names, zerobus endpoint, or
 > secret-scope names in source. This includes the `app_backend_db.py:38` host default,
-> `industry_catalog_service.py:57-58` (`s3://taran-shared-interop` / `taran-shared-interop`), the
+> `industry_catalog_service.py:57-58` (`s3://example-shared-bucket` / `example-shared-bucket`), the
 > `industry-deploy-config.ts` literals (MSK bootstrap, `iot-rtm-sc`, `iot-pipelines`), the
 > `iot-secrets` scope defaults, the `9927a7fa…` fallback SP id, and `simulator_service.py:94`. A
 > redeploy to any workspace becomes **config-only, no source edits**.
@@ -127,15 +132,15 @@ Two entrypoints: **industry-first (primary)** `POST /api/admin/industries/{indus
 - **Two PG roles** (OAuth-native, `LAKEBASE_OAUTH_V1`, superuser): `iot-app-user` (app SP) and `iot-sss-industries` (streaming SP) (`provisioning_service.py:784-1096`).
 
 ### 3.2 Unity Catalog
-- **Catalog:** `iot_<industry>` (`industry_catalog_service.py:84-93`), `storage_root = s3://taran-shared-interop/<catalog>` (metastore has no default root, `:96-98,220`).
+- **Catalog:** `iot_<industry>` (`industry_catalog_service.py:84-93`), `storage_root = s3://example-shared-bucket/<catalog>` (metastore has no default root, `:96-98,220`).
 - **Schemas:** `realtime, microbatch, zerobus, metrics, checkpoints` (`:61`).
 - **Volume:** `stream_checkpoints` in `checkpoints`.
-- **Tables created by provisioning:** only the **external metrics Delta tables** `metrics.streaming_metrics_realtime` & `…_microbatch` (external at `s3://taran-shared-interop/iot-digital-twin/<catalog>/metrics/…`). **Zerobus has no metrics table** (not a Spark stream). The sensor data tables (`microbatch.sensor_data`, `zerobus.iot_sensor_data`, realtime CDF shadow) are created by the **deploy/producer path**, not here.
+- **Tables created by provisioning:** only the **external metrics Delta tables** `metrics.streaming_metrics_realtime` & `…_microbatch` (external at `s3://example-shared-bucket/iot-digital-twin/<catalog>/metrics/…`). **Zerobus has no metrics table** (not a Spark stream). The sensor data tables (`microbatch.sensor_data`, `zerobus.iot_sensor_data`, realtime CDF shadow) are created by the **deploy/producer path**, not here.
 
 > **✅ Decided (2026-08-27): one catalog, one schema, industry-prefixed tables.** The new workspace
 > uses a **single** UC catalog + schema for *all* modes and industries (replaces the per-industry
 > catalog × 5-schema sprawl):
-> - **Catalog:** `classic_stable_realtime_demos_catalog` · **Schema:** `rtm_lakets_zb` — both **config,
+> - **Catalog:** `example_eu_catalog` · **Schema:** `rtm_lakets_zb` — both **config,
 >   not hardcoded** (§2.3).
 > - **Tables (industry-prefixed, all in the one schema):** `{industry}_realtime` (CDF-synced cold
 >   history), `{industry}_microbatch`, `{industry}_zerobus`, and **`{industry}_metrics`** (managed,
@@ -605,9 +610,9 @@ Databricks Apps inject identity headers. Admin = **any** of: caller email ∈ `A
 
 **Blocking redeploy (must fix before the new workspace works):**
 1. **Both Lakebase hosts hardcoded to the dead workspace** — `app.yaml:10` + **`app_backend_db.py:38` (source default)**. (§2.3)
-2. **`simulator_service.py:94` hardcodes `e2-demo-field-eng` `DATABRICKS_HOST` fallback** — wrong workspace.
-3. **`app.yaml` zerobus endpoint embeds old ws id `332040261549026`** and deleted SP `01329a59-…`.
-4. **`s3://taran-shared-interop` external location hardcoded, not env** (`industry_catalog_service.py:57-58`) — provisioning pre-flight fails on a workspace without it.
+2. **`simulator_service.py:94` hardcodes `example-demo` `DATABRICKS_HOST` fallback** — wrong workspace.
+3. **`app.yaml` zerobus endpoint embeds old ws id `111111111111111`** and deleted SP `00000000-…`.
+4. **`s3://example-shared-bucket` external location hardcoded, not env** (`industry_catalog_service.py:57-58`) — provisioning pre-flight fails on a workspace without it.
 5. **MSK bootstrap, `iot-rtm-sc`, `iot-pipelines`, `iot-secrets`, fallback SP id** all hardcoded (§2.3).
 
 **Functional bugs / gaps:**
@@ -652,19 +657,19 @@ Databricks Apps inject identity headers. Admin = **any** of: caller email ∈ `A
 
 ## 12. Deployment readiness & risk assessment — new workspace
 
-> Target: `fevm-classic-stable-realtime-demos` (id `7474659563748021`, **eu-central-1**), **multi-industry**
+> Target: `example-eu-workspace` (id `2222222222222222`, **eu-central-1**), **multi-industry**
 > (decided 2026-08-27 — `INDUSTRIES` drives the gallery via config; the hardcoded `CURATED_INDUSTRIES`
 > list is retired; `{industry}_` table prefixing already chosen for exactly this). Legend: ✅ verified OK ·
 > ⚠️ must verify · ⛔ blocker · 🔧 code fix required.
 
 ### 12.1 ✅ Verified OK on the workspace (checked 2026-08-27)
-- **Catalog `classic_stable_realtime_demos_catalog` already exists** (MANAGED, storage_root
-  `s3://classic-stable-realtime-demos-ext-s3-049629455384-54y4x2/`). We **create only the schema
+- **Catalog `example_eu_catalog` already exists** (MANAGED, storage_root
+  `s3://example-ext-bucket/`). We **create only the schema
   `rtm_lakets_zb`** inside it — provisioning must **not** try to `CREATE CATALOG`.
 - **DBR `18.2.x-scala2.13` available** → RTM `.trigger(realTime=…)` works (16.4 LTS would not).
 - **`m5d.xlarge` available** in eu-central-1.
 - **Lakebase/postgres API enabled** (pg 17); projects can be created.
-- **A SQL warehouse exists** (`0864d7304e74ad76`, serverless PRO, shared) — usable, or provision our own.
+- **A SQL warehouse exists** (`0123456789abcdef`, serverless PRO, shared) — usable, or provision our own.
 - **External location + S3 bucket exist** (`…-ext-role-…-el-luvwko`) as a fallback; but managed-catalog
   storage covers our managed tables/volumes, so we likely **don't need** an external location at all.
 - **Apps API reachable** and the name `iot-digital-twin` is **free** (the `apps list` CLI RPC is broken on
@@ -674,12 +679,12 @@ Databricks Apps inject identity headers. Admin = **any** of: caller email ∈ `A
 | # | Item | Why it breaks | Mitigation |
 |---|---|---|---|
 | B1 | **Kafka source for eu-central-1** | realtime + microbatch read MSK via **MSK-IAM + a UC service credential**; the old MSK is us-east-1. No reachable Kafka ⇒ only zerobus works. | Decide: cross-region MSK, a new MSK in eu-central-1, or another Kafka; create a UC **SERVICE credential** + confirm cluster network egress to the brokers. |
-| B2 | **Zerobus enabled + SP + secret** | Now load-bearing for **both** zerobus mode **and** streaming metrics. If Zerobus isn't enabled, metrics + zerobus ingest fail. | Verify endpoint `7474659563748021.zerobus.eu-central-1.cloud.databricks.com`; create the zerobus SP + OAuth secret in the (new) secret scope. |
+| B2 | **Zerobus enabled + SP + secret** | Now load-bearing for **both** zerobus mode **and** streaming metrics. If Zerobus isn't enabled, metrics + zerobus ingest fail. | Verify endpoint `2222222222222222.zerobus.eu-central-1.cloud.databricks.com`; create the zerobus SP + OAuth secret in the (new) secret scope. |
 | B3 | **App SP grants on the pre-existing catalog** | The catalog is owned by a **different (Terraform) SP**; our app SP + Zerobus SP can't create the schema/tables without grants. | A metastore/catalog admin grants app SP + zerobus SP: `USE CATALOG` + `CREATE SCHEMA` on the catalog, and `USE SCHEMA/CREATE TABLE/CREATE VOLUME/MODIFY/SELECT` on `rtm_lakets_zb`. |
-| B4 | **All workspace hardcodes still point at the dead workspace** | App boots against `ep-fancy-king…`/`ep-mute-scene…`, `iot-lakets-demo`, `s3://taran-shared-interop`, `332040261549026` zerobus, `e2-demo-field-eng`. Nothing works until externalized. | 🔧 §2.3 "nothing hardcoded" — config module + `app.yaml` for this workspace. |
+| B4 | **All workspace hardcodes still point at the dead workspace** | App boots against `example-lakebase…`/`example-lakebase…`, `iot-lakets-demo`, `s3://example-shared-bucket`, `111111111111111` zerobus, `example-demo`. Nothing works until externalized. | 🔧 §2.3 "nothing hardcoded" — config module + `app.yaml` for this workspace. |
 
 ### 12.3 ⚠️ Must verify (can't confirm via CLI)
-- **W1 — Lakebase SP OAuth** to a fresh project (`LAKEBASE_OAUTH_V1`). Worked on `fe-vm-shared-interop`,
+- **W1 — Lakebase SP OAuth** to a fresh project (`LAKEBASE_OAUTH_V1`). Worked on `example-us-east`,
   **failed** on the MSK-demo workspace (needed pg-native login). Verify the app + streaming SPs can auth;
   fallback = pg-native user.
 - **W2 — CDF-config API** (`/api/2.0/postgres/.../cdf-configs`) enabled here — our CDF automation depends on it.
@@ -708,23 +713,23 @@ Databricks Apps inject identity headers. Admin = **any** of: caller email ∈ `A
 - **Grants before writes** — apply catalog/schema + Lakebase-role grants before the streams start.
 
 ### 12.6 Setup findings (2026-08-27)
-- **App created** — SP client-id `7c59807d-7f0d-47ab-8e83-6d91add2f35c` (numeric `72852008785762`);
-  URL `https://iot-digital-twin-7474659563748021.aws.databricksapps.com`. Catalog `USE CATALOG` +
+- **App created** — SP client-id `00000000-0000-0000-0000-00000000000a` (numeric `000000000000001`);
+  URL `https://<app-host>`. Catalog `USE CATALOG` +
   `CREATE SCHEMA` grant to the app SP **applied** ✅.
-- **Warehouse:** use existing `0864d7304e74ad76` (config `DATABRICKS_SQL_WAREHOUSE_ID`).
+- **Warehouse:** use existing `0123456789abcdef` (config `DATABRICKS_SQL_WAREHOUSE_ID`).
 - **Zerobus:** ✅ available — `system.lakeflow.zerobus_ingest` + `zerobus_stream` present. (Final
   confirmation at first ingest.)
 - **MSK UC SERVICE credential:** ⛔ does **not** exist yet — the only SERVICE credential is an unrelated
   Glue-federation one (`mbo_engie_glue_fed_cred`). Must **create** a UC SERVICE credential for the new MSK
   (IAM role → credential) alongside the MSK; app config points at it (replaces `iot-rtm-sc`).
 - **Secrets → UC secrets (decided direction).** Store SP OAuth secret(s) as **UC secrets** in
-  `classic_stable_realtime_demos_catalog.rtm_lakets_zb` (`POST /api/2.1/unity-catalog/secrets`), governed
+  `example_eu_catalog.rtm_lakets_zb` (`POST /api/2.1/unity-catalog/secrets`), governed
   by `READ SECRET` grants — replaces the legacy `iot-secrets` scope. Consumer notebooks (DBR 18.2 ≥ 17.3)
   read via `dbutils.secrets.get(catalog, schema, key)`; the app backend (non-DBR) reads via the UC-secrets
   **REST API**. Caveats: **not on SQL warehouses** (we don't read secrets there — fine); **serverless jobs
   need environment v4+** for `dbutils` (zerobus producer + LakeTS ops — verify, else REST-API read).
 - **✅ Identity — decided (2026-08-27): single app SP for all pipeline auth.** The app SP
-  `7c59807d-…` is the *only* identity: **Kafka** via the UC service credential (cluster-level, not
+  `00000000-…` is the *only* identity: **Kafka** via the UC service credential (cluster-level, not
   SP-bound), **Lakebase** via app-SP OAuth (grant the app SP the per-branch role), **Zerobus** via the app
   SP's own OAuth secret — the app writes its runtime `DATABRICKS_CLIENT_SECRET` into a **UC secret** for the
   notebooks to read. Provisioning **no longer creates** `iot-sss-industries` or a separate zerobus SP, and
