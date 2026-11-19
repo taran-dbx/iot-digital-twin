@@ -315,7 +315,7 @@ def _app_yaml_env_names() -> set[str]:
 def test_bundle_env_matches_app_yaml() -> None:
     """resources/app.yml must carry the same env names as app.yaml (no silent drift)."""
     bundle, app_yaml = _bundle_env_names(), _app_yaml_env_names()
-    # ADMIN_EMAILS is an optional profile key the committed app.yaml omits when unset.
+    # ADMIN_EMAILS is optional and absent from both (the bundle never sets it).
     # The Apps API rejects empty env values for bundle `config`, so the entries that
     # app.yaml sets to "" (unset-equivalent at runtime) cannot be expressed in the
     # bundle; they are listed explicitly so any other drift still fails.

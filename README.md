@@ -101,7 +101,7 @@ placeholders only. Main settings:
 | `ZEROBUS_SERVER_ENDPOINT`, `ZEROBUS_CLIENT_ID`, `ZEROBUS_SECRET_SCOPE`, `ZEROBUS_SECRET_KEY` | Zerobus ingest |
 | `UC_SERVICE_CREDENTIAL`, `UC_STORAGE_BASE`, `UC_EXTERNAL_LOCATION` | Storage and credentials |
 | `INDUSTRIES` | Industries offered in the UI |
-| `ADMIN_GROUP` | Group whose members are app admins (`ADMIN_EMAILS` is an optional override) |
+| `ADMIN_GROUP` | Group whose members are app admins (optional `ADMIN_EMAILS` CSV adds extra admins; not set by the bundle) |
 
 Dev scripts under `scripts/` never default to a CLI profile: pass `--profile <name>` or
 set `DATABRICKS_CONFIG_PROFILE`.

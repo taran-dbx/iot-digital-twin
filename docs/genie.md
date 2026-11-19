@@ -37,6 +37,51 @@ The `intelligence_*` tables must exist before a space can be created; if they do
 provisioning is skipped with a warning that names the sync endpoint
 (`POST /api/admin/intelligence/sync`).
 
+### Service principal grants
+
+A fresh bundle-created app has no grants, so provisioning is skipped with warnings
+and health shows `db_available: false` (`permission denied for schema public`) until
+they are made. Grant the app SP (`service_principal_client_id` from
+`databricks apps get <app-name> -o json`):
+
+```sql
+-- Unity Catalog: read the telemetry/metrics/intelligence tables the spaces expose,
+-- and create/maintain the intelligence_* tables.
+GRANT USE CATALOG ON CATALOG `<uc_catalog>` TO `<sp-client-id>`;
+GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA `<uc_catalog>`.`<uc_schema>` TO `<sp-client-id>`;
+```
+```sql
+-- Lakebase (databricks_postgres), run as an owner/admin of the project:
+GRANT USAGE, CREATE ON SCHEMA public TO "<sp-client-id>";
+```
+
+The app connects to Lakebase as the role named after the SP client id with an OAuth
+credential, so no password grant is involved. Creating Genie spaces is a workspace
+permission rather than SQL; the SP is the owner of every space it creates. Full
+checklist: [deployment.md](deployment.md#fresh-app-prerequisites).
+
+### Table allowlist and `GENIE_ALLOWLIST_CONFIRMED`
+
+`GET /api/genie/status` reports `table_allowlist.status`:
+
+| `status` | Meaning |
+|---|---|
+| `matched` | the shared space's data sources equal the expected `intelligence_*` set; the copilot is enabled |
+| `mismatch` | the space's tables differ; `enabled: false` with the reason |
+| `manual_required` | the space could not be inspected (for example the SP lacks access to the space, or `GENIE_SPACE_ID` is unset or not readable) |
+
+For the **shared space**, `manual_required` leaves `enabled: false` and
+`authorization_enforced: false`. An operator who has verified that the space contains
+exactly the `expected_tables` can set `GENIE_ALLOWLIST_CONFIRMED=true` (`1`/`yes` also
+work) as an app env entry; the status stays `manual_required` but with
+`manual_confirmed: true`, and the copilot is enabled. It is not in the bundle (an
+unset variable would render as an empty env value); add an env entry with a real value
+to `resources/app.yml` to use it.
+
+For **per-pipeline spaces** the override is never honoured: an uninspectable space
+fails closed, and a mismatch is fixed by redeploying the pipeline (or the admin
+"Enable Genie" call), which rewrites the space.
+
 ## Industries and modes
 
 Per-pipeline spaces exist for **every industry the app offers** (the curated
