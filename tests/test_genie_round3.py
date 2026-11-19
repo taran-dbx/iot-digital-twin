@@ -271,3 +271,110 @@ async def test_allowlist_cache_invalidated_after_update_succeeds(monkeypatch) ->
     )
     assert calls == ["sp-1", "sp-1"]
     assert order == ["update:1"]
+
+
+# ---------------------------------------------------------------------------
+# Round-4: tracked shielded task + parenthesized realtime filters
+# ---------------------------------------------------------------------------
+def _create_db() -> MagicMock:
+    db = MagicMock()
+    db.fetch = AsyncMock(return_value=[])
+    db.fetchrow = AsyncMock(return_value={"id": "r"})
+    return db
+
+
+def _slow_ws(result=None, error: Exception | None = None, delay: float = 0.2) -> MagicMock:
+    import time
+
+    w = MagicMock()
+    w.tables.exists.return_value = SimpleNamespace(table_exists=True)
+
+    def _create(**_kwargs):
+        time.sleep(delay)
+        if error is not None:
+            raise error
+        return SimpleNamespace(space_id=result)
+
+    w.genie.create_space.side_effect = _create
+    return w
+
+
+async def _drain() -> None:
+    for _ in range(40):
+        if not gss._BACKGROUND_CREATES:
+            return
+        await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_post_timeout_failure_is_logged_and_task_discarded(caplog) -> None:
+    caplog.set_level("ERROR", logger="iot_digital_twin.services.genie_space")
+    w = _slow_ws(error=RuntimeError("quota exceeded"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            gss.ensure_pipeline_space(
+                _create_db(),
+                setup_id="s",
+                deployment_id="d",
+                industry="manufacturing",
+                mode="zerobus",
+                warehouse_id="wh",
+                w=w,
+            ),
+            timeout=0.05,
+        )
+    assert len(gss._BACKGROUND_CREATES) == 1
+    await _drain()
+    assert set() == gss._BACKGROUND_CREATES
+    assert any(
+        "quota exceeded" in r.getMessage()
+        or (r.exc_info and "quota exceeded" in str(r.exc_info[1]))
+        for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_timeout_success_is_logged_and_task_discarded(caplog) -> None:
+    caplog.set_level("INFO", logger="iot_digital_twin.services.genie_space")
+    w = _slow_ws(result="sp-bg")
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            gss.ensure_pipeline_space(
+                _create_db(),
+                setup_id="s",
+                deployment_id="d",
+                industry="manufacturing",
+                mode="zerobus",
+                warehouse_id="wh",
+                w=w,
+            ),
+            timeout=0.05,
+        )
+    await _drain()
+    assert set() == gss._BACKGROUND_CREATES
+    assert any("sp-bg" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_normal_create_leaves_no_tracked_task() -> None:
+    w = _slow_ws(result="sp-ok", delay=0)
+    out = await gss.ensure_pipeline_space(
+        _create_db(),
+        setup_id="s",
+        deployment_id="d",
+        industry="manufacturing",
+        mode="zerobus",
+        warehouse_id="wh",
+        w=w,
+    )
+    assert out["space_id"] == "sp-ok"
+    await asyncio.sleep(0)
+    assert set() == gss._BACKGROUND_CREATES
+
+
+def test_realtime_filter_snippets_parenthesized() -> None:
+    filters = _space("realtime")["instructions"]["sql_snippets"]["filters"]
+    for item in filters:
+        sql = item["sql"][0]
+        assert sql.startswith("(") and sql.endswith(")"), sql
+        assert sql.count("(") == sql.count(")")

@@ -356,6 +356,40 @@ async def _require_intelligence_tables(w: Any) -> None:
         )
 
 
+# Strong refs to in-flight create+record tasks so a task outliving an outer
+# timeout is neither garbage-collected nor left with an unretrieved exception.
+_BACKGROUND_CREATES: set[asyncio.Task] = set()
+
+
+def _log_create_outcome(task: asyncio.Task, setup_id: Any, mode: str) -> None:
+    _BACKGROUND_CREATES.discard(task)
+    if task.cancelled():
+        logger.warning("Genie space create for setup %s mode %s was cancelled", setup_id, mode)
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            "Genie space create for setup %s mode %s failed: %s",
+            setup_id,
+            mode,
+            exc,
+            exc_info=exc,
+        )
+        return
+    logger.info(
+        "Genie space %s created and recorded for setup %s mode %s",
+        task.result(),
+        setup_id,
+        mode,
+    )
+
+
+def _track(task: asyncio.Task, setup_id: Any, mode: str) -> asyncio.Task:
+    _BACKGROUND_CREATES.add(task)
+    task.add_done_callback(lambda done: _log_create_outcome(done, setup_id, mode))
+    return task
+
+
 async def _create_and_record(
     db: DBExecutor,
     client: Any,
@@ -423,14 +457,20 @@ async def ensure_pipeline_space(
     # Shielded: if an outer timeout fires mid-create, the space still gets its
     # ledger row (so teardown can trash it) instead of being orphaned.
     space_id = await asyncio.shield(
-        _create_and_record(
-            db,
-            client,
-            kwargs,
-            setup_id=setup_id,
-            deployment_id=deployment_id,
-            industry=industry_key,
-            mode=mode,
+        _track(
+            asyncio.create_task(
+                _create_and_record(
+                    db,
+                    client,
+                    kwargs,
+                    setup_id=setup_id,
+                    deployment_id=deployment_id,
+                    industry=industry_key,
+                    mode=mode,
+                )
+            ),
+            setup_id,
+            mode,
         )
     )
     action = "recreated" if existing is not None else "created"
