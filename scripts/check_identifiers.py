@@ -39,6 +39,9 @@ _CLOUD_HOST = re.compile(
     r"(?<![A-Za-z0-9<>_.-])([A-Za-z0-9][A-Za-z0-9.-]*)\.cloud\.databricks\.com"
 )
 _ARN_ACCOUNT = re.compile(r"arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:(\d{12})(?!\d)")
+_ACCOUNT_CONTEXT = re.compile(
+    r"(?i)(?:aws[_ -]?account(?:[_ -]?id)?|account[_ -]?id)\W{0,6}(\d{12})(?!\d)"
+)
 
 
 @dataclass(frozen=True)
@@ -76,14 +79,13 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule("databricks-cloud-host", _CLOUD_HOST, _host_violation),
     Rule("aws-account-id-in-arn", _ARN_ACCOUNT, _arn_violation),
+    Rule("aws-account-id-in-context", _ACCOUNT_CONTEXT, _arn_violation),
     Rule(
         "owner-identity", re.compile(r"(?i)taran(?:preet)?(?:singh)?[a-z._-]*(?:@databricks\.com)?")
     ),
     Rule(
         "real-workspace-name",
-        re.compile(
-            r"(?<![A-Za-z0-9])(?:fe-vm-shared-interop|fe-sandbox-rtm[a-z-]*|e2-demo-[a-z-]+)"
-        ),
+        re.compile(r"(?<![A-Za-z0-9])(?:fe-vm-[a-z-]+|fe-sandbox-[a-z-]+|e2-demo-[a-z-]+)"),
     ),
 )
 

@@ -37,8 +37,8 @@ def _rules(checker, text: str) -> list[str]:
 
 # Offending values are assembled at runtime so this file itself stays clean.
 _LAKEBASE_HOST = "ep-" + "quiet-river-" + "a1b2c3d4" + ".database.us-east-1.cloud.databricks.com"
-_ARN = "arn:aws:kafka:us-east-1:" + "984752964297" + ":cluster/x"
-_OWNER_EMAIL = "tar" + "anpreetsingh.grover@" + "databricks.com"
+_ARN = "arn:aws:kafka:us-east-1:" + "111122223333" + ":cluster/x"
+_OWNER_EMAIL = "tar" + "anfake@" + "example.com"
 
 
 @pytest.mark.parametrize(
@@ -53,7 +53,8 @@ _OWNER_EMAIL = "tar" + "anpreetsingh.grover@" + "databricks.com"
         ),
         (_ARN, "aws-account-id-in-arn"),
         (_OWNER_EMAIL, "owner-identity"),
-        ("profile fe-" + "vm-shared-interop", "real-workspace-name"),
+        ("profile fe-" + "vm-fakeworkspace", "real-workspace-name"),
+        ("aws_account_id = " + "111122223333", "aws-account-id-in-context"),
     ],
 )
 def test_flags_real_identifiers(checker, text: str, rule: str) -> None:
@@ -71,6 +72,7 @@ def test_flags_real_identifiers(checker, text: str, rule: str) -> None:
         "1234567890123456.zerobus.us-east-1.cloud.databricks.com",
         "arn:aws:iam::123456789012:role/example",
         "arn:aws:iam::000000000000:role/example",
+        "aws_account_id = 123456789012",
         "step-by-step-runbook.png and validation-step-failure-reason.png",
         "admin@example.com",
     ],

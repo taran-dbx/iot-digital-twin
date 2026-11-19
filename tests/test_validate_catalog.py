@@ -1,4 +1,4 @@
-"""validate_catalog must accept hyphenated UC names used by interop deploy."""
+"""validate_catalog must accept hyphenated UC names used by shared-catalog deploys."""
 
 from __future__ import annotations
 

@@ -144,12 +144,12 @@ def test_us_example_profile_values(renderer) -> None:
         == "111111111111111.zerobus.us-east-1.cloud.databricks.com"
     )
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
-    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines-interop"
+    assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines-example"
     assert profile["PGHOST"] == "example-lakebase.database.us-east-1.cloud.databricks.com"
-    assert profile["LAKEBASE_PROJECT"] == "iot-app-backend-interop"
+    assert profile["LAKEBASE_PROJECT"] == "iot-app-backend-example"
     assert (
         profile["LAKEBASE_ENDPOINT"]
-        == "projects/iot-app-backend-interop/branches/production/endpoints/primary"
+        == "projects/iot-app-backend-example/branches/production/endpoints/primary"
     )
     assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000b"
     assert profile["ZEROBUS_SECRET_SCOPE"] == ""
