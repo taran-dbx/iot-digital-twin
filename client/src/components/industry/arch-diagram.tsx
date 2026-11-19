@@ -2,7 +2,7 @@
  * "How your data flows" panel body — one `.arch-flow` row per deployed mode.
  *
  * Ports `archFlow`/`renderArch` from the design reference
- * (`design-ref/Digital Twin Platform.dc.html`), swapping its
+ * (`docs/design-ref/Digital Twin Platform.dc.html`), swapping its
  * `IND[cur].flavors` lookup for the real `Industry.modes[].status` the
  * backend catalog returns. Node lists come from the shared `archNodes()` /
  * `<NodeIcon>` in `./arch-nodes` (also used by the "View data flow" modal).

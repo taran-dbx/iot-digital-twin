@@ -15,7 +15,7 @@ export function useTheme() {
     root.classList.add(theme);
     // The DuBois tier palette (`client/src/styles/dubois.css`) reacts to
     // `[data-theme="dark"]` — same attribute the design reference toggles
-    // (`design-ref/Digital Twin Platform.dc.html`'s `applyTheme()`) — in
+    // (`docs/design-ref/Digital Twin Platform.dc.html`'s `applyTheme()`) — in
     // addition to the `.dark` class the legacy Tailwind chrome uses.
     root.setAttribute("data-theme", theme);
     localStorage.setItem("iot-twin-theme", theme);

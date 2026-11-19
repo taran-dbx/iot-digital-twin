@@ -79,7 +79,7 @@ package (`iot_twin.core.paths`). The env var still overrides it.
 `sync` in `databricks.yml` replaces `.databricksignore`. It ships `src/`,
 `app.yaml`, `requirements.txt`, `pyproject.toml`, `lib/*.whl` and
 `static/dist/` (the built SPA), and excludes `client/`, `docs/`, `tests/`,
-`qa/`, `scripts/`, `config/`, `design-ref/` and tooling dirs.
+`qa/`, `scripts/`, `config/` and tooling dirs.
 
 * **Frontend:** `static/dist` is committed and CI fails if it is stale, so the
   bundle does not build it. Run `make frontend-build` and commit before deploying

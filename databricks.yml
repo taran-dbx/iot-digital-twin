@@ -69,7 +69,6 @@ sync:
     - qa/
     - scripts/
     - config/
-    - design-ref/
     - .github/
     - Makefile
     - README.md

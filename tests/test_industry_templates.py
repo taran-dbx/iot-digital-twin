@@ -1,5 +1,5 @@
 """Tests for iot_twin.services.industry.industry_templates — curated industry data ported from
-the design reference (design-ref/Digital Twin Platform.dc.html)."""
+the design reference (docs/design-ref/Digital Twin Platform.dc.html)."""
 
 from __future__ import annotations
 

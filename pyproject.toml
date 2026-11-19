@@ -47,7 +47,7 @@ iot_twin = ["resources/*.sql"]
 target-version = "py311"
 src = ["src"]
 line-length = 100
-extend-exclude = ["client", "qa", "static", "design-ref", "lib"]
+extend-exclude = ["client", "qa", "static", "lib"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]

@@ -1,7 +1,7 @@
 /**
  * Shared data-flow node list + icon renderer — ported from `archNodes()` /
  * `archIcon()` / `NODEIC` in the design reference
- * (`design-ref/Digital Twin Platform.dc.html`'s `<script type="text/x-dc">`
+ * (`docs/design-ref/Digital Twin Platform.dc.html`'s `<script type="text/x-dc">`
  * block). Used by both `<ArchDiagram>` (the setup screen's "How your data
  * flows" panel, `.anode` markup) and `<TwinModal>`'s "View data flow" modal
  * (`.af-node` markup) so the two stay in lockstep with the design's single

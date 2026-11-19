@@ -2,7 +2,7 @@
 
 This is a straight Python port of the ``IND``, ``MODES``, and ``MODEMETA``
 data objects embedded in the vendored design reference
-(``design-ref/Digital Twin Platform.dc.html``, ``<script type="text/x-dc">``
+(``docs/design-ref/Digital Twin Platform.dc.html``, ``<script type="text/x-dc">``
 block). It is the single source of truth for the four curated industries the
 gallery/setup UI presents, and for the three streaming modes (realtime,
 microbatch, zerobus) a pipeline can run in.
@@ -37,7 +37,7 @@ class IndustryTemplate:
     default_hz: int = 0
 
 
-# Ported verbatim from IND in design-ref/Digital Twin Platform.dc.html.
+# Ported verbatim from IND in docs/design-ref/Digital Twin Platform.dc.html.
 _TEMPLATES: dict[str, IndustryTemplate] = {
     "manufacturing": IndustryTemplate(
         id="manufacturing",
@@ -169,7 +169,7 @@ _TEMPLATES: dict[str, IndustryTemplate] = {
 }
 
 
-# Ported verbatim from MODES in design-ref/Digital Twin Platform.dc.html.
+# Ported verbatim from MODES in docs/design-ref/Digital Twin Platform.dc.html.
 _MODES: dict[str, dict] = {
     "realtime": {
         "id": "realtime",
