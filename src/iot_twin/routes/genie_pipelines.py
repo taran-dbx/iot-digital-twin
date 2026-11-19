@@ -1,4 +1,4 @@
-"""Per-pipeline Genie HTTP API (all industries) (see docs/genie-pipeline-api.md).
+"""Per-pipeline Genie HTTP API (all industries) (see docs/genie.md).
 
 ``/api/genie/pipelines/{setup_id}/{mode}/...`` — status, starters, start,
 follow-up, poll and attachment query results for the Genie space provisioned

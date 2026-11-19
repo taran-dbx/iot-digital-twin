@@ -1,10 +1,92 @@
-# Per-pipeline Genie API (manufacturing)
+# Genie
 
-Each **manufacturing** pipeline `(setup_id, mode)` gets its own Genie space,
+The app uses Genie in two ways:
+
+| Surface | Space | Routes | Config |
+|---|---|---|---|
+| Shared copilot (single space) | one space bound to the app, `GENIE_SPACE_ID` | `/api/genie/status`, `/api/genie/conversations…` | `GENIE_SPACE_ID` (app resource `genie-space`, `CAN_VIEW`) |
+| Per-pipeline spaces | one space per `(setup_id, mode)`, created by the app after a deploy | `/api/genie/pipelines/{setup_id}/{mode}/…` | none required; optional `GENIE_SPACE_PARENT_PATH` |
+
+Both go through `services/genie_service.py`: the trusted/untrusted prompt wrapper,
+the table allowlist (`inspect_space_tables`, `space_table_allowlist_status`,
+`require_table_allowlist`, `cached_allowlist_status`), the 20 s SDK timeout and the
+shared semaphore. Alerts "explain" and the intelligence catalog keep using the
+single shared space; nothing about them changed.
+
+## Requirements
+
+**Shared copilot.** The app resource `genie-space` (CAN_VIEW) injects
+`GENIE_SPACE_ID`. The space must contain exactly the tables the copilot expects
+(or `GENIE_ALLOWLIST_CONFIRMED` is set by an operator who verified them).
+
+**Per-pipeline spaces.** No extra app resource or env var is required. The app
+service principal creates the spaces itself, so it needs:
+
+- permission to create Genie spaces in the workspace (the SP is the owner of every
+  space it creates; users reach them through the app, not directly);
+- `CAN_USE` on the SQL warehouse (the setup's `warehouse_id`, else
+  `DATABRICKS_SQL_WAREHOUSE_ID` / the app-global warehouse setting);
+- `SELECT` on the telemetry, metrics and `intelligence_*` tables in
+  `{UC_CATALOG}.{UC_SCHEMA}` (already granted by industry provisioning).
+
+Optional: `GENIE_SPACE_PARENT_PATH` sets the workspace folder for new spaces
+(default: the service principal's home folder). It is not in `app.yaml` or the
+bundle because it is optional; add it to the app `env` if you want a shared folder.
+
+The `intelligence_*` tables must exist before a space can be created; if they do not,
+provisioning is skipped with a warning that names the sync endpoint
+(`POST /api/admin/intelligence/sync`).
+
+## Industries and modes
+
+Per-pipeline spaces exist for **every industry the app offers** (the curated
+templates: manufacturing, pharmaceutical, energy, automotive) and every mode
+(`realtime`, `microbatch`, `zerobus`). Wording, sample sensors and units are derived
+from the industry template and domain catalog (`services/genie/genie_industry_profile.py`).
+Manufacturing keeps its OEE wording; other industries use an "operating health index"
+(availability x performance x quality) with their own sensors and units. An industry
+the app does not offer reports `supported: false` on `/status` and 404 on the other
+routes; it never fails a deploy.
+
+Tables per mode (only tables that exist for the mode are included):
+
+| Mode | Telemetry | Metrics (`{industry}_metrics`) |
+|---|---|---|
+| realtime | CDF shadow history table | yes |
+| microbatch | `{industry}_microbatch` | yes |
+| zerobus | `{industry}_zerobus` | no (zerobus emits no streaming metrics) |
+
+plus the five `intelligence_*` reference tables in every case.
+
+## Lifecycle
+
+1. **Deploy**: after a successful `deploy_pipeline` the hook creates or updates the
+   space. It is best-effort and capped at 60 s: any failure or timeout is returned as
+   `warnings` on the deploy result and never fails the deploy.
+2. **Backfill**: `POST /api/admin/pipelines/{setup_id}/genie/{mode}` provisions a space
+   for an already-deployed pipeline of any industry.
+3. **Redeploy**: updates the space in place (recreates it if it was trashed).
+4. **Remove a mode / delete a pipeline or industry**: the `genie_space` ledger deleter
+   trashes the space (`trash_space`); an already-absent space counts as deleted.
+
+## Known limits
+
+- Conversation ownership is process-local; after an app restart every conversation
+  returns 404.
+- The allowlist is strict: a space whose tables differ from the expected set is
+  blocked (503), including spaces edited by hand.
+- Realtime telemetry lags the Lakehouse Sync mirror, so a new realtime space may
+  answer from an empty table for a short time.
+- The shared copilot space and per-pipeline spaces are independent; editing one never
+  changes the other.
+
+# Per-pipeline Genie API
+
+Each pipeline `(setup_id, mode)` gets its own Genie space,
 created automatically after a successful deploy
 (`POST /api/admin/pipelines/{setup_id}/deploy/{mode}`) and updated in place on
-redeploy. Other industries keep using the static copilot
-(`/api/genie/status`, `/api/genie/conversations…`, backed by `GENIE_SPACE_ID`).
+redeploy. The static copilot
+(`/api/genie/status`, `/api/genie/conversations…`, backed by `GENIE_SPACE_ID`) is separate.
 
 `mode` is one of `realtime` | `microbatch` | `zerobus`.
 
@@ -20,16 +102,16 @@ for invalid ids. The dashboard gets both ids from
 
 | Data source | FQN |
 |---|---|
-| Mode telemetry, **realtime** | `{UC_CATALOG}.{UC_SCHEMA}.lb__shadow_manufacturing_sensor_readings_history` (`cdf_reconciliation_service.delta_table_fqn`) |
-| Mode telemetry, microbatch / zerobus | `{UC_CATALOG}.{UC_SCHEMA}.manufacturing_{mode}` |
-| Streaming metrics | `{UC_CATALOG}.{UC_SCHEMA}.manufacturing_metrics` |
+| Mode telemetry, **realtime** | the CDF shadow history table, `cdf_reconciliation_service.delta_table_fqn(industry)` (e.g. `lb__shadow_<industry>_sensor_readings_history`) |
+| Mode telemetry, microbatch / zerobus | `{UC_CATALOG}.{UC_SCHEMA}.{industry}_{mode}` |
+| Streaming metrics (realtime, microbatch only) | `{UC_CATALOG}.{UC_SCHEMA}.{industry}_metrics` |
 | Intelligence reference | `{UC_CATALOG}.{UC_SCHEMA}.intelligence_{assets,sensor_bindings,maintenance_records,alert_rules,alert_snapshot}` |
 
 **Why realtime is different:** the RTM stream writes to Lakebase, and Lakehouse Sync mirrors it into the
-CDF shadow history table, so `manufacturing_realtime` stays empty. Read-only check on a test
+CDF shadow history table, so `{industry}_realtime` stays empty. Read-only check on a test
 workspace, 2026-11-18:
 
-- `manufacturing_realtime` has 0 rows. The shadow table is live and insert-only.
+- `manufacturing_realtime` had 0 rows. The shadow table is live and insert-only.
 - The shadow table has the same sensor columns: `sensor_name, industry, value, unit, sensor_type,
   event_time, min_value, max_value, nominal_value, fault_active, metadata`.
 - It also has `id`, `source` and the CDC columns `_pg_change_type, _pg_lsn, _pg_xid, _timestamp, _sort_by`.
@@ -37,7 +119,7 @@ workspace, 2026-11-18:
 So the OEE, downtime and anomaly definitions are unchanged. For realtime, the instructions, example SQL,
 SQL snippets (measures and filters) and the prompt's recent-telemetry summary all apply the dashboard's
 row filter from `routes/sensor_data.py`: `_pg_change_type IN ('insert', 'update_postimage') AND
-industry = 'manufacturing'`. The filter comes from `genie_space_content.telemetry_row_filter`, because
+industry = '<industry>'`. The filter comes from `genie_space_content.telemetry_row_filter`, because
 the shadow table can hold several industries. The CDC bookkeeping columns are excluded from Genie
 context. `telemetry_table(industry, mode)` in `services/genie_space_service.py` is the single mapping;
 the allowlist and the telemetry summary use the same function.
@@ -49,11 +131,11 @@ A done-callback logs the outcome (space id, error or cancellation) and drops the
 a timeout are logged rather than lost. For realtime, each filter snippet is fully parenthesized:
 `(<row filter> AND <condition>)`.
 
-Microbatch and zerobus write `manufacturing_{mode}` directly (`services/pipeline_freshness.py`). Those
-tables exist but were empty in that workspace, because only realtime was running for manufacturing. The
-metrics table has `mode='realtime'` rows only, since zerobus emits no streaming metrics.
+Microbatch and zerobus write `{industry}_{mode}` directly (`services/pipeline_freshness.py`). Those
+tables exist but were empty in that workspace, because only realtime was running there. Zerobus emits no streaming metrics, so
+its space does not include the metrics table.
 
-The space also carries manufacturing instructions:
+The space also carries these instructions (manufacturing wording shown; other industries say "operating health index" instead of OEE):
 
 - **Downtime**: intervals where `fault_active` is true, counted in distinct minutes.
 - **Availability**: 1 − fault minutes / observed minutes.
@@ -125,7 +207,7 @@ Provisioning is capped at 60 s; on timeout the warning is
 | Status | Meaning |
 |---|---|
 | 401 | identity required |
-| 404 | non-UUID or unknown setup/deployment id / deployment id of another mode / non-manufacturing setup (conversation routes and starters) / unknown or foreign conversation / Genie resource not found |
+| 404 | non-UUID or unknown setup/deployment id / deployment id of another mode / setup of an industry the app does not offer (conversation routes and starters) / unknown or foreign conversation / Genie resource not found |
 | 422 | unknown mode, or invalid body |
 | 503 | app DB unavailable, no space provisioned yet, or table allowlist not verified |
 | 504 | Genie SDK timeout |
@@ -140,15 +222,15 @@ Base: `/api/genie/pipelines/{setup_id}/{mode}`
 ### `GET …/status`
 
 ```json
-{"available": true, "space_id": "01ef…"}
+{"available": true, "space_id": "01ef…", "industry": "pharmaceutical", "supported": true}
 ```
 ```json
-{"available": false, "space_id": null, "reason": "No Genie space is provisioned for this pipeline yet. Redeploy the pipeline to create one."}
+{"available": false, "space_id": null, "industry": "pharmaceutical", "supported": true, "reason": "No Genie space is provisioned for this pipeline yet. Redeploy the pipeline to create one."}
 ```
 
 `reason` is set only when `available` is false and is safe to show to operators. `space_id` is non-null
-when a space exists but cannot be used (for example, an allowlist mismatch). Non-manufacturing setups
-return `available: false`. An unknown setup returns 404.
+when a space exists but cannot be used (for example, an allowlist mismatch). Industries the app does not offer
+return `available: false` with `supported: false`. An unknown setup returns 404.
 
 ### `GET …/starters`
 
@@ -258,7 +340,7 @@ space had disappeared and a new one was created.
 | 403 | not an admin |
 | 404 | non-UUID/unknown id, deployment id of another mode, or no deployment for `{mode}` |
 | 409 | deployment not in a deployed state (needs a `job_id`; status not pending/deploying/failed), or a precondition failed (for example, missing intelligence tables: run `POST /api/admin/intelligence/sync`, then call again) |
-| 422 | unknown mode, or the setup is not manufacturing |
+| 422 | unknown mode, or the setup's industry is not one the app offers |
 | 503 | app DB unavailable |
 | 504 | provisioning timed out (60 s) |
 | 502 | Genie SDK failure (sanitized) |
