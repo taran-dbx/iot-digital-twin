@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import Any
 
 from iot_twin.services.db.app_repo_common import DBExecutor
 from iot_twin.services.deployment import deployment_repo
 from iot_twin.services.genie import genie_space_service
-from iot_twin.services.pipelines import pipeline_setup_repo, pipeline_view
+from iot_twin.services.pipelines import pipeline_view
 
 logger = logging.getLogger("iot_digital_twin.services.genie_provisioning")
 
@@ -32,27 +31,6 @@ class GenieProvisionError(RuntimeError):
     def __init__(self, status_code: int, message: str) -> None:
         super().__init__(message)
         self.status_code = status_code
-
-
-def _canonical_uuid(raw: str) -> str:
-    try:
-        return str(uuid.UUID(str(raw)))
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise GenieProvisionError(404, "unknown pipeline") from exc
-
-
-async def _resolve_setup(db: DBExecutor, pipeline_id: str, mode: str) -> dict:
-    """``pipeline_id`` is a setup id, or a deployment id belonging to ``mode``."""
-    setup = await pipeline_setup_repo.get_setup(db, pipeline_id)
-    if setup is not None:
-        return setup
-    deployment = await deployment_repo.get_deployment(db, pipeline_id)
-    if deployment is None or deployment.get("mode") != mode or not deployment.get("setup_id"):
-        raise GenieProvisionError(404, "unknown pipeline")
-    setup = await pipeline_setup_repo.get_setup(db, deployment["setup_id"])
-    if setup is None:
-        raise GenieProvisionError(404, "unknown pipeline")
-    return setup
 
 
 async def _require_deployed(db: DBExecutor, setup_id: str, mode: str) -> dict:
@@ -120,7 +98,10 @@ async def provision_existing_pipeline_space(
     """
     if mode not in genie_space_service.PIPELINE_MODES:
         raise GenieProvisionError(422, f"unknown mode {mode!r}")
-    setup = await _resolve_setup(db, _canonical_uuid(pipeline_id), mode)
+    try:
+        setup = await genie_space_service.resolve_pipeline_setup(db, pipeline_id, mode)
+    except genie_space_service.PipelineNotFound as exc:
+        raise GenieProvisionError(404, "unknown pipeline") from exc
     if not genie_space_service.supports_industry(setup.get("industry")):
         raise GenieProvisionError(422, "per-pipeline Genie is only available for manufacturing")
     setup_id = str(setup.get("id"))

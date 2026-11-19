@@ -66,7 +66,7 @@ def env(monkeypatch: pytest.MonkeyPatch):
         return deployments.get((mode, str(sid)))
 
     ledger = _Ledger()
-    monkeypatch.setattr(genie_provisioning.pipeline_setup_repo, "get_setup", _get_setup)
+    monkeypatch.setattr(gss.pipeline_setup_repo, "get_setup", _get_setup)
     monkeypatch.setattr(genie_provisioning.deployment_repo, "get_deployment", _get_deployment)
     monkeypatch.setattr(genie_provisioning.deployment_repo, "get_deployment_by_mode", _by_mode)
     monkeypatch.setattr(gss.resource_ledger, "record_resource", ledger.record)

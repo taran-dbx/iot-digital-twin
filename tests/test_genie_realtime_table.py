@@ -84,13 +84,15 @@ class TestRealtimeContent:
         assert "manufacturing_realtime" not in body.replace(
             "lb__shadow_manufacturing_sensor_readings_history", ""
         )
-        assert "_pg_change_type = 'insert'" in body
+        assert "_pg_change_type IN ('insert', 'update_postimage')" in body
 
     def test_examples_query_shadow_with_insert_filter(self) -> None:
         examples = _space("realtime")["instructions"]["example_question_sqls"]
         telemetry_sql = [e["sql"][0] for e in examples if SHADOW in e["sql"][0]]
         assert len(telemetry_sql) >= 4
-        assert all("_pg_change_type = 'insert'" in sql for sql in telemetry_sql)
+        assert all(
+            "_pg_change_type IN ('insert', 'update_postimage')" in sql for sql in telemetry_sql
+        )
 
     def test_snippets_qualified_with_shadow_name(self) -> None:
         snippets = _space("realtime")["instructions"]["sql_snippets"]

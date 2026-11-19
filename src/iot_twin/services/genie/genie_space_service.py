@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import os
+import uuid
 from typing import Any
 
 from databricks.sdk.errors import NotFound
@@ -35,6 +36,7 @@ from databricks.sdk.errors import NotFound
 from iot_twin.services import resource_ledger
 from iot_twin.services.cdf_reconciliation_service import delta_table_fqn
 from iot_twin.services.db.app_repo_common import DBExecutor
+from iot_twin.services.deployment import deployment_repo
 from iot_twin.services.genie.genie_space_content import (
     column_configs,
     example_sqls,
@@ -45,6 +47,7 @@ from iot_twin.services.genie.genie_space_content import (
 from iot_twin.services.genie_service import invalidate_allowlist_cache
 from iot_twin.services.industry.industry_catalog_service import industry_table
 from iot_twin.services.intelligence_catalog_service import reference_tables
+from iot_twin.services.pipelines import pipeline_setup_repo
 
 logger = logging.getLogger("iot_digital_twin.services.genie_space")
 
@@ -78,6 +81,36 @@ __all__ = [
 
 class GenieSpaceError(RuntimeError):
     """Raised when a per-pipeline Genie space cannot be provisioned."""
+
+
+class PipelineNotFound(LookupError):
+    """The pipeline id is not a UUID / unknown setup / deployment of another mode."""
+
+
+def _canonical_uuid(raw: object) -> str:
+    try:
+        return str(uuid.UUID(str(raw)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise PipelineNotFound("unknown pipeline") from exc
+
+
+async def resolve_pipeline_setup(db: DBExecutor, pipeline_id: object, mode: str) -> dict:
+    """Resolve a ``pipeline_setup.id`` or a ``pipeline_deployment.id`` of ``mode``.
+
+    Single source for the Genie routes and the admin provisioning endpoint.
+    Invalid UUIDs never reach the database.  Raises :class:`PipelineNotFound`.
+    """
+    canonical = _canonical_uuid(pipeline_id)
+    setup = await pipeline_setup_repo.get_setup(db, canonical)
+    if setup is not None:
+        return setup
+    deployment = await deployment_repo.get_deployment(db, canonical)
+    if deployment is None or deployment.get("mode") != mode or not deployment.get("setup_id"):
+        raise PipelineNotFound("unknown pipeline")
+    setup = await pipeline_setup_repo.get_setup(db, deployment["setup_id"])
+    if setup is None:
+        raise PipelineNotFound("unknown pipeline")
+    return setup
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +202,7 @@ def _instructions(industry: str, mode: str) -> dict[str, Any]:
     telemetry = telemetry_table(industry, mode)
     metrics = industry_table(industry, "metrics")
     refs = reference_tables()
-    snippets = sql_snippets(telemetry)
+    snippets = sql_snippets(telemetry, mode, industry)
     return {
         "text_instructions": _with_ids(
             "text", mode, [{"content": text_instructions(telemetry, metrics, mode, industry)}]
@@ -323,6 +356,29 @@ async def _require_intelligence_tables(w: Any) -> None:
         )
 
 
+async def _create_and_record(
+    db: DBExecutor,
+    client: Any,
+    kwargs: dict[str, Any],
+    *,
+    setup_id: Any,
+    deployment_id: Any,
+    industry: str,
+    mode: str,
+) -> str:
+    space_id = await _create_space(client, kwargs)
+    await _record_space(
+        db,
+        setup_id=setup_id,
+        deployment_id=deployment_id,
+        space_id=space_id,
+        industry=industry,
+        mode=mode,
+        kwargs=kwargs,
+    )
+    return space_id
+
+
 def _validate_inputs(industry: str, mode: str, warehouse_id: str | None) -> None:
     if not supports_industry(industry):
         raise GenieSpaceError(f"per-pipeline Genie spaces are not supported for {industry!r}")
@@ -358,19 +414,24 @@ async def ensure_pipeline_space(
         space_id = str(existing["identifier"])
         invalidate_allowlist_cache(space_id)
         if await _update_space(client, space_id, kwargs):
+            # A concurrent check may have re-cached the pre-update tables.
+            invalidate_allowlist_cache(space_id)
             return {"space_id": space_id, "action": "updated", "tables": tables}
         await resource_ledger.mark_resource_status(db, existing.get("id"), "deleted")
 
     await _require_intelligence_tables(client)
-    space_id = await _create_space(client, kwargs)
-    await _record_space(
-        db,
-        setup_id=setup_id,
-        deployment_id=deployment_id,
-        space_id=space_id,
-        industry=industry_key,
-        mode=mode,
-        kwargs=kwargs,
+    # Shielded: if an outer timeout fires mid-create, the space still gets its
+    # ledger row (so teardown can trash it) instead of being orphaned.
+    space_id = await asyncio.shield(
+        _create_and_record(
+            db,
+            client,
+            kwargs,
+            setup_id=setup_id,
+            deployment_id=deployment_id,
+            industry=industry_key,
+            mode=mode,
+        )
     )
     action = "recreated" if existing is not None else "created"
     logger.info("Genie space %s %s for setup %s mode %s", space_id, action, setup_id, mode)

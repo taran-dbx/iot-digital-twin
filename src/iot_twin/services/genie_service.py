@@ -683,6 +683,16 @@ def get_attachment_query_result(
     return query_result_payload(response)
 
 
+def _telemetry_source(industry: str, mode: str, pipeline_scope: bool) -> tuple[str, str | None]:
+    """``(table FQN, row filter)`` for the telemetry summary query."""
+    if not pipeline_scope:
+        return industry_table(industry, mode), None
+    from iot_twin.services.genie.genie_space_content import telemetry_row_filter
+    from iot_twin.services.genie.genie_space_service import telemetry_table
+
+    return telemetry_table(industry, mode), telemetry_row_filter(mode, industry)
+
+
 async def fetch_telemetry_summary(
     industry: str,
     mode: str,
@@ -693,8 +703,13 @@ async def fetch_telemetry_summary(
     db: Any | None = None,
     db_available: bool = False,
     user_email: str = "",
+    pipeline_scope: bool = False,
 ) -> list[dict[str, Any]]:
     """Best-effort recent telemetry from the allowlisted industry table.
+
+    ``pipeline_scope`` reads the table the per-pipeline Genie space uses
+    (``genie_space_service.telemetry_table`` — the CDC shadow table for
+    realtime, with the dashboard's change-type/industry row filter).
 
     The warehouse comes from ``warehouse_id`` when given, else
     :func:`services.dbsql_service.resolve_warehouse_id` (env override →
@@ -710,15 +725,16 @@ async def fetch_telemetry_summary(
     if not catalog or not schema:
         return []
     try:
-        fqn = industry_table(industry, mode)
+        fqn, row_filter = _telemetry_source(industry, mode, pipeline_scope)
     except (RuntimeError, ValueError):
         return []
     quoted_names = ", ".join("'" + name.replace("'", "''") + "'" for name in sensor_names)
     table_sql = sql_fqn(*fqn.split("."))
+    extra = f"AND {row_filter} " if row_filter else ""
     sql = (
         f"SELECT sensor_name, AVG(value) AS avg_value, MAX(value) AS max_value, "
         f"COUNT(*) AS n FROM {table_sql} "
-        f"WHERE sensor_name IN ({quoted_names}) "
+        f"WHERE sensor_name IN ({quoted_names}) {extra}"
         f"AND event_time > current_timestamp() - INTERVAL 15 MINUTES "
         f"GROUP BY sensor_name LIMIT 50"
     )

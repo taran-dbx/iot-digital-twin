@@ -34,10 +34,17 @@ workspace, 2026-11-18:
   event_time, min_value, max_value, nominal_value, fault_active, metadata`.
 - It also has `id`, `source` and the CDC columns `_pg_change_type, _pg_lsn, _pg_xid, _timestamp, _sort_by`.
 
-So the OEE, downtime and anomaly definitions are unchanged. For realtime, the instructions and example SQL
-also filter `_pg_change_type = 'insert'`, and the CDC bookkeeping columns are excluded from Genie
+So the OEE, downtime and anomaly definitions are unchanged. For realtime, the instructions, example SQL,
+SQL snippets (measures and filters) and the prompt's recent-telemetry summary all apply the dashboard's
+row filter from `routes/sensor_data.py`: `_pg_change_type IN ('insert', 'update_postimage') AND
+industry = 'manufacturing'`. The filter comes from `genie_space_content.telemetry_row_filter`, because
+the shadow table can hold several industries. The CDC bookkeeping columns are excluded from Genie
 context. `telemetry_table(industry, mode)` in `services/genie_space_service.py` is the single mapping;
-the allowlist uses the same function.
+the allowlist and the telemetry summary use the same function.
+
+If the deploy hook's or the admin endpoint's 60 s timeout fires while a space is being created, creation
+and the ledger write keep running in the background (`asyncio.shield`). The space therefore still gets
+its ledger row and can be torn down later.
 
 Microbatch and zerobus write `manufacturing_{mode}` directly (`services/pipeline_freshness.py`). Those
 tables exist but were empty in that workspace, because only realtime was running for manufacturing. The

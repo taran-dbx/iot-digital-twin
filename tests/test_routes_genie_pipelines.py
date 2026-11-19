@@ -111,8 +111,8 @@ async def api(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[AsyncClient, No
     async def _get_deployment(_db, deployment_id):
         return DEPLOYMENTS.get(deployment_id)
 
-    monkeypatch.setattr(genie_pipelines.pipeline_setup_repo, "get_setup", _get_setup)
-    monkeypatch.setattr(genie_pipelines.deployment_repo, "get_deployment", _get_deployment)
+    monkeypatch.setattr(gss.pipeline_setup_repo, "get_setup", _get_setup)
+    monkeypatch.setattr(gss.deployment_repo, "get_deployment", _get_deployment)
     monkeypatch.setattr(gss, "find_space_id", _find_space_id)
     monkeypatch.setattr(genie_service, "fetch_telemetry_summary", AsyncMock(return_value=[]))
     client = _genie_client()
