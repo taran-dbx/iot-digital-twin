@@ -593,7 +593,7 @@ caused the PGUSER mismatch.
 ## 7. Environment Reference
 
 Workspace-specific values are **not** committed. Keep your real values in the gitignored
-`config/workspaces/<name>.profile` (start from a `*.profile.example` template) and render
+`deploy/workspaces/<name>.profile` (start from a `*.profile.example` template) and render
 `app.yaml` from it. The table below lists what an environment needs; `<...>` entries are
 placeholders for your own workspace.
 

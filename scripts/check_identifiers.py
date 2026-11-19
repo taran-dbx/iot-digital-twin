@@ -136,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"\n{len(hits)} workspace-specific identifier(s) found. Replace them with placeholders "
             "(example.com, <workspace-host>, 123456789012, ...) and keep real values in the "
-            "gitignored config/workspaces/*.profile.",
+            "gitignored deploy/workspaces/*.profile.",
             file=sys.stderr,
         )
         return 1

@@ -40,7 +40,7 @@ Validation needs workspace auth, so it is **not** run in CI; run it locally
 ## Variables
 
 Workspace-specific variables have **no default**; a missing value fails
-validation. Copy `variable-overrides.json.example` (placeholders only) to the
+validation. Copy `deploy/variable-overrides.json.example` (placeholders only) to the
 gitignored `.databricks/bundle/<target>/variable-overrides.json` and fill in real
 values (or use `--var name=value` / `BUNDLE_VAR_<name>`). `make bundle-validate`
 stops with a clear message when the file for `BUNDLE_TARGET` is missing.
@@ -79,7 +79,7 @@ package (`iot_twin.core.paths`). The env var still overrides it.
 `sync` in `databricks.yml` replaces `.databricksignore`. It ships `src/`,
 `app.yaml`, `requirements.txt`, `pyproject.toml`, `lib/*.whl` and
 `static/dist/` (the built SPA), and excludes `client/`, `docs/`, `tests/`,
-`qa/`, `scripts/`, `config/` and tooling dirs.
+`qa/`, `scripts/`, `deploy/` and tooling dirs.
 
 * **Frontend:** `static/dist` is committed and CI fails if it is stale, so the
   bundle does not build it. Run `make frontend-build` and commit before deploying

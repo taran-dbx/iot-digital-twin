@@ -51,7 +51,7 @@ lib/                     simulator wheel installed by requirements.txt
 tests/                   pytest suite
 qa/playwright/           browser QA against the built SPA
 scripts/                 ops and end-to-end tooling (profile-driven)
-config/workspaces/       workspace profile templates (*.profile.example)
+deploy/workspaces/       workspace profile templates (*.profile.example)
 databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
 docs/                    guides, architecture, archived history
@@ -110,7 +110,7 @@ set `DATABRICKS_CONFIG_PROFILE`.
 
 Deployment uses **Declarative Automation Bundles**. Quick version:
 
-Workspace-specific values have no defaults. Copy `variable-overrides.json.example` to
+Workspace-specific values have no defaults. Copy `deploy/variable-overrides.json.example` to
 `.databricks/bundle/<target>/variable-overrides.json` (gitignored) and fill it in first.
 
 ```bash

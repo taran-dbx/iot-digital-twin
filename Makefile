@@ -45,5 +45,5 @@ check: lint typecheck test frontend-build ## All gates, as CI runs them
 bundle-validate: ## Validate the DAB (needs auth + overrides: make bundle-validate PROFILE=<cli-profile>)
 	@test -f .databricks/bundle/$(BUNDLE_TARGET)/variable-overrides.json || { \
 		echo "missing .databricks/bundle/$(BUNDLE_TARGET)/variable-overrides.json"; \
-		echo "copy variable-overrides.json.example there and fill in your workspace values"; exit 1; }
+		echo "copy deploy/variable-overrides.json.example there and fill in your workspace values"; exit 1; }
 	$(DATABRICKS) bundle validate --strict -t $(BUNDLE_TARGET) $(if $(PROFILE),--profile $(PROFILE))

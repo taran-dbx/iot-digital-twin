@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "render_app_yaml.py"
-PROFILES_DIR = ROOT / "config" / "workspaces"
+PROFILES_DIR = ROOT / "deploy" / "workspaces"
 
 _EXPECTED_ENV_NAMES = (
     "UC_CATALOG",
@@ -340,5 +340,7 @@ def test_bundle_example_overrides_cover_required_variables() -> None:
         m.group(1)
         for m in re.finditer(r"^  (\w+):\n    description: .*\n(?!    default)", block, re.M)
     }
-    example = json.loads((ROOT / "variable-overrides.json.example").read_text(encoding="utf-8"))
+    example = json.loads(
+        (ROOT / "deploy" / "variable-overrides.json.example").read_text(encoding="utf-8")
+    )
     assert required - set(example) == set(), "example overrides missing required variables"

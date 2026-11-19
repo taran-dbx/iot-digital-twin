@@ -34,7 +34,7 @@ qa-reports/
 
 # ── Workspace deployment profiles ─────────────────────────────────────────
 # Real profiles hold workspace-specific values; commit only *.profile.example.
-config/workspaces/*.profile
+deploy/workspaces/*.profile
 
 # ── Databricks ────────────────────────────────────────────────────────────
 .databricks/
