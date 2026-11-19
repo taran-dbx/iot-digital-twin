@@ -28,3 +28,13 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: check-identifiers
+        name: no workspace-specific identifiers
+        description: Rejects real hosts, account ids and personal emails (see scripts/check_identifiers.py).
+        entry: python3 scripts/check_identifiers.py
+        language: system
+        pass_filenames: true
+        types: [text]
