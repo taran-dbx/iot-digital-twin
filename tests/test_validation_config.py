@@ -113,8 +113,8 @@ def test_replication_factor():
 
 def test_region_from_bootstrap():
     host = (
-        "b-1-public.iotdemo.abc123.c2.kafka.us-east-1.amazonaws.com:9198,"
-        "b-2-public.iotdemo.abc123.c2.kafka.us-east-1.amazonaws.com:9198"
+        "b-1-public.example.abc123.c2.kafka.us-east-1.amazonaws.com:9198,"
+        "b-2-public.example.abc123.c2.kafka.us-east-1.amazonaws.com:9198"
     )
     assert vc.region_from_bootstrap(host) == "us-east-1"
     assert vc.region_from_bootstrap("garbage") == "us-east-1"  # fallback

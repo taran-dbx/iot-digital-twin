@@ -5,9 +5,12 @@ Scans the given files (pre-commit passes the staged ones) or, with no arguments,
 every tracked file. This file defines the patterns, so it is excluded from its own scan.
 
 Rules (see RULES): Lakebase endpoint hosts, Databricks Apps hosts, real
-``*.cloud.databricks.com`` hosts, AWS account ids in ARNs, the owner's personal
-email / handle and known real workspace names. Placeholders such as
-``example-*``, ``<workspace-host>``, ``123456789012`` and ``000000000000`` pass.
+``*.cloud.databricks.com`` hosts, AWS account ids (in ARNs, in context, or bare
+12-digit numbers), 15-16 digit workspace ids next to ``zerobus`` / ``workspace`` /
+``/o=`` or used as a hostname label, MSK broker hosts with a real cluster id,
+``npm-proxy*`` hosts (lockfiles included), the owner's personal email / handle and
+known real workspace names. Placeholders such as ``example-*``, ``<workspace-host>``,
+``123456789012``, ``000000000000`` and ``abc123`` pass.
 
 Suppress a single deliberate line with a trailing ``check-identifiers: allow`` comment.
 """
@@ -32,6 +35,10 @@ _PLACEHOLDER_LABEL = re.compile(
     r"|1234567890123456|(\d)\1{9,})$"
 )
 _PLACEHOLDER_ACCOUNT_IDS = frozenset({"123456789012", "000000000000"})
+# 15-16 digit workspace ids that are obviously fake (sequences, repeated digits, zeros).
+_PLACEHOLDER_WORKSPACE_ID = re.compile(r"^(?:1234567890123456|1357924680135792|(\d)\1{9,})$")
+# Cluster-id label of an MSK broker host that is a known placeholder.
+_PLACEHOLDER_MSK_ID = re.compile(r"^(?:example[a-z0-9-]*|abc123|x{3,}|0{3,}|1{3,}|123456)$")
 
 _CLOUD_HOST = re.compile(
     r"(?<![A-Za-z0-9<>_.-])([A-Za-z0-9][A-Za-z0-9.-]*)\.cloud\.databricks\.com"
@@ -40,6 +47,17 @@ _ARN_ACCOUNT = re.compile(r"arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:(\d{12})(?!\d)"
 _ACCOUNT_CONTEXT = re.compile(
     r"(?i)(?:aws[_ -]?account(?:[_ -]?id)?|account[_ -]?id)\W{0,6}(\d{12})(?!\d)"
 )
+
+
+_MSK_BROKER = re.compile(
+    r"(?i)(?<![A-Za-z0-9-])[a-z0-9-]+\.[a-z0-9-]+\.([a-z0-9]+)\.c\d+\.kafka\.[a-z0-9-]+\.amazonaws\.com"
+)
+# Three shapes: id after zerobus/workspace/o= context, id as a hostname label.
+_WORKSPACE_ID = re.compile(
+    r"(?i)(?:(?:zerobus(?:[_ -]?[a-z]+)?|workspace(?:[_ -]?id)?|[/?&]o)\W{0,6}(?<![0-9])(\d{15,16})(?![0-9])"
+    r"|(?<![0-9A-Za-z_-])(\d{15,16})(?=\.[a-z]))"
+)
+_BARE_ACCOUNT_ID = re.compile(r"(?<![0-9A-Za-z_.-])(\d{12})(?![0-9A-Za-z_])")
 
 
 @dataclass(frozen=True)
@@ -67,6 +85,15 @@ def _arn_violation(match: re.Match[str]) -> bool:
     return match.group(1) not in _PLACEHOLDER_ACCOUNT_IDS
 
 
+def _msk_violation(match: re.Match[str]) -> bool:
+    return _PLACEHOLDER_MSK_ID.match(match.group(1)) is None
+
+
+def _workspace_id_violation(match: re.Match[str]) -> bool:
+    digits = match.group(1) or match.group(2)
+    return _PLACEHOLDER_WORKSPACE_ID.match(digits) is None
+
+
 RULES: tuple[Rule, ...] = (
     Rule("lakebase-endpoint-host", re.compile(r"(?<![A-Za-z0-9_-])ep-[a-z]+-[a-z]+-[a-z0-9]{4,}")),
     Rule(
@@ -78,6 +105,10 @@ RULES: tuple[Rule, ...] = (
     Rule("databricks-cloud-host", _CLOUD_HOST, _host_violation),
     Rule("aws-account-id-in-arn", _ARN_ACCOUNT, _arn_violation),
     Rule("aws-account-id-in-context", _ACCOUNT_CONTEXT, _arn_violation),
+    Rule("aws-account-id-bare", _BARE_ACCOUNT_ID, _arn_violation),
+    Rule("workspace-id", _WORKSPACE_ID, _workspace_id_violation),
+    Rule("msk-broker-host", _MSK_BROKER, _msk_violation),
+    Rule("private-npm-registry", re.compile(r"(?i)npm-proxy[a-z0-9.-]*")),
     Rule(
         "owner-identity", re.compile(r"(?i)taran(?:preet)?(?:singh)?[a-z._-]*(?:@databricks\.com)?")
     ),
@@ -93,10 +124,17 @@ def scan_text(text: str, path: str = "<text>") -> list[Hit]:
     for number, line in enumerate(text.splitlines(), start=1):
         if ALLOW_MARKER in line:
             continue
+        seen: set[tuple[int, int]] = set()
         for rule in RULES:
             for match in rule.pattern.finditer(line):
-                if rule.is_violation(match):
-                    hits.append(Hit(path, number, rule.name, match.group(0)))
+                if not rule.is_violation(match):
+                    continue
+                # Overlapping rules (e.g. ARN account vs bare account id) report once.
+                span = match.span()
+                if any(span[0] < end and start < span[1] for start, end in seen):
+                    continue
+                seen.add(span)
+                hits.append(Hit(path, number, rule.name, match.group(0)))
     return hits
 
 

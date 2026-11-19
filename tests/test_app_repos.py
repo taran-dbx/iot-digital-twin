@@ -161,7 +161,7 @@ async def test_record_and_list_resources(schema_ready) -> None:
         deployment_id=dep["id"],
         resource_type="kafka_topic",
         identifier="iot.pharmaceutical.realtime",
-        parent_ref="iotdemo",
+        parent_ref="example",
         teardown_order=50,
         metadata={"partitions": 3},
     )

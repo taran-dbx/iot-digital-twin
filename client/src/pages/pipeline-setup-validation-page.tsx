@@ -89,7 +89,7 @@ export function PipelineSetupValidationPage() {
   const [industryId, setIndustryId] = useState(initialIndustry);
   const [sourceType, setSourceType] = useState<SourceType>("kafka");
   const [bootstrap, setBootstrap] = useState<string>(
-    "b-1.iotdemo.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
+    "b-1.example.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
   );
   const [enabledModes, setEnabledModes] = useState<PipelineMode[]>(["realtime", "microbatch", "zerobus"]);
   const [modeConfigs, setModeConfigs] = useState<ModeConfigs>({

@@ -2,7 +2,7 @@
  * Prototype data + types for the admin "Classic Pipeline Creation &
  * Validation" flow (spec §Section 1). Local-only placeholder data — no
  * backend calls. Mirrors the numbers from the design brief:
- * Pharmaceutical, `b-1.iotdemo…:9098`, 6 partitions → 2 workers, RF 3.
+ * Pharmaceutical, `b-1.example…:9098`, 6 partitions → 2 workers, RF 3.
  */
 import type { LucideIcon } from "lucide-react";
 import {
@@ -78,12 +78,12 @@ export function computeWorkers(partitions: number): number {
 
 /** Fixed prototype source config (Kafka / MSK). */
 export const SOURCE_DEFAULTS = {
-  bootstrapServers: "b-1.iotdemo.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
+  bootstrapServers: "b-1.example.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
   region: "us-east-1",
   replicationFactor: 3,
   brokerCount: 3,
   partitions: 6,
-  mskArn: "arn:aws:kafka:us-east-1:123456789012:cluster/iotdemo/abc123-…-4",
+  mskArn: "arn:aws:kafka:us-east-1:123456789012:cluster/example/abc123-…-4",
   serviceCredential: "iot-msk-service-cred",
 } as const;
 
