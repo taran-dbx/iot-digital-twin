@@ -1016,3 +1016,6 @@ svg.aidef{position:absolute;width:0;height:0}
   .wrap{padding:18px 16px 52px}
   .platform-landing{margin:-18px -16px -52px}
 }
+.genie-drawer__error-row{display:flex;align-items:center;gap:8px}
+.genie-drawer__error-row .genie-drawer__error{flex:1}
+.genie-drawer__panel:focus{outline:none}

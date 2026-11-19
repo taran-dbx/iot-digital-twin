@@ -101,17 +101,23 @@ function defaultComponentId(assets: IndustryAssets | null, assetId?: string): st
 
 export function GenieCopilot({ setupId, isAdmin, ...props }: GenieCopilotProps) {
   if (usesPipelineGenie(setupId)) {
-    return <GeniePipelineCopilot
+    return (
+      <GeniePipelineCopilot
         key={`${setupId}:${props.mode}`}
         {...props}
         setupId={setupId}
         isAdmin={isAdmin ?? false}
-      />;
+      />
+    );
   }
   return <StaticGenieCopilot {...props} />;
 }
 
-/** Workspace-wide (static GENIE_SPACE_ID) copilot — unchanged behaviour. */
+/**
+ * Workspace-wide (static GENIE_SPACE_ID) copilot. Same endpoints as before, but
+ * it now polls through the shared `startGeniePoll` (an UNKNOWN status keeps
+ * polling until the 3-minute deadline) and renders `plainAnswer` text.
+ */
 function StaticGenieCopilot({
   industry,
   mode,

@@ -4,7 +4,7 @@
  * workspace-wide and per-pipeline copilots render inside this shell so their
  * selectors (`genie-copilot*`) and layout stay identical.
  */
-import type { FormEvent, ReactNode } from "react";
+import { useEffect, useRef, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { PanelRight, Send } from "lucide-react";
 
 interface GenieDrawerProps {
@@ -34,13 +34,45 @@ export function GenieDrawer({
   composer,
   announcement = "",
 }: GenieDrawerProps) {
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(open);
+
+  // Non-modal focus management: move focus in on open, hand it back on close.
+  useEffect(() => {
+    if (open === wasOpen.current) return;
+    wasOpen.current = open;
+    const panel = panelRef.current;
+    if (open) {
+      const active = document.activeElement;
+      opener.current = active instanceof HTMLElement && active !== document.body ? active : toggleRef.current;
+      const input = panel?.querySelector<HTMLElement>("textarea:not(:disabled)");
+      (input ?? panel)?.focus();
+      return;
+    }
+    const target = opener.current?.isConnected ? opener.current : toggleRef.current;
+    const focusInside = panel?.contains(document.activeElement) ?? false;
+    if (focusInside || document.activeElement === document.body) target?.focus();
+    opener.current = null;
+  }, [open]);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape" && open && !event.defaultPrevented) {
+      event.stopPropagation();
+      onOpenChange(false);
+    }
+  }
+
   return (
     <aside
       className={`genie-drawer${open ? " is-open" : ""}`}
       data-testid="genie-copilot"
       aria-label="Genie investigation"
+      onKeyDown={handleKeyDown}
     >
       <button
+        ref={toggleRef}
         type="button"
         className="genie-drawer__toggle"
         data-testid="genie-copilot-toggle"
@@ -54,7 +86,8 @@ export function GenieDrawer({
         className="genie-drawer__panel"
         data-testid="genie-copilot-drawer"
         hidden={!open}
-        aria-hidden={!open}
+        ref={panelRef}
+        tabIndex={-1}
       >
         <header className="genie-drawer__head">
           <div>
