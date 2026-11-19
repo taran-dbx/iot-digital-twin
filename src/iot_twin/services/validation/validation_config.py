@@ -8,7 +8,7 @@ configs the Phase-0/Phase-1 spikes VERIFIED on ``example-us-east`` (spec
 - Interactive validation cluster: **DBR 18.2** (``18.2.x-scala2.13``),
   **single-user / dedicated**, **Photon OFF, autoscaling OFF, spot OFF**, RTM
   Spark conf, 90-minute auto-terminate (floor).
-- MSK ``iotdemo`` reached via the **public ``:9198``** bootstrap (private
+- MSK ``example`` reached via the **public ``:9198``** bootstrap (private
   ``:9098`` is probed but unreachable — no VPC peering); ``iot-rtm-sc`` UC
   service credential handles MSK-IAM.
 - Worker sizing (M1): ``clamp(ceil(partitions / cores_per_worker), 1, 8)``.
@@ -228,7 +228,7 @@ def region_from_bootstrap(bootstrap_servers: str) -> str:
     """Derive the AWS region from an MSK bootstrap hostname.
 
     MSK public bootstrap hosts look like
-    ``b-1-public.iotdemo.abc123.c2.kafka.us-east-1.amazonaws.com:9198``.
+    ``b-1-public.example.abc123.c2.kafka.us-east-1.amazonaws.com:9198``.
     Falls back to :data:`DEFAULT_REGION` when no region token is found.
     """
     match = re.search(r"\.kafka\.([a-z]{2}-[a-z]+-\d+)\.amazonaws\.com", bootstrap_servers or "")

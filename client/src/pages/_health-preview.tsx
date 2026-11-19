@@ -62,7 +62,7 @@ const SETUP: PipelineSetup = {
   status: "stopped",
   flavor: "classic",
   source_type: "kafka",
-  bootstrap_servers: "b-1.iotdemo.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
+  bootstrap_servers: "b-1.example.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
   enabled_modes: ["realtime", "microbatch", "zerobus"],
   warehouse_id: "abc123warehouse",
   user_email: "admin@example.com",
