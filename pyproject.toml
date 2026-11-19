@@ -10,9 +10,11 @@ readme = "README.md"
 # Databricks Apps system environment runs Python 3.11.
 requires-python = ">=3.11"
 # Runtime pins. Keep in lockstep with requirements.txt, which is what the
-# Databricks Apps runtime actually installs. The bundled simulator wheel
-# (./lib/iot_data_simulator-*.whl) is installed from requirements.txt only,
-# because a local wheel path cannot be expressed portably here.
+# Databricks Apps runtime actually installs. The bundled wheels
+# (./lib/iot_data_simulator-*.whl, ./lib/dbdemos_tracker-*.whl) are installed
+# from requirements.txt only, because a local wheel path cannot be expressed
+# portably here. dbdemos-tracker is optional at runtime: when it is missing,
+# usage tracking is simply disabled.
 dependencies = [
     "fastapi==0.141.1",
     "uvicorn==0.52.4",

@@ -61,6 +61,7 @@ are not workspace-specific.
 | `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | |
 | `zerobus_secret_key` | `ZEROBUS_SECRET_KEY` | Default `zerobus-client-secret` (the runtime default). `app.yaml` emits it empty, but the Apps API rejects empty env values in a bundle `config` |
 | `industries`, `admin_group`, `admin_emails` | `INDUSTRIES`, `ADMIN_GROUP`, `ADMIN_EMAILS` | |
+| `usage_tracking_enabled` | `USAGE_TRACKING_ENABLED` | Default `"true"`; set `"false"` to opt out of dbdemos-tracker usage tracking (see README) |
 
 **Per-pipeline Genie spaces** need no extra bundle variable or app resource:
 after each deploy the app creates one Genie space per `(pipeline, mode)` for every

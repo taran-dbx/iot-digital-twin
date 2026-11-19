@@ -13,7 +13,8 @@ The committed app.yaml is rendered from an example profile (placeholders). Rende
 your real profile before ``databricks sync``/deploy, and do NOT commit the result
 (the identifier check in .pre-commit-config.yaml and a unit test guard this).
 Admin access is group-based (ADMIN_GROUP); ``ADMIN_EMAILS`` is an optional profile
-key that is only emitted when set.
+key that is only emitted when set. ``USAGE_TRACKING_ENABLED`` is an optional profile
+key that defaults to ``"true"`` (set ``"false"`` to opt out of usage tracking).
 This script is dev/deploy-time only — scripts/ is excluded from the app bundle.
 """
 
@@ -49,7 +50,12 @@ REQUIRED_PROFILE_KEYS: tuple[str, ...] = (
 )
 
 
-OPTIONAL_PROFILE_KEYS: tuple[str, ...] = ("ADMIN_EMAILS", "LAKETS_SQL_PATH")
+OPTIONAL_PROFILE_KEYS: tuple[str, ...] = (
+    "ADMIN_EMAILS",
+    "LAKETS_SQL_PATH",
+    "USAGE_TRACKING_ENABLED",
+)
+DEFAULT_USAGE_TRACKING_ENABLED = "true"
 EXAMPLE_SUFFIX = ".profile.example"
 
 
@@ -168,6 +174,11 @@ def render_app_yaml(profile: dict[str, str]) -> str:
         # Injected by the Apps runtime from the genie-space resource (CAN_VIEW).
         # Never hardcode a Genie space id in profiles or source.
         _env_from_resource("GENIE_SPACE_ID", "genie-space"),
+        # Usage tracking (dbdemos-tracker) opt-out flag; on unless the profile says otherwise.
+        _env_entry(
+            "USAGE_TRACKING_ENABLED",
+            profile.get("USAGE_TRACKING_ENABLED") or DEFAULT_USAGE_TRACKING_ENABLED,
+        ),
     ]
 
     body = "\n\n".join(env_blocks)

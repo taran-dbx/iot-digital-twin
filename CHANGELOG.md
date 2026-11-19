@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
   GitHub Actions CI, Dependabot, Makefile and `.editorconfig`.
 - Identifier check (`scripts/check_identifiers.py`) that blocks workspace-specific values.
 - Documentation: README, architecture, deployment and contributing guides.
+- Fail-safe usage tracking with `dbdemos-tracker` (vendored wheel in `lib/`) for app
+  start, page loads, dashboard streams and pipeline setup/validate/deploy. Opt out with
+  `USAGE_TRACKING_ENABLED=false`.
 
 ### Changed
 - Python code moved to the `src/iot_twin/` package; `services/` grouped into subpackages.

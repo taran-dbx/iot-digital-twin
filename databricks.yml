@@ -55,9 +55,12 @@ variables:
   admin_emails:
     description: Optional comma-separated extra admin emails (empty = none).
     default: ""
+  usage_tracking_enabled:
+    description: Usage tracking via dbdemos-tracker ("false" to opt out).
+    default: "true"
 
 # Ships the built SPA (static/dist is tracked), the package, app.yaml, the
-# simulator wheel and requirements. Replaces .databricksignore.
+# vendored wheels (simulator, dbdemos-tracker) and requirements. Replaces .databricksignore.
 sync:
   include:
     - static/dist/**
