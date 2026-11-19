@@ -22,7 +22,7 @@ dependencies = [
     "asyncpg==0.31.0",
     "psycopg2-binary==2.9.11",
     "databricks-sdk==0.133.0",
-    "databricks-zerobus-ingest-sdk==0.2.0",
+    "databricks-zerobus-ingest-sdk==1.11.0",
 ]
 
 # Dev/CI tooling; install with: pip install -r requirements.txt -e ".[dev]"
