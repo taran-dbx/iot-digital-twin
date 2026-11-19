@@ -8,6 +8,7 @@ Source resolution precedence (in order):
 1. explicit ``sql_path`` argument
 2. ``LAKETS_SQL_PATH`` env var — absolute path to ``lakets.sql``
 3. ``LAKETS_GIT_URL`` env var — git repo to shallow-clone at provision time
+4. the ``lakets.sql`` packaged with ``iot_twin`` (resolved relative to the package)
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from iot_twin.core.paths import LAKETS_SQL_PATH as PACKAGED_LAKETS_SQL
 from iot_twin.models.sql_ddl import LAKETS_VERSION_CHECK_SQL
 
 logger = logging.getLogger("iot_digital_twin.services.lakets")
@@ -77,6 +79,9 @@ def resolve_lakets_source(explicit_path: str | None = None) -> Path:
         if not resolved.exists():
             raise FileNotFoundError(f"Cloned repo {git_url} does not contain {_DIST_RELPATH}")
         return resolved
+
+    if PACKAGED_LAKETS_SQL.exists():
+        return PACKAGED_LAKETS_SQL
 
     raise RuntimeError("LakeTS source not configured — set LAKETS_SQL_PATH or LAKETS_GIT_URL")
 

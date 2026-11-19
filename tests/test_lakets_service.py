@@ -97,9 +97,19 @@ class TestResolveLakeTsSource:
             assert resolved.read_text() == "-- cloned\n"
             mock_clone.assert_called_once()
 
-    def test_raises_when_no_source_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_falls_back_to_packaged_sql(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("LAKETS_SQL_PATH", raising=False)
         monkeypatch.delenv("LAKETS_GIT_URL", raising=False)
+        resolved = lakets_service.resolve_lakets_source()
+        assert resolved == lakets_service.PACKAGED_LAKETS_SQL
+        assert resolved.is_file()
+
+    def test_raises_when_no_source_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LAKETS_SQL_PATH", raising=False)
+        monkeypatch.delenv("LAKETS_GIT_URL", raising=False)
+        monkeypatch.setattr(lakets_service, "PACKAGED_LAKETS_SQL", tmp_path / "missing.sql")
         with pytest.raises(RuntimeError, match="LakeTS source not configured"):
             lakets_service.resolve_lakets_source()
 
