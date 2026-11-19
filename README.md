@@ -54,7 +54,7 @@ scripts/                 ops and end-to-end tooling (profile-driven)
 deploy/                  workspaces/*.profile.example + variable-overrides.json.example
 databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
-docs/                    guides, architecture, design-ref/ mockups, archived history
+docs/                    architecture, deployment and API documentation
 ```
 
 ## Quick start

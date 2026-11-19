@@ -1,6 +1,6 @@
 /**
  * "View data flow" modal body — ports `dataflowHtml()` from the design
- * reference (`docs/design-ref/Digital Twin Platform.dc.html`), opened from a
+ * reference (the original design reference), opened from a
  * pipeline card's `.fc-info` button. Uses the real `IndustryMode.desc`/`.to`
  * text the backend already returns (`services/industry_templates.py`'s
  * `MODES`, which mirrors the design's own `MODES[].desc`/`.to` verbatim)

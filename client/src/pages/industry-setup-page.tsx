@@ -1,6 +1,6 @@
 /**
  * Industry setup screen — port of `#view-setup` in the design reference
- * (`docs/design-ref/Digital Twin Platform.dc.html`): crumbs, setup head, the
+ * (the original design reference): crumbs, setup head, the
  * custom-data toolbar, the
  * pipelines grid (`<PipelineCard>` per mode), and the "How your data
  * flows" panel (`<ArchDiagram>`) + the admin-only Advanced details.

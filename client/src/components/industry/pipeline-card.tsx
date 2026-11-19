@@ -2,7 +2,7 @@
  * A single streaming-mode "flavor" card on the industry setup screen.
  *
  * Ports `renderFlavors()`/`provBlock()`/`provSteps()` from the design
- * reference (`docs/design-ref/Digital Twin Platform.dc.html`'s
+ * reference (the original design reference's
  * `<script type="text/x-dc">` block) into React, driven by the real
  * `IndustryMode.status` from the backend
  * (`services/industry_service.py::get_catalog`) instead of the mockup's

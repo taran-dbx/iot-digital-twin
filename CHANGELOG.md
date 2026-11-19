@@ -20,7 +20,7 @@ All notable changes to this project are documented here. The format follows
 - Workspace profiles are templates (`*.profile.example`); real profiles are gitignored.
 - `LAKETS_SQL_PATH` is optional and falls back to the packaged `lakets.sql`.
 - Dev scripts require an explicit CLI profile.
-- Repository layout tidied with no behaviour change: `design-ref/` -> `docs/design-ref/`,
+- Repository layout tidied with no behaviour change: `design-ref/` removed (kept locally, outside the repo),
   `config/workspaces/` and `variable-overrides.json.example` -> `deploy/`, `qa/playwright/` ->
   `tests/e2e/playwright/`, packaged `src/iot_twin/resources/` -> `src/iot_twin/assets/`, and
   `requirements-dev.txt` folded into the `dev` extra in `pyproject.toml`

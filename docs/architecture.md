@@ -99,4 +99,3 @@ check the wheel contents and import it in a clean interpreter.
 | Bundle resource definitions | `resources/` (top level, DABs only) |
 | Workspace profiles, bundle overrides example | `deploy/` |
 | Browser (Playwright) tests | `tests/e2e/playwright/` |
-| Design reference mockups | `docs/design-ref/` |

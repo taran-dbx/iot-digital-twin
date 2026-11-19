@@ -44,7 +44,7 @@ function modeStatusMeta(
 
 /**
  * Icon path data ported from the `ICON` map in
- * `docs/design-ref/Digital Twin Platform.dc.html`'s `<script type="text/x-dc">`
+ * the original design reference's `<script type="text/x-dc">`
  * block — one small stroke icon per curated industry (`Industry.icon`).
  */
 const ICON_PATHS: Record<string, { d: string; linejoin?: boolean }[]> = {
