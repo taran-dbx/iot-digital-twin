@@ -1,117 +1,155 @@
 # IoT Digital Twin
 
-A **Databricks App** that demonstrates three streaming ingestion architectures for IoT
-sensor data, side by side, with a live per-pipeline dashboard (KPIs, 3D twin, latency
-metrics, hot/cold history). Built as a FastAPI backend serving a React SPA.
+A **Databricks App** that demonstrates three streaming-ingestion architectures for IoT
+sensor data side by side, with a live per-pipeline dashboard (KPIs, 3D twin, latency
+metrics, hot and cold history). The backend is FastAPI; the frontend is a React SPA.
 
-The UI is **industry-first**: pick an industry (pharmaceutical, manufacturing, oil & gas, …),
-then run one or more **pipeline flavors** against it. Each flavor is a real Databricks
-deployment — Kafka topic, Spark/Zerobus job, Lakebase branch, Unity Catalog objects.
+The UI is **industry-first**: pick an industry (for example pharmaceutical or
+manufacturing), then deploy one or more **pipeline flavors** against it. Each flavor is a
+real Databricks deployment: a Kafka topic, a Spark or Zerobus job, a Lakebase branch and
+Unity Catalog objects.
 
-## The three pipeline flavors
+## Contents
+
+- [Pipeline flavors](#pipeline-flavors)
+- [Repository layout](#repository-layout)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Deploying](#deploying)
+- [Testing and quality gates](#testing-and-quality-gates)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+
+## Pipeline flavors
 
 | Flavor | Path | Latency profile |
 |---|---|---|
-| **Real-time** | Kafka (MSK) → Spark Structured Streaming (Real-Time Mode, `.trigger(realTime="5 min")`) → **Lakebase LakeTS ChronoTable** (hot, time-series) **and** the app's SSE stream | milliseconds |
-| **Micro-batch** | Kafka → Spark micro-batch (`processingTime="15 s"`) → **UC Delta table** | seconds |
-| **Zerobus** | Zerobus SDK → **UC Delta table** (no Spark job) | direct-ingest |
+| **Real-time** | Kafka (MSK) → Spark Structured Streaming in Real-Time Mode → Lakebase LakeTS ChronoTable (hot) and the app's SSE stream | milliseconds |
+| **Micro-batch** | Kafka → Spark micro-batch (`processingTime`) → Unity Catalog Delta table | seconds |
+| **Zerobus** | Zerobus SDK → Unity Catalog Delta table (no Spark job) | direct ingest |
 
-## Data tiers on the dashboard
+The dashboard reads three tiers: **SSE** for live values, **Lakebase** for recent
+(hot) rows, and **DBSQL** for history that Lakebase CDF has synced into Delta.
+See [docs/architecture.md](docs/architecture.md) for the data flow in detail.
 
-- **SSE (live):** the realtime consumer POSTs each batch to `/api/sss/ingest`; the app
-  fans it out over Server-Sent Events (`/api/events`) → live KPI tiles, sensor stream, 3D twin.
-- **Lakebase (hot):** the LakeTS ChronoTable (`sensor_readings`) on a per-industry branch of
-  the `iot-pipelines` Lakebase project → write-perf, sink health, and LakeTS gap-fill /
-  rate-of-change / value-distribution cards.
-- **DBSQL (cold):** aged rows sync from Lakebase to a UC Delta table via Lakebase CDF
-  (`wal2delta` → the `lb__shadow_sensor_readings_history` synced table) → the historical
-  time-series panel, queried through a SQL warehouse.
-
-Latency KPIs come from per-mode metrics tables (`iot_<industry>.metrics.streaming_metrics_<mode>`,
-written by the consumer via delta-rs/Spark) for realtime/micro-batch, and from
-`system.lakeflow.zerobus_ingest` for zerobus.
-
-## Repo layout
+## Repository layout
 
 ```
-app.py                     FastAPI entry (uvicorn app:app — see app.yaml)
-backend.py                 LakebaseConnectionManager (OAuth-refreshing psycopg pool)
-core/                      config, state, auth, shutdown
-routes/                    22 API routers (health, sensor_data, industries, lakets,
-                           pipeline_deploy, streaming_latency, settings, …)
-services/                  38 service modules (provisioning, deployment, lakets_deploy,
-                           industry_*, pipeline_*, validation_*, …)
-models/                    Pydantic/DTO schemas (sensor, metrics, sql_ddl, …)
-databricks/vendor/         lakets.sql — vendored LakeTS DDL (read at runtime)
-client/                    React + Vite + TS SPA (gitignored; built to static/dist)
-static/dist/               the built SPA the app serves (committed)
-scripts/                   reusable ops/e2e tooling (bootstrap, retention, e2e)
-docs/                      deployment playbook + architecture diagram
-tests/                     pytest suite (57 files)
-requirements.txt           installs the iot_data_simulator wheel (repo root)
+src/iot_twin/            Python package (run as iot_twin.app:app)
+  app.py                 FastAPI application and startup/shutdown wiring
+  core/                  config, auth, state, paths, Lakebase connection manager
+  models/                typed data models and SQL DDL helpers
+  routes/                HTTP API routers (one module per area)
+  services/              business logic, grouped into subpackages
+    alerts/ validation/ industry/ pipelines/ lakets/ deployment/ db/
+  domain/                simulator domain catalog (also shipped to job clusters)
+  scenario_engine/       scenario engine (also shipped to job clusters)
+  resources/             packaged data files (lakets.sql)
+client/                  React + Vite + TypeScript SPA source
+static/dist/             built SPA served by the app (committed; CI checks it is fresh)
+lib/                     simulator wheel installed by requirements.txt
+tests/                   pytest suite
+qa/playwright/           browser QA against the built SPA
+scripts/                 ops and end-to-end tooling (profile-driven)
+config/workspaces/       workspace profile templates (*.profile.example)
+databricks.yml           Declarative Automation Bundle (DABs) definition
+resources/               bundle resource definitions (the app)
+docs/                    guides, architecture, archived history
 ```
 
-Key generators live client-side in `client/src/lib/`: `notebook-template.ts` (the Spark
-consumer notebooks), `data-producer-notebook.ts` (the Kafka producer), and
-`industry-deploy-config.ts` (deterministic per-industry deploy config). The LakeTS
-operational notebooks (retention/tiering/rollup/partition-manager) are **inlined** in
-`services/lakets_deploy_service.py` and uploaded via the SDK.
+## Quick start
 
-## Local development
+Requirements: Python 3.11+, Node (see `client/.nvmrc`), and the Databricks CLI for deploys.
 
 ```bash
-# Backend (needs a Databricks CLI profile + a .venv with requirements.txt)
-python -m uvicorn app:app --reload --port 8000
+# 1. Python environment
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
 
-# Frontend
-cd client && npm install
-npm run dev        # dev server (proxies /api to the backend)
-npm run build      # production build → ../static/dist (what the deployed app serves)
+# 2. Frontend dependencies
+cd client && npm ci && cd ..
 
-# Tests
-python -m pytest -q
-cd client && npx tsc --noEmit
+# 3. Run the backend (works without a database; /api/health reports it as unavailable)
+PYTHONPATH=src python -m uvicorn --app-dir src iot_twin.app:app --reload --port 8000
+
+# 4. Run the frontend dev server (proxies /api to the backend)
+cd client && npm run dev
 ```
 
-## Deploy
+Useful locally:
 
-The app deploys to the `iot-digital-twin` Databricks App via `databricks sync` + a
-SNAPSHOT deployment. Full runbook, prerequisites, and troubleshooting:
-**[`docs/deployment-playbook.md`](docs/deployment-playbook.md)**.
+- `IOT_ALLOW_ANONYMOUS_IDENTITY=1` bypasses user-identity checks outside the Apps runtime.
+- Set `PGHOST` and the other variables below to connect to a real Lakebase instance.
 
-### Workspace profiles
+`make help` lists every shortcut (`install`, `lint`, `format`, `typecheck`, `test`,
+`frontend-build`, `check`, `bundle-validate`).
 
-Real workspace values (hosts, warehouse id, client ids, broker lists, catalog) are **not**
-committed. Only `config/workspaces/*.profile.example` templates with placeholders are tracked;
-your real `config/workspaces/<name>.profile` files are gitignored (JSON, no secrets).
+## Configuration
+
+The app is configured through environment variables, set in `app.yaml` (rendered per
+workspace) or as bundle variables. Real workspace values are never committed: git holds
+placeholders only. Main settings:
+
+| Variable | Purpose |
+|---|---|
+| `UC_CATALOG`, `UC_SCHEMA` | Unity Catalog location for per-industry objects |
+| `PGHOST`, `PGDATABASE`, `PGPORT`, `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | App-backend Lakebase |
+| `PIPELINES_LAKEBASE_PROJECT` | Lakebase project that holds per-industry streaming sinks |
+| `DATABRICKS_SQL_WAREHOUSE_ID` | SQL warehouse for DBSQL queries (bound as an app resource) |
+| `GENIE_SPACE_ID` | Genie space for the copilot (bound as an app resource) |
+| `MSK_BOOTSTRAP_SERVERS` | Kafka brokers for real-time and micro-batch flavors |
+| `ZEROBUS_SERVER_ENDPOINT`, `ZEROBUS_CLIENT_ID`, `ZEROBUS_SECRET_SCOPE`, `ZEROBUS_SECRET_KEY` | Zerobus ingest |
+| `UC_SERVICE_CREDENTIAL`, `UC_STORAGE_BASE`, `UC_EXTERNAL_LOCATION` | Storage and credentials |
+| `INDUSTRIES` | Industries offered in the UI |
+| `ADMIN_GROUP` | Group whose members are app admins (`ADMIN_EMAILS` is an optional override) |
+
+Dev scripts under `scripts/` never default to a CLI profile: pass `--profile <name>` or
+set `DATABRICKS_CONFIG_PROFILE`.
+
+## Deploying
+
+Deployment uses **Declarative Automation Bundles**. Quick version:
+
+Workspace-specific values have no defaults. Copy `variable-overrides.json.example` to
+`.databricks/bundle/<target>/variable-overrides.json` (gitignored) and fill it in first.
 
 ```bash
-# 1. create your profile from a template and fill in your workspace values
-cp config/workspaces/example-us-east.profile.example config/workspaces/my-workspace.profile
-
-# 2. render app.yaml from it (do this right before `databricks sync`)
-python scripts/render_app_yaml.py my-workspace
-
-# verify without writing
-python scripts/render_app_yaml.py my-workspace --check
-
-# 3. after deploying, restore the placeholder app.yaml so real values are never committed
-git checkout -- app.yaml
+make bundle-validate PROFILE=<cli-profile>
+databricks bundle deploy -t dev --profile <cli-profile>
+databricks bundle run -t dev --profile <cli-profile>
 ```
 
-`app.yaml` stays **tracked** (with placeholder values) on purpose: `databricks sync`
-honors `.gitignore`, so a gitignored `app.yaml` would silently not be uploaded and the
-app would fail to start. `scripts/check_identifiers.py` (pre-commit + CI) and
-`tests/test_render_app_yaml.py` fail if workspace-specific values are committed.
+Do not point `prod` at an existing app without binding it first
+(`databricks bundle deployment bind`); see [docs/deployment.md](docs/deployment.md) for
+variables, targets, binding, prerequisites (service-principal grants) and rollback.
 
-Admin access is group-based: members of `ADMIN_GROUP` (default `iot-admins`) are admins.
-`ADMIN_EMAILS` remains supported as an optional comma-separated override; leave it out of
-committed files.
+## Testing and quality gates
 
-Dev scripts under `scripts/` never default to a Databricks CLI profile: pass
-`--profile <name>` or set `DATABRICKS_CONFIG_PROFILE`.
+```bash
+make check          # everything CI runs
+make test           # pytest only
+cd client && npm run lint && npm run typecheck && npm run build
+cd qa/playwright && npm install && npx playwright install chromium && npm test
+```
 
-`databricks sync` honors `.gitignore` and `.databricksignore`. Only `static/dist`,
-`databricks/vendor/lakets.sql`, the wheels, and the Python backend ship to the deployed
-app — `client/` source, `mockups/`, `design-ref/`, `scripts/`, `config/`, and `docs/`
-are dev-only (excluded via `.databricksignore`).
+CI (`.github/workflows/ci.yml`) runs ruff (lint and format), mypy on `core` and `models`,
+pytest, the frontend lint/typecheck/build with a check that `static/dist` is up to date,
+gitleaks, and an identifier check that blocks workspace-specific values. The same checks
+run locally through `pre-commit`.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Components, data flow, auth, storage |
+| [docs/deployment.md](docs/deployment.md) | Bundle deploys, variables, binding, prerequisites |
+| [docs/deployment-playbook.md](docs/deployment-playbook.md) | Legacy manual runbook and troubleshooting notes (partly superseded) |
+| [qa/playwright/README.md](qa/playwright/README.md) | Browser QA |
+| [docs/archive/](docs/archive/) | Historical plans and snapshots |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, standards, commit conventions |
+| [CHANGELOG.md](CHANGELOG.md) | Notable changes |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: branch from the default branch, run
+`make check`, use Conventional Commits, and open a pull request.

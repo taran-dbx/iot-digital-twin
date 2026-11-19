@@ -1,5 +1,8 @@
 # IoT Digital Twin — New Workspace Deployment Playbook
 
+> **Legacy runbook.** Deployments now use Declarative Automation Bundles; start with [deployment.md](deployment.md). This playbook is kept for troubleshooting history and is partly superseded.
+
+
 > Lessons learned from deploying the IoT Digital Twin Databricks App to
 > `example-sandbox.cloud.databricks.com` on 2026-03-17.
 > This document captures every issue encountered, the root cause, the fix applied,
