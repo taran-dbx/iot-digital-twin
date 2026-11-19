@@ -144,7 +144,7 @@ app.include_router(setup_router)
 app.include_router(industries_admin_router)
 app.include_router(validation_admin_router)
 
-# Static file routes (/, /legacy, /legacy-settings)
+# Static file routes (/)
 app.include_router(static_files_router)
 
 # Static file mounts — must come after route registration

@@ -1,42 +1,69 @@
-# Python
+# ── Python ────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
+# The committed React bundle MUST stay tracked: `databricks sync` honours
+# gitignore patterns, so ignoring static/dist would ship an app with no UI.
+!static/dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── Virtual environments ──────────────────────────────────────────────────
 .venv/
 venv/
-.env
 
-# Node
+# ── Environment / secrets ─────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Node ──────────────────────────────────────────────────────────────────
 node_modules/
 
-# IDE
+# ── Playwright / QA output ────────────────────────────────────────────────
+test-results/
+playwright-report/
+blob-report/
+qa-reports/
+
+# ── Databricks ────────────────────────────────────────────────────────────
+.databricks/
+.databricks-resources.json
+
+# ── Agent / IDE tooling ───────────────────────────────────────────────────
+.cursor/
+.superpowers/
+.isaac/
+.claude/
+.claude-terminal
+.agents/
+.polly/
 .idea/
 .vscode/
 *.swp
+skills-lock.json
 
-# Databricks
-.databricks/
-.databricks-resources.json
-.claude/
-.claude-terminal
-.superpowers/
-.coverage
-
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
 
-# Project-specific exclusions
+# ── Logs ──────────────────────────────────────────────────────────────────
+*.log
+
+# ── Project-specific ──────────────────────────────────────────────────────
 screenshots/
-qa-reports/
 docs/architecture/*.architecture.html
 # Design-reference mockups — kept on disk as reference, out of the repo.
 mockups/
-# Anchored with a leading slash so only the top-level notebooks/ (legacy Spark
-# job sources) is excluded; databricks/ (vendor/lakets.sql) stays tracked.
+# Anchored with a leading slash so only a top-level notebooks/ scratch dir is
+# excluded; databricks/ (vendor/lakets.sql) stays tracked.
 # NOTE: the LakeTS ops notebooks are inlined in services/lakets_deploy_service.py,
 # not read from disk — there is no databricks/notebooks/ dir.
 /notebooks/
 capture_screenshots.py
-# NOTE: static/dist/ is NOT gitignored — databricks sync honours gitignore
-# patterns, so excluding it here means the frontend bundle never reaches the
-# deployed app.  Keep untracked in git via individual file ignores if needed,
-# but do not add the directory to gitignore.

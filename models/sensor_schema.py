@@ -33,7 +33,7 @@ __all__ = [
     "FieldSpec",
     "SENSOR_FIELD_MAP",
     "SOURCE_COLUMN",
-    "ID_COLUMN",
+    "ID_COLUMN_NAME",
     "field_by_record",
     "field_by_column",
     "pg_id_sequence_name",

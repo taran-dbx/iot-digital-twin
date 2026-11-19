@@ -3,21 +3,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 
 router = APIRouter()
 
 SPA_INDEX = "static/dist/index.html"
-
-
-@router.get("/legacy")
-async def legacy_dashboard():
-    return RedirectResponse("/industries")
-
-
-@router.get("/legacy-settings")
-async def legacy_settings_page():
-    return RedirectResponse("/setup-validate")
 
 
 @router.get("/")
