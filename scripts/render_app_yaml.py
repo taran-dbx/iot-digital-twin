@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 """Render app.yaml from a named workspace deployment profile.
 
-Profiles live in config/workspaces/<name>.profile (JSON, no secrets).
+Profiles live in config/workspaces/<name>.profile (JSON, no secrets). The real
+``*.profile`` files are gitignored; only ``*.profile.example`` templates with
+placeholder values are committed. To create a profile::
+
+    cp config/workspaces/example-us-east.profile.example config/workspaces/<name>.profile
+    $EDITOR config/workspaces/<name>.profile
+    python scripts/render_app_yaml.py <name>
+
+The committed app.yaml is rendered from an example profile (placeholders). Render
+your real profile before ``databricks sync``/deploy, and do NOT commit the result
+(the identifier check in .pre-commit-config.yaml and a unit test guard this).
+Admin access is group-based (ADMIN_GROUP); ``ADMIN_EMAILS`` is an optional profile
+key that is only emitted when set.
 This script is dev/deploy-time only — scripts/ is excluded from the app bundle.
 """
 
@@ -34,9 +46,12 @@ REQUIRED_PROFILE_KEYS: tuple[str, ...] = (
     "MSK_BOOTSTRAP_SERVERS",
     "INDUSTRIES",
     "ADMIN_GROUP",
-    "ADMIN_EMAILS",
     "LAKETS_SQL_PATH",
 )
+
+
+OPTIONAL_PROFILE_KEYS: tuple[str, ...] = ("ADMIN_EMAILS",)
+EXAMPLE_SUFFIX = ".profile.example"
 
 
 class ProfileError(Exception):
@@ -61,12 +76,26 @@ def _env_from_resource(name: str, resource_key: str) -> str:
     return f"  - name: {name}\n    valueFrom: {resource_key}"
 
 
-def load_profile(name: str, profiles_dir: Path = DEFAULT_PROFILES_DIR) -> dict[str, str]:
-    path = profiles_dir / f"{name}.profile"
+def load_profile(
+    name: str,
+    profiles_dir: Path = DEFAULT_PROFILES_DIR,
+    *,
+    use_example: bool = False,
+) -> dict[str, str]:
+    suffix = EXAMPLE_SUFFIX if use_example else ".profile"
+    path = profiles_dir / f"{name}{suffix}"
     if not path.is_file():
-        available = sorted(p.stem for p in profiles_dir.glob("*.profile"))
+        available = sorted(p.name[: -len(suffix)] for p in profiles_dir.glob(f"*{suffix}"))
         choices = ", ".join(available) if available else "(none)"
-        raise ProfileError(f"unknown profile {name!r}; available: {choices}")
+        hint = (
+            ""
+            if use_example
+            else (
+                f"; copy a *{EXAMPLE_SUFFIX} template to {name}.profile and fill in "
+                "your workspace values (or pass --example to render the placeholders)"
+            )
+        )
+        raise ProfileError(f"unknown profile {name!r}; available: {choices}{hint}")
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -83,6 +112,16 @@ def load_profile(name: str, profiles_dir: Path = DEFAULT_PROFILES_DIR) -> dict[s
     profile: dict[str, str] = {}
     for key in REQUIRED_PROFILE_KEYS:
         value = raw[key]
+        if not isinstance(value, str):
+            raise ProfileError(
+                f"profile {name!r} key {key!r} must be a string, got {type(value).__name__}"
+            )
+        profile[key] = value
+
+    for key in OPTIONAL_PROFILE_KEYS:
+        value = raw.get(key)
+        if value is None:
+            continue
         if not isinstance(value, str):
             raise ProfileError(
                 f"profile {name!r} key {key!r} must be a string, got {type(value).__name__}"
@@ -114,7 +153,11 @@ def render_app_yaml(profile: dict[str, str]) -> str:
         _env_entry("MSK_BOOTSTRAP_SERVERS", profile["MSK_BOOTSTRAP_SERVERS"]),
         _env_entry("INDUSTRIES", profile["INDUSTRIES"]),
         _env_entry("ADMIN_GROUP", profile["ADMIN_GROUP"]),
-        _env_entry("ADMIN_EMAILS", profile["ADMIN_EMAILS"]),
+        *(
+            [_env_entry("ADMIN_EMAILS", profile["ADMIN_EMAILS"])]
+            if profile.get("ADMIN_EMAILS")
+            else []
+        ),
         _env_entry("LAKETS_SQL_PATH", profile["LAKETS_SQL_PATH"]),
         # Injected by the Apps runtime from the genie-space resource (CAN_VIEW).
         # Never hardcode a Genie space id in profiles or source.
@@ -155,6 +198,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Profile name (config/workspaces/<name>.profile)",
     )
     parser.add_argument(
+        "--example",
+        action="store_true",
+        help="Load config/workspaces/<name>.profile.example (placeholder values)",
+    )
+    parser.add_argument(
         "--profiles-dir",
         type=Path,
         default=DEFAULT_PROFILES_DIR,
@@ -174,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        profile = load_profile(args.profile, args.profiles_dir)
+        profile = load_profile(args.profile, args.profiles_dir, use_example=args.example)
     except ProfileError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

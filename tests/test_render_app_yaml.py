@@ -35,7 +35,6 @@ _EXPECTED_ENV_NAMES = (
     "MSK_BOOTSTRAP_SERVERS",
     "INDUSTRIES",
     "ADMIN_GROUP",
-    "ADMIN_EMAILS",
     "LAKETS_SQL_PATH",
     "GENIE_SPACE_ID",
 )
@@ -58,7 +57,6 @@ _MINIMAL_PROFILE = {
     "MSK_BOOTSTRAP_SERVERS": "",
     "INDUSTRIES": "pharmaceutical",
     "ADMIN_GROUP": "iot-admins",
-    "ADMIN_EMAILS": "admin@example.com",
     "LAKETS_SQL_PATH": "/app/python/source_code/databricks/vendor/lakets.sql",
 }
 
@@ -118,53 +116,53 @@ def test_render_quotes_values(renderer) -> None:
     assert 'value: ""' in rendered
 
 
-def test_classic_stable_profile_values(renderer) -> None:
-    profile = renderer.load_profile("classic-stable", PROFILES_DIR)
+def test_eu_example_profile_values(renderer) -> None:
+    profile = renderer.load_profile("example-eu-central", PROFILES_DIR, use_example=True)
 
-    assert profile["UC_CATALOG"] == "classic_stable_realtime_demos_catalog"
-    assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "3e9790bdfd763a45"
-    assert profile["ZEROBUS_CLIENT_ID"] == "7c59807d-7f0d-47ab-8e83-6d91add2f35c"
+    assert profile["UC_CATALOG"] == "example_eu_catalog"
+    assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0123456789abcdef"
+    assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000a"
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
     assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines"
     assert profile["MSK_BOOTSTRAP_SERVERS"] == (
-        "boot-public-9dm.iotrealtimedemo.dkbjww.c6.kafka.eu-central-1.amazonaws.com:9198,"
-        "boot-public-hak.iotrealtimedemo.dkbjww.c6.kafka.eu-central-1.amazonaws.com:9198,"
-        "boot-public-mnx.iotrealtimedemo.dkbjww.c6.kafka.eu-central-1.amazonaws.com:9198"
+        "boot-public-9dm.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,"
+        "boot-public-hak.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,"
+        "boot-public-mnx.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198"
     )
     assert profile["ZEROBUS_SECRET_SCOPE"] == ""
     assert profile["ZEROBUS_SECRET_KEY"] == ""
 
 
-def test_interop_profile_values(renderer) -> None:
-    profile = renderer.load_profile("fe-vm-shared-interop", PROFILES_DIR)
+def test_us_example_profile_values(renderer) -> None:
+    profile = renderer.load_profile("example-us-east", PROFILES_DIR, use_example=True)
 
-    assert profile["UC_CATALOG"] == "taran-interop"
+    assert profile["UC_CATALOG"] == "example-catalog"
     assert profile["UC_SCHEMA"] == "rtm_lakets_zb"
-    assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "31df823c0f824066"
+    assert profile["DATABRICKS_SQL_WAREHOUSE_ID"] == "0123456789abcdef"
     assert (
         profile["ZEROBUS_SERVER_ENDPOINT"]
-        == "332040261549026.zerobus.us-east-1.cloud.databricks.com"
+        == "111111111111111.zerobus.us-east-1.cloud.databricks.com"
     )
     assert profile["UC_SERVICE_CREDENTIAL"] == "iot-rtm-sc"
     assert profile["PIPELINES_LAKEBASE_PROJECT"] == "iot-pipelines-interop"
-    assert profile["PGHOST"] == "ep-lucky-firefly-d2xaldy5.database.us-east-1.cloud.databricks.com"
+    assert profile["PGHOST"] == "example-lakebase.database.us-east-1.cloud.databricks.com"
     assert profile["LAKEBASE_PROJECT"] == "iot-app-backend-interop"
     assert (
         profile["LAKEBASE_ENDPOINT"]
         == "projects/iot-app-backend-interop/branches/production/endpoints/primary"
     )
-    assert profile["ZEROBUS_CLIENT_ID"] == "6ce122f2-9f0e-4939-ba31-a8d66e1d1f16"
+    assert profile["ZEROBUS_CLIENT_ID"] == "00000000-0000-0000-0000-00000000000b"
     assert profile["ZEROBUS_SECRET_SCOPE"] == ""
     assert profile["ZEROBUS_SECRET_KEY"] == ""
     assert profile["MSK_BOOTSTRAP_SERVERS"] == (
-        "b-1-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198,"
-        "b-2-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198,"
-        "b-3-public.iotdemo.2ol92p.c6.kafka.us-east-1.amazonaws.com:9198"
+        "b-1-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
+        "b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
+        "b-3-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198"
     )
 
 
-def test_interop_render_uses_blank_zerobus_secret_env(renderer) -> None:
-    profile = renderer.load_profile("fe-vm-shared-interop", PROFILES_DIR)
+def test_us_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
+    profile = renderer.load_profile("example-us-east", PROFILES_DIR, use_example=True)
     rendered = renderer.render_app_yaml(profile)
 
     assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
@@ -172,8 +170,8 @@ def test_interop_render_uses_blank_zerobus_secret_env(renderer) -> None:
     assert "iot-secrets" not in rendered
 
 
-def test_classic_stable_render_uses_blank_zerobus_secret_env(renderer) -> None:
-    profile = renderer.load_profile("classic-stable", PROFILES_DIR)
+def test_eu_example_render_uses_blank_zerobus_secret_env(renderer) -> None:
+    profile = renderer.load_profile("example-eu-central", PROFILES_DIR, use_example=True)
     rendered = renderer.render_app_yaml(profile)
 
     assert 'name: ZEROBUS_SECRET_SCOPE\n    value: ""' in rendered
@@ -181,14 +179,14 @@ def test_classic_stable_render_uses_blank_zerobus_secret_env(renderer) -> None:
     assert "iot-secrets" not in rendered
 
 
-def test_committed_app_yaml_matches_active_interop_profile(renderer) -> None:
-    profile = renderer.load_profile("fe-vm-shared-interop", PROFILES_DIR)
+def test_committed_app_yaml_matches_example_profile(renderer) -> None:
+    profile = renderer.load_profile("example-us-east", PROFILES_DIR, use_example=True)
     app_yaml = ROOT / "app.yaml"
 
     assert app_yaml.is_file(), "app.yaml must exist at repo root"
     assert renderer.check_app_yaml(app_yaml, profile), (
-        "app.yaml drifted from fe-vm-shared-interop profile; "
-        "run: python scripts/render_app_yaml.py fe-vm-shared-interop"
+        "app.yaml drifted from example-us-east profile; "
+        "run: python scripts/render_app_yaml.py example-us-east --example"
     )
 
 
@@ -267,3 +265,22 @@ def test_cli_writes_output(renderer, profiles_dir: Path, tmp_path: Path) -> None
     assert proc.returncode == 0
     assert out.exists()
     assert renderer.check_app_yaml(out, _MINIMAL_PROFILE)
+
+
+def test_admin_emails_is_optional_and_omitted_when_unset(renderer) -> None:
+    rendered = renderer.render_app_yaml(_MINIMAL_PROFILE)
+    assert "ADMIN_EMAILS" not in rendered
+    assert "name: ADMIN_GROUP" in rendered
+
+
+def test_admin_emails_emitted_when_profile_sets_it(renderer) -> None:
+    profile = {**_MINIMAL_PROFILE, "ADMIN_EMAILS": "ops@example.com"}
+    rendered = renderer.render_app_yaml(profile)
+    assert 'name: ADMIN_EMAILS\n    value: "ops@example.com"' in rendered
+
+
+def test_real_profile_lookup_ignores_example_templates(renderer, tmp_path: Path) -> None:
+    (tmp_path / "only.profile.example").write_text(json.dumps(_MINIMAL_PROFILE), encoding="utf-8")
+    with pytest.raises(renderer.ProfileError, match="profile.example"):
+        renderer.load_profile("only", tmp_path)
+    assert renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "test_schema"
