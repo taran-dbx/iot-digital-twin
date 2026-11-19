@@ -83,7 +83,7 @@ class RuntimeOAuthCredentialError(RuntimeError):
 # 18.2 + single-user.  Shared by the RTM job cluster and the micro-batch cluster.
 RTM_DBR = "18.2.x-scala2.13"
 
-# Smallest suitable general-purpose node (AWS us-east-1 / fe-vm-shared-interop).
+# Smallest suitable general-purpose node (AWS us-east-1 / example-us-east).
 # Must have >= CORES_PER_WORKER vCPUs: RTM's concurrent scheduler needs one slot
 # per Kafka partition (+ overhead), and ``compute_workers`` assumes 4 cores/worker.
 # ``m5d.large`` is only 2 vCPUs — with the industry deploy's default 1 worker that

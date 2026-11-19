@@ -21,11 +21,11 @@ _FULL_ENV: dict[str, str] = {
     "UC_SCHEMA": "test_schema",
     "LAKEBASE_PROJECT": "iot-app-backend",
     "LAKEBASE_ENDPOINT": "projects/iot-app-backend/branches/production/endpoints/primary",
-    "DATABRICKS_SQL_WAREHOUSE_ID": "0864d7304e74ad76",
-    "ZEROBUS_SERVER_ENDPOINT": "7474659563748021.zerobus.eu-central-1.cloud.databricks.com",
-    "DATABRICKS_CLIENT_ID": "7c59807d-7f0d-47ab-8e83-6d91add2f35c",
+    "DATABRICKS_SQL_WAREHOUSE_ID": "0123456789abcdef",
+    "ZEROBUS_SERVER_ENDPOINT": "2222222222222222.zerobus.eu-central-1.cloud.databricks.com",
+    "DATABRICKS_CLIENT_ID": "00000000-0000-0000-0000-00000000000a",
     "INDUSTRIES": "pharmaceutical,manufacturing",
-    "PGHOST": "ep-test.database.eu-central-1.cloud.databricks.com",
+    "PGHOST": "example-pg.database.eu-central-1.cloud.databricks.com",
     # Optional env vars for the three call-time-only fields.
     "SECRET_SCOPE": "test-scope",
     "UC_SERVICE_CREDENTIAL": "test-credential",
@@ -74,19 +74,19 @@ class TestGetConfigReadsEnvVars:
         from core.workspace_config import get_config
 
         cfg = get_config()
-        assert cfg.warehouse_id == "0864d7304e74ad76"
+        assert cfg.warehouse_id == "0123456789abcdef"
 
     def test_zerobus_endpoint(self, full_env: None) -> None:
         from core.workspace_config import get_config
 
         cfg = get_config()
-        assert cfg.zerobus_endpoint == "7474659563748021.zerobus.eu-central-1.cloud.databricks.com"
+        assert cfg.zerobus_endpoint == "2222222222222222.zerobus.eu-central-1.cloud.databricks.com"
 
     def test_app_sp_client_id(self, full_env: None) -> None:
         from core.workspace_config import get_config
 
         cfg = get_config()
-        assert cfg.app_sp_client_id == "7c59807d-7f0d-47ab-8e83-6d91add2f35c"
+        assert cfg.app_sp_client_id == "00000000-0000-0000-0000-00000000000a"
 
     def test_industries_parsed_as_list(self, full_env: None) -> None:
         from core.workspace_config import get_config
@@ -98,7 +98,7 @@ class TestGetConfigReadsEnvVars:
         from core.workspace_config import get_config
 
         cfg = get_config()
-        assert cfg.pg_host == "ep-test.database.eu-central-1.cloud.databricks.com"
+        assert cfg.pg_host == "example-pg.database.eu-central-1.cloud.databricks.com"
 
     def test_pg_host_optional_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PGHOST may be empty or missing at startup — must not raise."""

@@ -128,7 +128,7 @@ class TestCheckDeltaTables:
             }
         ]
         result = await hc.check_delta_tables(
-            "taran-interop",
+            "example-catalog",
             ["realtime"],
             _run_sql_returning(rows),
             schema="rtm_lakets_zb",
@@ -479,8 +479,8 @@ class TestCheckGrants:
             ]
         )
 
-        before = await hc.check_grants("taran-interop", ws)
-        after = await hc.check_grants("taran-interop", ws)
+        before = await hc.check_grants("example-catalog", ws)
+        after = await hc.check_grants("example-catalog", ws)
 
         assert before["status"] == hc.FAIL
         assert after["status"] == hc.PASS
@@ -685,7 +685,7 @@ def _all_good_deps():
 @pytest.mark.asyncio
 class TestGatherChecks:
     async def test_zerobus_uses_one_schema_catalog_tables_grants_and_uc_secret(self, monkeypatch):
-        monkeypatch.setenv("UC_CATALOG", "classic_stable_realtime_demos_catalog")
+        monkeypatch.setenv("UC_CATALOG", "example_eu_catalog")
         monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
         setup = {
             **_healthy_setup(),
@@ -729,7 +729,7 @@ class TestGatherChecks:
         )
 
         sql = "\n".join(queries)
-        assert "classic_stable_realtime_demos_catalog.information_schema" in sql
+        assert "example_eu_catalog.information_schema" in sql
         assert "iot_pharmaceutical" not in sql
         assert "pharmaceutical_zerobus" in sql or any(
             check["name"] == hc.DELTA_TABLES_CHECK and check["status"] == hc.PASS
@@ -737,10 +737,10 @@ class TestGatherChecks:
         )
         ws.grants.get.assert_called_with(
             securable_type="catalog",
-            full_name="classic_stable_realtime_demos_catalog",
+            full_name="example_eu_catalog",
         )
         ws.secrets_uc.get_secret.assert_called_once_with(
-            "classic_stable_realtime_demos_catalog.rtm_lakets_zb.app_sp_oauth",
+            "example_eu_catalog.rtm_lakets_zb.app_sp_oauth",
             include_value=False,
         )
         failures = [check for check in result["checks"] if check["status"] == hc.FAIL]

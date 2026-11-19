@@ -10,7 +10,7 @@ a self-contained replacement: a Python-source **string builder**
 ``VALIDATION_OK``/``VALIDATION_FAIL`` sentinels) plus a **real**, driver-side
 :func:`auth_probe`.
 
-LIVE-VERIFIED 2026-07-06 against ``fe-vm-shared-interop`` /
+LIVE-VERIFIED 2026-07-06 against ``example-us-east`` /
 ``iot_pharmaceutical.zerobus.iot_sensor_data`` (0 rows -> 25 rows via a
 throwaway spike using the exact shape this module generates):
 

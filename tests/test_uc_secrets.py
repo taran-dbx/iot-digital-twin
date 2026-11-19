@@ -33,7 +33,7 @@ class TestPutSecret:
     async def test_creates_secret_via_native_sdk(self) -> None:
         ws = _make_ws()
         res = await uc_secrets.put_secret(
-            "classic_stable_realtime_demos_catalog",
+            "example_eu_catalog",
             "rtm_lakets_zb",
             "app_sp_oauth",
             "top-secret",
@@ -41,7 +41,7 @@ class TestPutSecret:
         )
         ws.secrets_uc.create_secret.assert_called_once()
         secret_arg = ws.secrets_uc.create_secret.call_args.args[0]
-        assert secret_arg.catalog_name == "classic_stable_realtime_demos_catalog"
+        assert secret_arg.catalog_name == "example_eu_catalog"
         assert secret_arg.schema_name == "rtm_lakets_zb"
         assert secret_arg.name == "app_sp_oauth"
         assert secret_arg.value == "top-secret"

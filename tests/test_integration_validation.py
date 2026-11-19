@@ -1,14 +1,14 @@
 """Skippable live integration test for the validation harness (plan Phase 4).
 
 Provisions the real interactive validation cluster (DBR 18.2, single-user,
-Photon/autoscaling/spot OFF) on ``fe-vm-shared-interop`` and drives the common
+Photon/autoscaling/spot OFF) on ``example-us-east`` and drives the common
 lane against live MSK + UC.  **Opt-in only** — it creates real (billable) compute
 and is skipped unless ``IOT_VALIDATION_INTEGRATION=1`` is set, so the mocked unit
 suite runs everywhere.
 
 Run with, e.g.::
 
-    IOT_VALIDATION_INTEGRATION=1 DATABRICKS_CONFIG_PROFILE=fe-vm-shared-interop \\
+    IOT_VALIDATION_INTEGRATION=1 DATABRICKS_CONFIG_PROFILE=example-us-east \\
         pytest tests/test_integration_validation.py -s
 """
 
@@ -37,7 +37,7 @@ async def test_provision_cluster_live(app_backend_conn):
 
     from services import pipeline_setup_repo, validation_service, validation_steps
 
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
+    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
     ws = WorkspaceClient(profile=profile)
 
     # Ensure a minimal setup row exists in the throwaway schema.

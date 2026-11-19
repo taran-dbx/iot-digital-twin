@@ -36,7 +36,7 @@ class TestNames:
         from pathlib import Path
 
         src = Path(ics.__file__).read_text(encoding="utf-8")
-        assert "taran-interop" not in src
+        assert "example-catalog" not in src
         assert "classic_stable" not in src
         assert "rtm_lakets_zb" not in src
 
@@ -111,7 +111,7 @@ class TestProvision:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """[C7503][defect] Hyphenated UC catalogs are quoted, not split-fragile."""
-        monkeypatch.setenv("UC_CATALOG", "taran-interop")
+        monkeypatch.setenv("UC_CATALOG", "example-catalog")
         executed: list[str] = []
 
         async def fake_sql(sql: str, warehouse_id: str) -> dict:
@@ -122,8 +122,8 @@ class TestProvision:
             await ics.sync_reference_data(alerts=[], warehouse_id="wh-1")
 
         joined = "\n".join(executed)
-        assert "`taran-interop`" in joined
-        assert "INSERT OVERWRITE TABLE `taran-interop`.test_schema.intelligence_assets" in joined
+        assert "`example-catalog`" in joined
+        assert "INSERT OVERWRITE TABLE `example-catalog`.test_schema.intelligence_assets" in joined
 
     @pytest.mark.asyncio
     async def test_replace_batches_values_c7503_regression(self) -> None:

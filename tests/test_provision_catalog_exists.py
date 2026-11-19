@@ -16,9 +16,9 @@ import pytest
 from services import industry_catalog_service as ics
 from services import industry_provisioning_service as ips
 
-CATALOG = "classic_stable_realtime_demos_catalog"
+CATALOG = "example_eu_catalog"
 SCHEMA = "rtm_lakets_zb"
-APP_SP = "7c59807d-7f0d-47ab-8e83-6d91add2f35c"
+APP_SP = "00000000-0000-0000-0000-00000000000a"
 
 
 @pytest.fixture(autouse=True)
@@ -58,15 +58,15 @@ class TestIndustryTable:
 class TestProvisionSchemaAndTables:
     @pytest.mark.asyncio
     async def test_hyphenated_catalog_sql_is_quoted(self, monkeypatch) -> None:
-        monkeypatch.setenv("UC_CATALOG", "taran-interop")
+        monkeypatch.setenv("UC_CATALOG", "example-catalog")
         ws = _make_ws()
         exec_mock = AsyncMock(return_value={})
         with patch.object(ics, "execute_dbsql", new=exec_mock):
             await ics.provision_industry_catalog("pharmaceutical", ws=ws)
         all_sql = "\n".join(c.args[0] for c in exec_mock.call_args_list)
-        assert "CREATE SCHEMA IF NOT EXISTS `taran-interop`.rtm_lakets_zb" in all_sql
+        assert "CREATE SCHEMA IF NOT EXISTS `example-catalog`.rtm_lakets_zb" in all_sql
         assert (
-            "CREATE TABLE IF NOT EXISTS `taran-interop`.rtm_lakets_zb.pharmaceutical_zerobus"
+            "CREATE TABLE IF NOT EXISTS `example-catalog`.rtm_lakets_zb.pharmaceutical_zerobus"
             in all_sql
         )
 
@@ -114,14 +114,14 @@ class TestProvisionSchemaAndTables:
 class TestSingleSpGrants:
     @pytest.mark.asyncio
     async def test_hyphenated_catalog_grant_sql_is_quoted(self, monkeypatch) -> None:
-        monkeypatch.setenv("UC_CATALOG", "taran-interop")
+        monkeypatch.setenv("UC_CATALOG", "example-catalog")
         ws = _make_ws()
         exec_mock = AsyncMock(return_value={})
         with patch.object(ics, "execute_dbsql", new=exec_mock):
             await ics.grant_app_sp("pharmaceutical", ws=ws, principal=APP_SP)
         sqls = "\n".join(c.args[0] for c in exec_mock.call_args_list)
-        assert "USE CATALOG ON CATALOG `taran-interop`" in sqls
-        assert "ON SCHEMA `taran-interop`.rtm_lakets_zb" in sqls
+        assert "USE CATALOG ON CATALOG `example-catalog`" in sqls
+        assert "ON SCHEMA `example-catalog`.rtm_lakets_zb" in sqls
 
     @pytest.mark.asyncio
     async def test_grants_only_the_app_sp_on_the_schema(self) -> None:

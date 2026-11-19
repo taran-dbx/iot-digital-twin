@@ -30,7 +30,7 @@ test.describe("[Windsor] Responsive admin surfaces", () => {
     page,
   }) => {
     const longIdentifier =
-      "classic_stable_realtime_demos_catalog.rtm_lakets_zb.manufacturing_realtime_" +
+      "example_eu_catalog.rtm_lakets_zb.manufacturing_realtime_" +
       "11111111-1111-4111-8111-111111111111";
     let resolvedHealthRequests = 0;
     await page.route("**/api/admin/pipelines", (route) =>
@@ -52,7 +52,7 @@ test.describe("[Windsor] Responsive admin surfaces", () => {
       resolvedHealthRequests += 1;
       return route.fulfill({
         json: {
-          uc_catalog: "classic_stable_realtime_demos_catalog",
+          uc_catalog: "example_eu_catalog",
           uc_schema: "rtm_lakets_zb",
           app_sp_client_id: setupId,
           setup: {

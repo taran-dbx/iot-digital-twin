@@ -443,7 +443,7 @@ async def _install_cluster_libraries(ws: Any, cluster_id: str, packages: tuple[s
     """Ensure PyPI ``packages`` are importable on ``cluster_id``.
 
     The cluster-scoped ``libraries.install`` API is a no-op on some
-    ``fe-vm-shared-interop`` clusters (verified 2026-07-06 — install returns
+    ``example-us-east`` clusters (verified 2026-07-06 — install returns
     with no registered library), so we pip-install into the running driver via
     command execution and verify the imports the validation snippets need.
     """

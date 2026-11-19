@@ -15,7 +15,7 @@ from services import cdf_reconciliation_service as cdf
 
 def test_canonical_names_are_industry_unique_c7234(monkeypatch):
     """Canonical source and destination names do not collide [C7234][defect][regression]."""
-    monkeypatch.setenv("UC_CATALOG", "taran-interop")
+    monkeypatch.setenv("UC_CATALOG", "example-catalog")
     monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
 
     manufacturing = cdf.shadow_table_name(" Manufacturing ")
@@ -68,7 +68,7 @@ async def test_exact_wal2delta_shadow_must_stream_c7236():
 @pytest.mark.asyncio
 async def test_reconcile_updates_metadata_and_deduplicates_ledger_c7237(monkeypatch):
     """Successful reconciliation persists one exact binding [C7237][regression]."""
-    monkeypatch.setenv("UC_CATALOG", "taran-interop")
+    monkeypatch.setenv("UC_CATALOG", "example-catalog")
     monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
     monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines-interop")
     db = MagicMock()
@@ -163,7 +163,7 @@ async def test_failure_closes_connections_and_preserves_deployed_status_c7248(
     monkeypatch,
 ):
     """Failed polling clears CDF only on deployed jobs [C7248][defect][regression]."""
-    monkeypatch.setenv("UC_CATALOG", "taran-interop")
+    monkeypatch.setenv("UC_CATALOG", "example-catalog")
     monkeypatch.setenv("UC_SCHEMA", "rtm_lakets_zb")
     monkeypatch.setenv("PIPELINES_LAKEBASE_PROJECT", "iot-pipelines-interop")
     db = MagicMock()

@@ -9,12 +9,12 @@ from services.dbsql_service import validate_catalog
 
 class TestValidateCatalog:
     def test_accepts_hyphenated_catalog_name(self) -> None:
-        assert validate_catalog("taran-interop") is True
+        assert validate_catalog("example-catalog") is True
 
     @pytest.mark.parametrize(
         "catalog",
         [
-            "classic_stable_realtime_demos_catalog",
+            "example_eu_catalog",
             "iot_pharma",
             "Catalog_Name",
         ],

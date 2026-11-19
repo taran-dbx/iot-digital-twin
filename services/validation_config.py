@@ -2,7 +2,7 @@
 
 Pure, side-effect-free builders used by ``services/validation_steps.py`` (the
 effectful executors) and unit-tested in isolation.  Everything here encodes the
-configs the Phase-0/Phase-1 spikes VERIFIED on ``fe-vm-shared-interop`` (spec
+configs the Phase-0/Phase-1 spikes VERIFIED on ``example-us-east`` (spec
 §1.3–1.11):
 
 - Interactive validation cluster: **DBR 18.2** (``18.2.x-scala2.13``),
@@ -54,7 +54,7 @@ VALIDATION_DBR = "18.2.x-scala2.13"
 SERVICE_CREDENTIAL: str = os.getenv("UC_SERVICE_CREDENTIAL", "")
 DEFAULT_REGION = "us-east-1"
 
-MSK_PUBLIC_PORT = 9198  # reachable from fe-vm-shared-interop
+MSK_PUBLIC_PORT = 9198  # reachable from example-us-east
 MSK_PRIVATE_PORT = 9098  # IAM/private — probed but unreachable (no VPC peering)
 
 # 90-minute inactivity auto-terminate: default AND floor (admin may raise only).

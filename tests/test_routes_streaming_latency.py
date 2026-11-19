@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 
 from core.state import AppState
 
-_UC_CATALOG = "classic_stable_realtime_demos_catalog"
+_UC_CATALOG = "example_eu_catalog"
 _UC_SCHEMA = "rtm_lakets_zb"
 
 

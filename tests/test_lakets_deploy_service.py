@@ -12,7 +12,7 @@ from services import lakets_deploy_service
 
 def _fake_workspace_client() -> MagicMock:
     w = MagicMock()
-    w.current_user.me.return_value = MagicMock(user_name="taran@databricks.com")
+    w.current_user.me.return_value = MagicMock(user_name="user@example.com")
     w.workspace.mkdirs = MagicMock(return_value=None)
     w.workspace.import_ = MagicMock(return_value=None)
     w.jobs.list.return_value = []
@@ -104,7 +104,7 @@ class TestDeployRetentionJob:
 def _ops_workspace_client() -> MagicMock:
     """A WorkspaceClient mock suitable for the ops-job deployers (w passed in)."""
     w = MagicMock()
-    w.current_user.me.return_value = MagicMock(user_name="taran@databricks.com")
+    w.current_user.me.return_value = MagicMock(user_name="user@example.com")
     w.workspace.mkdirs = MagicMock(return_value=None)
     w.workspace.import_ = MagicMock(return_value=None)
     w.jobs.list.return_value = []

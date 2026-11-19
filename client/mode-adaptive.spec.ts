@@ -1583,8 +1583,8 @@ test.describe("[Windsor] Pipeline resource health", () => {
               tier: "api",
               status: granted ? "pass" : "fail",
               detail: granted
-                ? "app SP current-app-sp granted on taran-interop"
-                : "app SP current-app-sp has no grants on catalog taran-interop",
+                ? "app SP current-app-sp granted on example-catalog"
+                : "app SP current-app-sp has no grants on catalog example-catalog",
             },
           ],
           cluster_state: null,
@@ -1595,15 +1595,15 @@ test.describe("[Windsor] Pipeline resource health", () => {
     });
 
     await page.goto("/pipelines/setup-pharma/health");
-    await expect(page.getByText(/has no grants on catalog taran-interop/)).toBeVisible();
+    await expect(page.getByText(/has no grants on catalog example-catalog/)).toBeVisible();
 
     const requestsBeforeRefresh = healthRequests;
     granted = true;
     await page.getByRole("button", { name: "Refresh" }).click();
 
     await expect.poll(() => healthRequests).toBeGreaterThan(requestsBeforeRefresh);
-    await expect(page.getByText(/current-app-sp granted on taran-interop/)).toBeVisible();
-    await expect(page.getByText(/has no grants on catalog taran-interop/)).toHaveCount(0);
+    await expect(page.getByText(/current-app-sp granted on example-catalog/)).toBeVisible();
+    await expect(page.getByText(/has no grants on catalog example-catalog/)).toHaveCount(0);
     await page.screenshot({
       path: testInfo.outputPath("grants-refresh-rechecked.png"),
       fullPage: true,

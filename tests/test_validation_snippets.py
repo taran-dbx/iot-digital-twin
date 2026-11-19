@@ -40,7 +40,7 @@ def _rtm_write_test_code() -> str:
         checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
         metrics_table_fqn="iot_x.metrics.streaming_metrics",
         metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics/",
-        pg_host="ep-x.database.us-east-1.cloud.databricks.com",
+        pg_host="example-pg.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
         pg_token="lb-oauth-token",
         zerobus_endpoint="workspace.zerobus.us-east-1.cloud.databricks.com",
@@ -82,7 +82,7 @@ def test_rtm_write_test_lands_data_not_noop():
     # .postgres API. So the snippet has NO cluster-side credential resolution; the
     # pg_host/pg_user literals appear and psycopg2 connects with them.
     assert "generate_database_credential" not in code
-    assert "ep-x.database.us-east-1.cloud.databricks.com" in code  # injected pg_host
+    assert "example-pg.database.us-east-1.cloud.databricks.com" in code  # injected pg_host
     assert "app-user" in code  # injected pg_user
     assert "psycopg2.connect" in code
 
@@ -164,7 +164,7 @@ def test_rtm_write_test_freshness_filter_drops_stale_rows():
         checkpoint_path="/Volumes/x/checkpoints/v/validation/realtime",
         metrics_table_fqn="iot_x.metrics.streaming_metrics",
         metrics_table_location="s3://bkt/iot_x/metrics/streaming_metrics/",
-        pg_host="ep-x.database.us-east-1.cloud.databricks.com",
+        pg_host="example-pg.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
         pg_token="lb-oauth-token",
         region="us-east-1",

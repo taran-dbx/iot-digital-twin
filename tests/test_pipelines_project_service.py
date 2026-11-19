@@ -287,7 +287,7 @@ async def test_integration_branch_primary_write_replica_read() -> None:
     except Exception as exc:  # pragma: no cover - deps missing
         pytest.skip(f"integration deps unavailable: {exc}")
 
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "fe-vm-shared-interop")
+    profile = os.getenv("DATABRICKS_CONFIG_PROFILE", "example-us-east")
     os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", profile)
     try:
         ws = WorkspaceClient(profile=profile)

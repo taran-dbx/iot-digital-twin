@@ -3,7 +3,7 @@
 Logical FQNs (e.g. from :func:`industry_catalog_service.industry_table`) stay
 unquoted for SDK/API use.  Generated Spark/DBSQL strings must go through
 :func:`sql_ident` / :func:`sql_fqn` so hyphenated catalog names like
-``taran-interop`` parse correctly.
+``example-catalog`` parse correctly.
 """
 
 from __future__ import annotations

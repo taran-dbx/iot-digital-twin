@@ -2,9 +2,9 @@
 
 Asserts:
   1. zerobus cold table resolves to
-     ``classic_stable_realtime_demos_catalog.rtm_lakets_zb.{industry}_zerobus``
+     ``example_eu_catalog.rtm_lakets_zb.{industry}_zerobus``
   2. metrics table resolves to
-     ``classic_stable_realtime_demos_catalog.rtm_lakets_zb.{industry}_metrics``
+     ``example_eu_catalog.rtm_lakets_zb.{industry}_metrics``
      and the streaming-latency SQL filters by ``mode``.
   3. pipeline_freshness._dbsql_flowing targets the prefixed one-schema FQN,
      NOT the old ``iot_<industry>.<schema>.<table>`` path.
@@ -17,7 +17,7 @@ import importlib
 import pytest
 
 # Canonical new-workspace constants (config values baked into the app env).
-UC_CATALOG = "classic_stable_realtime_demos_catalog"
+UC_CATALOG = "example_eu_catalog"
 UC_SCHEMA = "rtm_lakets_zb"
 
 
