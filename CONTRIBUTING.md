@@ -9,7 +9,7 @@ make install        # Python dev deps, client deps and git hooks
 
 ## Workflow
 
-1. Branch from `feat/industry-first-ui` (the default branch). Use `feat/`, `fix/`,
+1. Branch from `main` (the default branch). Use `feat/`, `fix/`,
    `chore/`, `refactor/` or `docs/` prefixes.
 2. Keep changes focused; one concern per pull request.
 3. Run `make check` before pushing. It runs the same gates as CI.
