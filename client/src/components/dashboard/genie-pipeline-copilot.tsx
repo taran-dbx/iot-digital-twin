@@ -18,6 +18,8 @@ const SPACE_STATUS_TEXT: Record<SpaceState, string> = {
   ready: "Ready",
   not_provisioned: "Not provisioned",
   unavailable: "Unavailable",
+  unsupported: "Not available",
+  unknown_pipeline: "Not found",
   error: "Unavailable",
 };
 
@@ -116,6 +118,13 @@ export function GeniePipelineCopilot({
     }
   }, [alert, open]);
 
+  // Keep the question of a failed turn (e.g. an expired conversation) in the
+  // composer so it can be resent without retyping.
+  const { failedQuestion } = genie;
+  useEffect(() => {
+    if (failedQuestion) setQuestion((current) => current || failedQuestion);
+  }, [failedQuestion]);
+
   const followUps = useMemo(() => {
     const last = [...genie.transcript].reverse().find((e) => e.role === "assistant");
     return last ? suggestedQuestions(last.attachments) : [];
@@ -143,6 +152,18 @@ export function GeniePipelineCopilot({
         <p className="genie-drawer__hint" aria-busy="true">
           Loading Genie space…
         </p>
+      )}
+      {spaceState === "unknown_pipeline" && (
+        <div className="genie-drawer__disabled" data-testid="genie-disabled" role="status">
+          <strong>This pipeline could not be resolved</strong>
+          <p>Genie has no record of this pipeline. Reload the dashboard, or ask an admin to check the pipeline setup.</p>
+        </div>
+      )}
+      {spaceState === "unsupported" && (
+        <div className="genie-drawer__disabled" data-testid="genie-disabled" role="status">
+          <strong>Genie is not available for this industry</strong>
+          {genie.status?.reason && <p>{genie.status.reason}</p>}
+        </div>
       )}
       {(spaceState === "not_provisioned" || spaceState === "unavailable") && (
         <div className="genie-drawer__disabled" data-testid="genie-disabled" role="status">
@@ -177,9 +198,22 @@ export function GeniePipelineCopilot({
         </p>
       )}
       {genie.error && (
-        <p className="genie-drawer__error" data-testid="genie-error" role="alert">
-          {genie.error}
-        </p>
+        <div className="genie-drawer__error-row">
+          <p className="genie-drawer__error" data-testid="genie-error" role="alert">
+            {genie.error}
+          </p>
+          {genie.failedQuestion && (
+            <button
+              type="button"
+              className="btn sm"
+              data-testid="genie-retry"
+              disabled={locked}
+              onClick={() => void genie.retry()}
+            >
+              Retry
+            </button>
+          )}
+        </div>
       )}
     </>
   );

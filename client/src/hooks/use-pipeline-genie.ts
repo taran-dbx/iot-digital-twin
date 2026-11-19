@@ -3,7 +3,7 @@
  * (`/api/genie/pipelines/{setup_id}/{mode}/…`). All updates are immutable;
  * mount with a `key` of setupId+mode to reset on pipeline change.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, isApiStatus } from "@/lib/api";
 import { answerText, normalizeAttachments, type GenieAttachmentView } from "@/lib/genie-messages";
@@ -11,11 +11,19 @@ import { GENIE_EXPIRED_MESSAGE, GENIE_TIMEOUT_MESSAGE, startGeniePoll } from "@/
 import type { PipelineMode } from "@/lib/industries-api";
 import type { GenieMessageStatus, GeniePipelineStatus } from "@/lib/types";
 
-export const NOT_PROVISIONED_REASON =
-  "No Genie space exists for this pipeline yet. Deploy the pipeline, or ask an admin to create one.";
-
-/** loading → ready | not_provisioned (no space) | unavailable (space exists, unusable) | error. */
-export type SpaceState = "loading" | "ready" | "not_provisioned" | "unavailable" | "error";
+/**
+ * loading → ready | not_provisioned (no space yet) | unavailable (space exists,
+ * unusable) | unsupported (industry has no per-pipeline Genie) |
+ * unknown_pipeline (backend 404: the id does not resolve) | error.
+ */
+export type SpaceState =
+  | "loading"
+  | "ready"
+  | "not_provisioned"
+  | "unavailable"
+  | "unsupported"
+  | "unknown_pipeline"
+  | "error";
 
 export interface PipelineTranscriptEntry {
   id: string;
@@ -36,9 +44,15 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-export function spaceStateOf(status: GeniePipelineStatus | null, statusError: string | null): SpaceState {
+export function spaceStateOf(
+  status: GeniePipelineStatus | null,
+  statusError: string | null,
+  unknownPipeline = false,
+): SpaceState {
+  if (unknownPipeline) return "unknown_pipeline";
   if (statusError) return "error";
   if (!status) return "loading";
+  if (status.supported === false) return "unsupported";
   if (status.available) return "ready";
   return status.space_id ? "unavailable" : "not_provisioned";
 }
@@ -46,11 +60,13 @@ export function spaceStateOf(status: GeniePipelineStatus | null, statusError: st
 function usePipelineStatus(setupId: string, mode: PipelineMode) {
   const [status, setStatus] = useState<GeniePipelineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [unknownPipeline, setUnknownPipeline] = useState(false);
   const [starters, setStarters] = useState<Starters>({ questions: [], error: null });
   const [reloadTick, setReloadTick] = useState(0);
   const reload = useCallback(() => {
     setStatus(null);
     setStatusError(null);
+    setUnknownPipeline(false);
     setReloadTick((n) => n + 1);
   }, []);
 
@@ -73,12 +89,15 @@ function usePipelineStatus(setupId: string, mode: PipelineMode) {
         if (cancelled) return;
         setStatus(body);
         setStatusError(null);
-        if (body.available) void loadStarters();
+        setUnknownPipeline(false);
+        if (body.available && body.supported !== false) void loadStarters();
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        // The backend answers "no space yet" with 200 + available:false; a 404
+        // means the setup/deployment id itself does not resolve.
         if (isApiStatus(err, 404)) {
-          setStatus({ available: false, space_id: null, reason: NOT_PROVISIONED_REASON });
+          setUnknownPipeline(true);
         } else {
           setStatusError(errorText(err, "Genie status unavailable"));
         }
@@ -88,11 +107,11 @@ function usePipelineStatus(setupId: string, mode: PipelineMode) {
     };
   }, [setupId, mode, reloadTick]);
 
-  return { status, statusError, starters, reload };
+  return { status, statusError, unknownPipeline, starters, reload };
 }
 
 export function usePipelineGenie(setupId: string, mode: PipelineMode) {
-  const { status, statusError, starters, reload } = usePipelineStatus(setupId, mode);
+  const { status, statusError, unknownPipeline, starters, reload } = usePipelineStatus(setupId, mode);
   const [provisioning, setProvisioning] = useState(false);
   const [provisionError, setProvisionError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -101,15 +120,25 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
   const [transcript, setTranscript] = useState<PipelineTranscriptEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Question of the last failed turn; drives the Retry action. */
+  const [failedQuestion, setFailedQuestion] = useState<string | null>(null);
+  const lastQuestion = useRef<string | null>(null);
 
-  const spaceState = spaceStateOf(status, statusError);
+  const spaceState = spaceStateOf(status, statusError, unknownPipeline);
   const available = spaceState === "ready";
   const pending = pendingMessageId != null;
 
   const expire = useCallback(() => {
     setConversationId(null);
     setPendingMessageId(null);
+    setFailedQuestion(lastQuestion.current);
     setError(GENIE_EXPIRED_MESSAGE);
+  }, []);
+
+  const fail = useCallback((message: string) => {
+    setPendingMessageId(null);
+    setFailedQuestion(lastQuestion.current);
+    setError(message);
   }, []);
 
   const provision = useCallback(async (): Promise<boolean> => {
@@ -129,12 +158,17 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
   }, [provisioning, setupId, mode, reload]);
 
   const send = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, options: { retry?: boolean } = {}): Promise<boolean> => {
       const trimmed = text.trim();
       if (!trimmed || !available || busy || pending) return false;
       setBusy(true);
       setError(null);
-      setTranscript((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed, attachments: [] }]);
+      setFailedQuestion(null);
+      lastQuestion.current = trimmed;
+      // A retry resends the same question without duplicating its user turn.
+      if (!options.retry) {
+        setTranscript((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed, attachments: [] }]);
+      }
       try {
         const body = { question: trimmed };
         const ids = conversationId
@@ -146,13 +180,13 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
         return true;
       } catch (err: unknown) {
         if (conversationId && isApiStatus(err, 404)) expire();
-        else setError(errorText(err, "Genie request failed"));
+        else fail(errorText(err, "Genie request failed"));
         return false;
       } finally {
         setBusy(false);
       }
     },
-    [available, busy, pending, conversationId, setupId, mode, expire],
+    [available, busy, pending, conversationId, setupId, mode, expire, fail],
   );
 
   useEffect(() => {
@@ -184,12 +218,10 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
             expire();
             return;
           case "timeout":
-            setPendingMessageId(null);
-            setError(GENIE_TIMEOUT_MESSAGE);
+            fail(GENIE_TIMEOUT_MESSAGE);
             return;
           case "error":
-            setPendingMessageId(null);
-            setError(outcome.message);
+            fail(outcome.message);
             return;
           default: {
             const exhaustive: never = outcome;
@@ -198,7 +230,12 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
         }
       },
     );
-  }, [setupId, mode, conversationId, pendingMessageId, expire]);
+  }, [setupId, mode, conversationId, pendingMessageId, expire, fail]);
+
+  const retry = useCallback(
+    () => (failedQuestion ? send(failedQuestion, { retry: true }) : Promise.resolve(false)),
+    [failedQuestion, send],
+  );
 
   return {
     status,
@@ -215,5 +252,7 @@ export function usePipelineGenie(setupId: string, mode: PipelineMode) {
     provision,
     provisioning,
     provisionError,
+    failedQuestion,
+    retry,
   };
 }

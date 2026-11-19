@@ -438,6 +438,10 @@ export interface GeniePipelineStatus {
   available: boolean;
   space_id: string | null;
   reason?: string;
+  /** Industry of the resolved pipeline (backend echoes it). */
+  industry?: string;
+  /** `false` when per-pipeline Genie is not offered for the pipeline's industry. */
+  supported?: boolean;
 }
 
 /** Response of the admin backfill; only `space_id` is relied on, other fields are tolerated. */
