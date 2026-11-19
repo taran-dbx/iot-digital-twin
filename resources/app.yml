@@ -42,8 +42,6 @@ resources:
             value: ${var.industries}
           - name: ADMIN_GROUP
             value: ${var.admin_group}
-          - name: ADMIN_EMAILS
-            value: ${var.admin_emails}
           - name: GENIE_SPACE_ID
             value_from: genie-space
       resources:

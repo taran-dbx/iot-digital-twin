@@ -36,6 +36,19 @@ databricks bundle destroy -t dev --profile <profile>        # dev only
 Validation needs workspace auth, so it is **not** run in CI; run it locally
 (`make bundle-validate`) before changing bundle files.
 
+Things worth knowing about the workflow:
+
+* `bundle deploy` uploads the files and applies the app's resources and config, but
+  it does **not** start the app or deploy the source. Run `bundle run iot_twin` for
+  that; it normally takes about 60 s to reach `RUNNING`.
+* Deploys are idempotent. A repeated `bundle deploy` prints `Resources: 1 changed`,
+  yet the deployment id and app state are unchanged.
+* `databricks bundle summary` can show the app URL as `(not deployed)`. Use
+  `databricks apps get <app-name> --profile <profile>` for the real URL.
+* `validate` does not catch an env entry that resolves to an empty string; that
+  only fails at `bundle run` ("Must specify environment variable source").
+  `tests/test_bundle_config.py` guards this offline.
+
 ## Variables
 
 Workspace-specific variables have **no default**; a missing value fails
@@ -43,9 +56,33 @@ validation. Copy `deploy/variable-overrides.json.example` (placeholders only) to
 gitignored `.databricks/bundle/<target>/variable-overrides.json` and fill in real
 values (or use `--var name=value` / `BUNDLE_VAR_<name>`). `make bundle-validate`
 stops with a clear message when the file for `BUNDLE_TARGET` is missing.
-Variables with defaults (`uc_schema`, `lakebase_branch`, `lakebase_database`,
-`industries`, `admin_group`, `admin_emails`, `zerobus_secret_key`)
-are not workspace-specific.
+Variables with defaults are not workspace-specific: `app_name` (dev default
+`iot-twin-dev`, fixed to `iot-digital-twin` in `prod`), `uc_schema`,
+`lakebase_branch`, `lakebase_database`, `industries`, `admin_group` and
+`zerobus_secret_key`. `uc_catalog` has **no** default.
+
+### Required variables (no default)
+
+Both `dev` and `prod` fail validation until every variable below has a value, so
+supply them all up front instead of discovering them one error at a time. The list is
+checked against `databricks.yml` by `tests/test_bundle_config.py`.
+
+<!-- required-variables:start -->
+| Variable | Feeds | Example (placeholder) |
+| --- | --- | --- |
+| `uc_catalog` | `UC_CATALOG` | `example-catalog` |
+| `warehouse_id` | `sql-warehouse` resource (CAN_USE) | `0123456789abcdef` |
+| `genie_space_id` | `genie-space` resource (CAN_VIEW) | 32-char hex space id |
+| `lakebase_project` | `lakebase` resource, `LAKEBASE_PROJECT`, `LAKEBASE_ENDPOINT` | `iot-app-backend-example` |
+| `pghost` | `PGHOST` | `<endpoint>.database.<region>.cloud.databricks.com` |
+| `pipelines_lakebase_project` | `PIPELINES_LAKEBASE_PROJECT` | `iot-pipelines-example` |
+| `msk_bootstrap_servers` | `MSK_BOOTSTRAP_SERVERS` | `b-1....:9198,b-2....:9198` |
+| `zerobus_server_endpoint` | `ZEROBUS_SERVER_ENDPOINT` | `<id>.zerobus.<region>.cloud.databricks.com` |
+| `zerobus_client_id` | `ZEROBUS_CLIENT_ID` | service principal client id |
+| `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | `iot-rtm-sc` |
+<!-- required-variables:end -->
+
+### All variables
 
 | Variable | Env var / resource it feeds | Notes |
 | --- | --- | --- |
@@ -60,7 +97,7 @@ are not workspace-specific.
 | `zerobus_server_endpoint`, `zerobus_client_id` | `ZEROBUS_SERVER_ENDPOINT`, `ZEROBUS_CLIENT_ID` | |
 | `uc_service_credential` | `UC_SERVICE_CREDENTIAL` | |
 | `zerobus_secret_key` | `ZEROBUS_SECRET_KEY` | Default `zerobus-client-secret` (the runtime default). `app.yaml` emits it empty, but the Apps API rejects empty env values in a bundle `config` |
-| `industries`, `admin_group`, `admin_emails` | `INDUSTRIES`, `ADMIN_GROUP`, `ADMIN_EMAILS` | |
+| `industries`, `admin_group` | `INDUSTRIES`, `ADMIN_GROUP` | Admin access is group based. The optional `ADMIN_EMAILS` (CSV) is **not** in the bundle; see below |
 
 **Per-pipeline Genie spaces** need no extra bundle variable or app resource:
 after each deploy the app creates one Genie space per `(pipeline, mode)` for every
@@ -73,13 +110,17 @@ deploy. The optional `GENIE_SPACE_PARENT_PATH` (workspace folder for new spaces)
 not in the bundle for the same empty-value reason as below; add an `env` entry with a
 real value to use it. See [genie.md](genie.md).
 
-**Not in the bundle:** `ZEROBUS_TABLE_NAME`, `ZEROBUS_SECRET_SCOPE`, `UC_STORAGE_BASE`
+**Not in the bundle:** `ADMIN_EMAILS` (optional extra admin emails, still honoured by
+`services/app_permissions.py`; an unset-by-default variable would render as an empty env value
+and break `bundle run`), `ZEROBUS_TABLE_NAME`, `ZEROBUS_SECRET_SCOPE`, `UC_STORAGE_BASE`
 and `UC_EXTERNAL_LOCATION` are empty in `app.yaml` (unset-equivalent at runtime),
 and the Apps API rejects empty env values for bundle `config` (deploy fails with
 "Must specify environment variable source"). They are therefore left unset, which
 the runtime treats identically. To use one, add an `env` entry with a real value
-in `resources/app.yml` and a matching variable (and update the drift test's
-`empty_only` set in `tests/test_render_app_yaml.py`).
+in `resources/app.yml` and a matching variable with a non-empty value (and, for the
+empty-in-`app.yaml` ones, update the drift test's `empty_only` set in
+`tests/test_render_app_yaml.py`). `tests/test_bundle_config.py` fails if any env entry
+resolves to an empty string.
 
 `LAKETS_SQL_PATH` is no longer set: `lakets.sql` is resolved relative to the
 package (`iot_twin.core.paths`). The env var still overrides it.
@@ -124,14 +165,47 @@ deletes it; do not use it there.
 
 ## Fresh app prerequisites
 
-A new app gets a new service principal. Until it is granted access, it starts
-and serves `/api/health` but reports `db_available: false` and DBSQL calls fail:
+A new app gets a new service principal (SP) with **no grants**. Until it is granted
+access, the app starts and serves `/api/health`, but health shows
+`db_available: false` (`permission denied for schema public`), DBSQL calls fail and
+Genie provisioning is skipped with warnings. Replace the placeholders below; the SP
+is identified by `service_principal_client_id` from
+`databricks apps get <app-name> --profile <profile> -o json`.
 
-* Lakebase: the Postgres resource creates the SP's role; grant it schema/table
-  privileges (e.g. `USAGE`/`CREATE` on `public` and access to existing tables).
-* Unity Catalog: `USE CATALOG`, `USE SCHEMA`, `CREATE TABLE`/`SELECT` on
-  `uc_catalog.uc_schema`, plus the external location/service credential grants.
-* Workspace: membership in `admin_group` is for users, not the SP.
+**Lakebase.** The app connects to the `databricks_postgres` database as the Postgres
+role named after the SP client id (`DATABRICKS_CLIENT_ID`, unless `PGUSER` is set),
+using a short-lived OAuth credential for `LAKEBASE_ENDPOINT`
+(`core/lakebase.py`). The `postgres` app resource creates the role; the role still
+needs the schema privileges. Connect to the project's endpoint as an owner/admin
+(for example with `psql`) and run:
+
+```sql
+GRANT USAGE, CREATE ON SCHEMA public TO "<sp-client-id>";
+-- only if tables were pre-created by someone else:
+GRANT ALL ON ALL TABLES IN SCHEMA public TO "<sp-client-id>";
+```
+
+Do not pre-create app tables; the app creates them on first start (see
+*Troubleshooting*, `must be owner of table`).
+
+**Unity Catalog** (used by DBSQL, industry provisioning, the `intelligence_*` tables
+and per-pipeline Genie spaces):
+
+```sql
+GRANT USE CATALOG ON CATALOG `<uc_catalog>` TO `<sp-client-id>`;
+GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA `<uc_catalog>`.`<uc_schema>` TO `<sp-client-id>`;
+```
+
+`SELECT` is what Genie needs on the industry and `intelligence_*` tables;
+`CREATE TABLE`/`MODIFY` are needed because the app creates and syncs those tables.
+Add the external location and service credential grants listed under
+*Troubleshooting* if you provision catalogs or storage from the app.
+
+**Genie.** Per-pipeline spaces also need the permission to create Genie spaces and
+`CAN_USE` on the warehouse (already granted by the `sql-warehouse` resource). See
+[genie.md](genie.md).
+
+Workspace group membership in `admin_group` is for users, not the SP.
 
 ## Troubleshooting
 

@@ -52,9 +52,6 @@ variables:
   admin_group:
     description: Workspace group whose members are app admins.
     default: iot-admins
-  admin_emails:
-    description: Optional comma-separated extra admin emails (empty = none).
-    default: ""
 
 # Ships the built SPA (static/dist is tracked), the package, app.yaml, the
 # simulator wheel and requirements. Replaces .databricksignore.
