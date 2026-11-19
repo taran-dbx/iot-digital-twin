@@ -108,12 +108,12 @@ placeholders only. Main settings:
 
 ### Usage tracking
 
-The app reports anonymous usage to the dbdemos analytics service through the
+The app reports usage to the dbdemos analytics service through the
 [`dbdemos-tracker`](https://github.com/databricks-field-eng/dbdemos-tracker) package
 (`src/iot_twin/services/usage_tracking.py`). Each event carries the workspace id, the app
-name and a fixed event path. A SHA-256 hash of the user's email is added only for
-`@databricks.com` users. Tracked events: app start, SPA page loads (landing, industries,
-industry setup, mode dashboards, setup/validate, pipelines, settings), live dashboard
+name and a fixed event path. For `@databricks.com` users only, a SHA-256 hash of their
+email is also sent (never the address itself; other users send no user identifier).
+Tracked events: app start, SPA page loads (landing, industries, industry setup, mode dashboards, setup/validate, pipelines, settings), live dashboard
 streams (`/api/events`), industry setup, validation start, pipeline create and pipeline
 deploy. Ids are replaced with `{id}`; query strings and request bodies are never sent.
 
