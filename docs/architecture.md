@@ -145,7 +145,7 @@ check the wheel contents and import it in a clean interpreter.
 
 ## Alerts
 
-Alert rules come from the domain catalog (`services/industry`, `domain/`). The deterministic
+Alert rules come from the domain catalog (`domain/catalog.py`, `list_alert_rules`). The deterministic
 state machine in `services/alerts/alert_engine.py` evaluates readings as they arrive:
 `POST /api/sss/ingest` calls `evaluate_and_emit`, and `POST /api/sss/alerts` accepts threshold
 alerts raised by streaming jobs. State is kept in memory and, when the app-backend Lakebase is
