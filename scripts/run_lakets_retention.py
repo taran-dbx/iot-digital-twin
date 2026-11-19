@@ -19,8 +19,10 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+# Repo root (for ``scripts.*``) and src/ (for ``iot_twin``) must be importable.
+for _path in (_ROOT / "src", _ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from iot_twin.routes.lakets import _open_lakebase_conn
 from iot_twin.services.lakets import lakets_service

@@ -1,7 +1,7 @@
 command:
   - "/bin/sh"
   - "-c"
-  - "uvicorn app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
+  - "uvicorn --app-dir src iot_twin.app:app --host 0.0.0.0 --port ${DATABRICKS_APP_PORT:-8000}"
 
 env:
   - name: UC_CATALOG
@@ -65,7 +65,7 @@ env:
     value: "iot-admins"
 
   - name: LAKETS_SQL_PATH
-    value: "/app/python/source_code/databricks/vendor/lakets.sql"
+    value: "/app/python/source_code/src/iot_twin/resources/lakets.sql"
 
   - name: GENIE_SPACE_ID
     valueFrom: genie-space

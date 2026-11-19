@@ -34,9 +34,13 @@ dev = [
     "pre-commit==4.7.0",
 ]
 
-# The app is deployed as a source tree, not installed as a package.
-[tool.setuptools]
-py-modules = []
+# The app is deployed as a source tree (``uvicorn --app-dir src iot_twin.app:app``);
+# the package config below also makes ``pip install -e .`` work for development.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+iot_twin = ["resources/*.sql"]
 
 # ── Ruff ───────────────────────────────────────────────────────────────────
 [tool.ruff]
