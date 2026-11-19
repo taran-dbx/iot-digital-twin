@@ -13,7 +13,7 @@ help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 install: frontend-install ## Install Python dev deps, client deps and git hooks
-	$(PYTHON) -m pip install -r requirements-dev.txt
+	$(PYTHON) -m pip install -r requirements.txt -e ".[dev]"
 	$(PYTHON) -m pre_commit install
 
 frontend-install: ## Install client dependencies from the lockfile

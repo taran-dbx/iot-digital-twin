@@ -64,7 +64,7 @@ Requirements: Python 3.11+, Node (see `client/.nvmrc`), and the Databricks CLI f
 ```bash
 # 1. Python environment
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -e ".[dev]"
 
 # 2. Frontend dependencies
 cd client && npm ci && cd ..

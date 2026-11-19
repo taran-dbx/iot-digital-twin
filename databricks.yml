@@ -72,7 +72,6 @@ sync:
     - .github/
     - Makefile
     - README.md
-    - requirements-dev.txt
     - .pre-commit-config.yaml
     - .gitleaks.toml
     - .editorconfig

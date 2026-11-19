@@ -5,7 +5,7 @@ exclude: ^static/dist/
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.4 # keep in lockstep with ruff in requirements-dev.txt
+    rev: v0.17.4 # keep in lockstep with ruff in pyproject.toml [dev]
     hooks:
       - id: ruff-check
         args: [--fix]
