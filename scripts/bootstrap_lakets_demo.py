@@ -40,7 +40,7 @@ from iot_twin.services.provisioning_service import (
 PROJECT_ID = os.getenv("LAKETS_PROJECT_ID", "iot-lakets-demo")
 BRANCH_ID = os.getenv("LAKETS_BRANCH_ID", "production")
 DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
-DEFAULT_LAKETS_SQL = str(_ROOT / "src" / "iot_twin" / "resources" / "lakets.sql")
+DEFAULT_LAKETS_SQL = str(_ROOT / "src" / "iot_twin" / "assets" / "lakets.sql")
 
 
 def _print_header(title: str) -> None:

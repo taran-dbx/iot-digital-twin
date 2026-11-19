@@ -42,7 +42,7 @@ DATABASE = os.getenv("PGDATABASE", "databricks_postgres")
 TABLE = os.getenv("PG_TABLE", "sensor_readings")
 LAKETS_SQL_PATH = os.getenv(
     "LAKETS_SQL_PATH",
-    str(_ROOT / "src" / "iot_twin" / "resources" / "lakets.sql"),
+    str(_ROOT / "src" / "iot_twin" / "assets" / "lakets.sql"),
 )
 
 

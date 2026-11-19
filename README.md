@@ -44,17 +44,17 @@ src/iot_twin/            Python package (run as iot_twin.app:app)
     alerts/ validation/ industry/ pipelines/ lakets/ deployment/ db/
   domain/                simulator domain catalog (also shipped to job clusters)
   scenario_engine/       scenario engine (also shipped to job clusters)
-  resources/             packaged data files (lakets.sql)
+  assets/                packaged data files (lakets.sql)
 client/                  React + Vite + TypeScript SPA source
 static/dist/             built SPA served by the app (committed; CI checks it is fresh)
 lib/                     simulator wheel installed by requirements.txt
-tests/                   pytest suite
-tests/e2e/playwright/    browser QA against the built SPA
+tests/                   pytest suite (e2e/playwright = browser tests)
+requirements.txt         runtime deps installed by Databricks Apps (dev extra: pyproject.toml)
 scripts/                 ops and end-to-end tooling (profile-driven)
-deploy/workspaces/       workspace profile templates (*.profile.example)
+deploy/                  workspaces/*.profile.example + variable-overrides.json.example
 databricks.yml           Declarative Automation Bundle (DABs) definition
 resources/               bundle resource definitions (the app)
-docs/                    guides, architecture, archived history
+docs/                    guides, architecture, design-ref/ mockups, archived history
 ```
 
 ## Quick start

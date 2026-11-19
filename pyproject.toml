@@ -43,7 +43,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-iot_twin = ["resources/*.sql"]
+iot_twin = ["assets/*.sql"]
 
 # ── Ruff ───────────────────────────────────────────────────────────────────
 [tool.ruff]

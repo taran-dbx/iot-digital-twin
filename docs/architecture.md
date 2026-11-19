@@ -95,3 +95,8 @@ check the wheel contents and import it in a clean interpreter.
 | Industry setup | `services/industry/` |
 | Pipelines | `services/pipelines/` |
 | Database access | `services/db/`, `core/lakebase.py` |
+| Packaged data (`lakets.sql`) | `src/iot_twin/assets/` (resolved via `core/paths.py`) |
+| Bundle resource definitions | `resources/` (top level, DABs only) |
+| Workspace profiles, bundle overrides example | `deploy/` |
+| Browser (Playwright) tests | `tests/e2e/playwright/` |
+| Design reference mockups | `docs/design-ref/` |
