@@ -35,7 +35,6 @@ _EXPECTED_ENV_NAMES = (
     "MSK_BOOTSTRAP_SERVERS",
     "INDUSTRIES",
     "ADMIN_GROUP",
-    "LAKETS_SQL_PATH",
     "GENIE_SPACE_ID",
 )
 
@@ -57,7 +56,6 @@ _MINIMAL_PROFILE = {
     "MSK_BOOTSTRAP_SERVERS": "",
     "INDUSTRIES": "pharmaceutical",
     "ADMIN_GROUP": "iot-admins",
-    "LAKETS_SQL_PATH": "/app/python/source_code/src/iot_twin/resources/lakets.sql",
 }
 
 
@@ -111,6 +109,14 @@ def test_render_includes_runtime_command_and_all_env_names(renderer) -> None:
         assert f"name: {env_name}" in rendered
     assert "valueFrom: genie-space" in rendered
     assert "GENIE_SPACE_ID" in rendered
+    assert "name: DATABRICKS_SQL_WAREHOUSE_ID\n    valueFrom: sql-warehouse" in rendered
+    assert "warehouse-id" not in rendered
+    assert "LAKETS_SQL_PATH" not in rendered
+
+
+def test_render_emits_lakets_path_only_when_overridden(renderer) -> None:
+    rendered = renderer.render_app_yaml({**_MINIMAL_PROFILE, "LAKETS_SQL_PATH": "/x/lakets.sql"})
+    assert 'name: LAKETS_SQL_PATH\n    value: "/x/lakets.sql"' in rendered
 
 
 def test_render_quotes_values(renderer) -> None:

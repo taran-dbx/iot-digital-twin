@@ -46,11 +46,10 @@ REQUIRED_PROFILE_KEYS: tuple[str, ...] = (
     "MSK_BOOTSTRAP_SERVERS",
     "INDUSTRIES",
     "ADMIN_GROUP",
-    "LAKETS_SQL_PATH",
 )
 
 
-OPTIONAL_PROFILE_KEYS: tuple[str, ...] = ("ADMIN_EMAILS",)
+OPTIONAL_PROFILE_KEYS: tuple[str, ...] = ("ADMIN_EMAILS", "LAKETS_SQL_PATH")
 EXAMPLE_SUFFIX = ".profile.example"
 
 
@@ -140,7 +139,9 @@ def render_app_yaml(profile: dict[str, str]) -> str:
         _env_entry("PGPORT", "5432"),
         _env_entry("LAKEBASE_PROJECT", profile["LAKEBASE_PROJECT"]),
         _env_entry("LAKEBASE_ENDPOINT", profile["LAKEBASE_ENDPOINT"]),
-        _env_entry("DATABRICKS_SQL_WAREHOUSE_ID", profile["DATABRICKS_SQL_WAREHOUSE_ID"]),
+        # Injected from the ``sql-warehouse`` app resource (CAN_USE) declared in
+        # resources/app.yml; the profile's warehouse id feeds the bundle variable.
+        _env_from_resource("DATABRICKS_SQL_WAREHOUSE_ID", "sql-warehouse"),
         _env_entry("ZEROBUS_SERVER_ENDPOINT", profile["ZEROBUS_SERVER_ENDPOINT"]),
         _env_entry("ZEROBUS_TABLE_NAME", ""),
         _env_entry("ZEROBUS_CLIENT_ID", profile["ZEROBUS_CLIENT_ID"]),
@@ -158,7 +159,12 @@ def render_app_yaml(profile: dict[str, str]) -> str:
             if profile.get("ADMIN_EMAILS")
             else []
         ),
-        _env_entry("LAKETS_SQL_PATH", profile["LAKETS_SQL_PATH"]),
+        # Optional: by default lakets.sql is resolved relative to the package.
+        *(
+            [_env_entry("LAKETS_SQL_PATH", profile["LAKETS_SQL_PATH"])]
+            if profile.get("LAKETS_SQL_PATH")
+            else []
+        ),
         # Injected by the Apps runtime from the genie-space resource (CAN_VIEW).
         # Never hardcode a Genie space id in profiles or source.
         _env_from_resource("GENIE_SPACE_ID", "genie-space"),
