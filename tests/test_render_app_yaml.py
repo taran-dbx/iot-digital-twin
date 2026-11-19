@@ -35,7 +35,6 @@ _EXPECTED_ENV_NAMES = (
     "MSK_BOOTSTRAP_SERVERS",
     "INDUSTRIES",
     "ADMIN_GROUP",
-    "LAKETS_SQL_PATH",
     "GENIE_SPACE_ID",
 )
 
@@ -57,7 +56,6 @@ _MINIMAL_PROFILE = {
     "MSK_BOOTSTRAP_SERVERS": "",
     "INDUSTRIES": "pharmaceutical",
     "ADMIN_GROUP": "iot-admins",
-    "LAKETS_SQL_PATH": "/app/python/source_code/src/iot_twin/resources/lakets.sql",
 }
 
 
@@ -111,6 +109,14 @@ def test_render_includes_runtime_command_and_all_env_names(renderer) -> None:
         assert f"name: {env_name}" in rendered
     assert "valueFrom: genie-space" in rendered
     assert "GENIE_SPACE_ID" in rendered
+    assert "name: DATABRICKS_SQL_WAREHOUSE_ID\n    valueFrom: sql-warehouse" in rendered
+    assert "warehouse-id" not in rendered
+    assert "LAKETS_SQL_PATH" not in rendered
+
+
+def test_render_emits_lakets_path_only_when_overridden(renderer) -> None:
+    rendered = renderer.render_app_yaml({**_MINIMAL_PROFILE, "LAKETS_SQL_PATH": "/x/lakets.sql"})
+    assert 'name: LAKETS_SQL_PATH\n    value: "/x/lakets.sql"' in rendered
 
 
 def test_render_quotes_values(renderer) -> None:
@@ -287,3 +293,52 @@ def test_real_profile_lookup_ignores_example_templates(renderer, tmp_path: Path)
     with pytest.raises(renderer.ProfileError, match="profile.example"):
         renderer.load_profile("only", tmp_path)
     assert renderer.load_profile("only", tmp_path, use_example=True)["UC_SCHEMA"] == "test_schema"
+
+
+def _bundle_env_names() -> set[str]:
+    names: set[str] = set()
+    for line in (ROOT / "resources" / "app.yml").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- name: ") and stripped[8:].isupper():
+            names.add(stripped[8:])
+    return names
+
+
+def _app_yaml_env_names() -> set[str]:
+    return {
+        line.split("name:", 1)[1].strip()
+        for line in (ROOT / "app.yaml").read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("- name:")
+    }
+
+
+def test_bundle_env_matches_app_yaml() -> None:
+    """resources/app.yml must carry the same env names as app.yaml (no silent drift)."""
+    bundle, app_yaml = _bundle_env_names(), _app_yaml_env_names()
+    # ADMIN_EMAILS is an optional profile key the committed app.yaml omits when unset.
+    # The Apps API rejects empty env values for bundle `config`, so the entries that
+    # app.yaml sets to "" (unset-equivalent at runtime) cannot be expressed in the
+    # bundle; they are listed explicitly so any other drift still fails.
+    empty_only = {
+        "ZEROBUS_TABLE_NAME",
+        "ZEROBUS_SECRET_SCOPE",
+        "UC_STORAGE_BASE",
+        "UC_EXTERNAL_LOCATION",
+    }
+    assert bundle - {"ADMIN_EMAILS"} == app_yaml - {"ADMIN_EMAILS"} - empty_only, (
+        f"drift: only in bundle={bundle - app_yaml}, only in app.yaml={app_yaml - bundle}"
+    )
+
+
+def test_bundle_example_overrides_cover_required_variables() -> None:
+    import json
+    import re
+
+    text = (ROOT / "databricks.yml").read_text(encoding="utf-8")
+    block = text.split("variables:", 1)[1].split("\nsync:", 1)[0]
+    required = {
+        m.group(1)
+        for m in re.finditer(r"^  (\w+):\n    description: .*\n(?!    default)", block, re.M)
+    }
+    example = json.loads((ROOT / "variable-overrides.json.example").read_text(encoding="utf-8"))
+    assert required - set(example) == set(), "example overrides missing required variables"

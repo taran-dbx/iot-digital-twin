@@ -15,6 +15,5 @@
   "PIPELINES_LAKEBASE_PROJECT": "iot-pipelines",
   "MSK_BOOTSTRAP_SERVERS": "boot-public-9dm.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,boot-public-hak.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198,boot-public-mnx.example.abc123.c1.kafka.eu-central-1.amazonaws.com:9198",
   "INDUSTRIES": "pharmaceutical,manufacturing",
-  "ADMIN_GROUP": "iot-admins",
-  "LAKETS_SQL_PATH": "/app/python/source_code/src/iot_twin/resources/lakets.sql"
+  "ADMIN_GROUP": "iot-admins"
 }

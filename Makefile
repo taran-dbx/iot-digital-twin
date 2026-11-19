@@ -1,11 +1,13 @@
 # Developer entry points. Override the interpreter with PYTHON=..., e.g.
 #   make check PYTHON=.venv/bin/python
 PYTHON ?= python3
+DATABRICKS ?= databricks
+BUNDLE_TARGET ?= dev
 NPM ?= npm
 CLIENT_DIR := client
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test frontend-install frontend-lint frontend-build check
+.PHONY: bundle-validate help install lint format typecheck test frontend-install frontend-lint frontend-build check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -39,3 +41,9 @@ frontend-build: ## Rebuild the committed bundle in static/dist
 check: lint typecheck test frontend-build ## All gates, as CI runs them
 	@git diff --quiet -- static/dist && test -z "$$(git status --porcelain -- static/dist)" \
 		|| (echo "static/dist is stale; commit the rebuilt bundle" && exit 1)
+
+bundle-validate: ## Validate the DAB (needs auth + overrides: make bundle-validate PROFILE=<cli-profile>)
+	@test -f .databricks/bundle/$(BUNDLE_TARGET)/variable-overrides.json || { \
+		echo "missing .databricks/bundle/$(BUNDLE_TARGET)/variable-overrides.json"; \
+		echo "copy variable-overrides.json.example there and fill in your workspace values"; exit 1; }
+	$(DATABRICKS) bundle validate --strict -t $(BUNDLE_TARGET) $(if $(PROFILE),--profile $(PROFILE))

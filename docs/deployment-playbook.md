@@ -5,6 +5,14 @@
 > This document captures every issue encountered, the root cause, the fix applied,
 > and recommendations for making future deployments smoother.
 
+> **Superseded in part (bundle flow).** Deployment now uses Declarative Automation
+> Bundles; see [deployment.md](deployment.md). The manual `databricks sync` steps
+> (§2.7, §4.8, §5), `.databricksignore` (§2.8) and the static native-login
+> `PGUSER`/`PGPASSWORD` workaround (§2.1, §2.2, §4.2, §6.2) are historical. With a
+> `postgres` app resource the app's service principal gets its own role and
+> authenticates with SDK OAuth tokens, so no static password is needed. The issue
+> log below is kept for context.
+
 ---
 
 ## Table of Contents
@@ -42,6 +50,8 @@ When deployed to a **new workspace**, the app needs:
 ## 2. Issue Log
 
 ### 2.1 Lakebase: SP Cannot Authenticate via SDK OAuth Tokens
+
+> **Superseded:** use the bundle flow in [deployment.md](deployment.md) instead of the steps below.
 
 **Symptom:** `InvalidPasswordError: password authentication failed for user '00000000-...'`
 
@@ -199,6 +209,8 @@ since the SP owned it) and the broken pipeline DB record.
 
 ### 2.7 Workspace File Sync: Wrong User Path
 
+> **Superseded:** use the bundle flow in [deployment.md](deployment.md) instead of the steps below.
+
 **Symptom:** `Folder Users is protected` when syncing to the wrong path.
 
 **Root cause:** The workspace username was `admin@example.com`,
@@ -215,6 +227,8 @@ databricks sync . "/Workspace/Users/$USER/iot-digital-twin" -p <profile>
 ---
 
 ### 2.8 `.whl` File Excluded by `.databricksignore`
+
+> **Superseded:** use the bundle flow in [deployment.md](deployment.md) instead of the steps below.
 
 **Symptom:** App deployment fails with missing dependency.
 
@@ -372,6 +386,8 @@ Fill in all environment variables with workspace-specific values:
 
 ### 4.8 Sync & Deploy
 
+> **Superseded:** use the bundle flow in [deployment.md](deployment.md) instead of the steps below.
+
 ```bash
 PROFILE="<profile>"
 USER=$(databricks current-user me -p $PROFILE --output json | jq -r '.userName')
@@ -401,6 +417,8 @@ databricks api post /api/2.0/apps/iot-digital-twin/deployments -p $PROFILE \
 ---
 
 ## 5. Step-by-Step Deployment Runbook
+
+> **Superseded:** use the bundle flow in [deployment.md](deployment.md) instead of the steps below.
 
 This is the condensed, copy-paste-ready version.
 
@@ -488,6 +506,8 @@ Alternatively, create a `deploy.py` script that handles all of this.
 ---
 
 ### 6.2 Replace Static PG Credentials with SDK Auth (High Priority)
+
+> **Superseded:** use the bundle flow in [deployment.md](deployment.md) instead of the steps below.
 
 **Problem:** Static `PGUSER`/`PGPASSWORD` doesn't rotate and is stored in `app.yaml`.
 
