@@ -59,13 +59,39 @@ test.describe("[Windsor] Per-pipeline Genie on the manufacturing cell", () => {
     await expect(dashboard.genieInput).toBeDisabled();
   });
 
-  test("treats a 404 from /status as not provisioned [defect]", async ({ page }) => {
-    const { dashboard } = await openCell(page, { statusNotFound: true });
+  test("shows an unresolved pipeline (404) without a create action [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, { statusNotFound: true, isAdmin: true });
 
-    await expect(dashboard.genieStatus).toHaveText("Not provisioned");
-    await expect(dashboard.genieDisabled).toContainText("Genie space not provisioned yet");
-    await expect(dashboard.genieDisabled).toContainText("No Genie space exists for this pipeline yet");
+    await expect(dashboard.genieStatus).toHaveText("Not found");
+    await expect(dashboard.genieDisabled).toContainText("This pipeline could not be resolved");
+    await expect(dashboard.genieDisabled).not.toContainText("not provisioned");
+    await expect(page.getByTestId("genie-create-space")).toHaveCount(0);
     await expect(dashboard.genieInput).toBeDisabled();
+  });
+
+  test("Escape closes the drawer and returns focus to the toggle [a11y]", async ({ page }) => {
+    const { dashboard } = await openCell(page);
+    await expect(dashboard.genieStatus).toHaveText("Ready");
+    await expect(dashboard.genieInput).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(dashboard.genieToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(dashboard.genieDrawer).toBeHidden();
+    await expect(dashboard.genieToggle).toBeFocused();
+  });
+
+  test("a failed send keeps the turn and Retry resends it once [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, { failFirstSend: true });
+
+    await dashboard.genieInput.fill(starterQuestions[0]);
+    await dashboard.genieSend.click();
+    await expect(page.getByTestId("genie-error")).toContainText("temporarily unavailable");
+    await expect(dashboard.genieTranscript.getByText(starterQuestions[0])).toHaveCount(1);
+
+    await page.getByTestId("genie-retry").click();
+    await expect(dashboard.genieTranscript.getByTestId("genie-answer").first()).toContainText("climbed");
+    await expect(dashboard.genieTranscript.getByText(starterQuestions[0])).toHaveCount(1);
+    await expect(page.getByTestId("genie-error")).toHaveCount(0);
   });
 
   test("polls through pending statuses; starter → line, follow-up → bar + table [smoke]", async ({ page }) => {
@@ -206,9 +232,18 @@ test.describe("[Windsor] Per-pipeline Genie is available for every industry", ()
   });
 
   test("pharmaceutical: unknown pipeline (404) is an informative empty state [defect]", async ({ page }) => {
-    const { dashboard } = await openCell(page, { industry: PHARMACEUTICAL, statusNotFound: true });
-    await expect(dashboard.genieStatus).toHaveText("Not provisioned");
-    await expect(dashboard.genieDisabled).toContainText("No Genie space exists for this pipeline yet");
+    const { dashboard } = await openCell(page, { industry: PHARMACEUTICAL, statusNotFound: true, isAdmin: true });
+    await expect(dashboard.genieStatus).toHaveText("Not found");
+    await expect(dashboard.genieDisabled).toContainText("This pipeline could not be resolved");
+    await expect(page.getByTestId("genie-create-space")).toHaveCount(0);
+    await expect(dashboard.genieInput).toBeDisabled();
+  });
+
+  test("pharmaceutical: unsupported industry has no create action [defect]", async ({ page }) => {
+    const { dashboard } = await openCell(page, { industry: PHARMACEUTICAL, unsupported: true, isAdmin: true });
+    await expect(dashboard.genieStatus).toHaveText("Not available");
+    await expect(dashboard.genieDisabled).toContainText("not available for this industry");
+    await expect(page.getByTestId("genie-create-space")).toHaveCount(0);
     await expect(dashboard.genieInput).toBeDisabled();
   });
 

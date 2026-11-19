@@ -173,3 +173,15 @@ def test_genie_polling_is_shared_and_status_aware_regression() -> None:
         assert "startGeniePoll" in _read("components", "dashboard", name)
     assert "startGeniePoll" in _read("hooks", "use-pipeline-genie.ts")
     assert "class ApiError" in _read("lib", "api.ts")
+
+
+def test_pipeline_genie_distinguishes_unresolved_and_unsupported_regression() -> None:
+    """[regression] A 404 is 'could not be resolved' (no Create); supported:false has no Create."""
+    hook = _read("hooks", "use-pipeline-genie.ts")
+    assert "unknown_pipeline" in hook
+    assert "unsupported" in hook
+    assert "supported?: boolean" in _read("lib", "types.ts")
+    pipeline = _read("components", "dashboard", "genie-pipeline-copilot.tsx")
+    assert "This pipeline could not be resolved" in pipeline
+    assert "Genie is not available for this industry" in pipeline
+    assert 'event.key === "Escape"' in _read("components", "dashboard", "genie-drawer.tsx")

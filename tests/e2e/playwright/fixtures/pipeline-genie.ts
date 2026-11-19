@@ -160,6 +160,10 @@ export interface PipelineGenieMockOptions {
   industry?: GenieIndustryFixture;
   /** Catalog `is_admin` — admins see the "Create Genie space" action. */
   isAdmin?: boolean;
+  /** /status answers 200 with supported:false (industry has no per-pipeline Genie). */
+  unsupported?: boolean;
+  /** The first POST /conversations fails with a 500 (retry path). */
+  failFirstSend?: boolean;
   /** `/starters` answers an error so the empty state has no chips. */
   startersFail?: boolean;
   /** Admin backfill POST fails with this detail. */
@@ -192,6 +196,7 @@ export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOp
   const provisionPath = `/api/admin/pipelines/${fixture.setupId}/genie/realtime`;
   let provisioned = options.available ?? true;
   const provisionCalls: string[] = [];
+  let sendFailures = options.failFirstSend ? 1 : 0;
   const currentSpaceId = () =>
     options.spaceId !== undefined && !provisioned ? options.spaceId : provisioned ? "space-1" : null;
   let nextMessage = 1;
@@ -226,7 +231,19 @@ export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOp
 
     if (path === "/status") {
       if (options.statusNotFound) {
-        await route.fulfill({ status: 404, json: { detail: "unknown setup" } });
+        await route.fulfill({ status: 404, json: { detail: "unknown pipeline" } });
+        return;
+      }
+      if (options.unsupported) {
+        await route.fulfill({
+          json: {
+            available: false,
+            space_id: null,
+            supported: false,
+            industry: fixture.id,
+            reason: `Per-pipeline Genie is not available for industry '${fixture.id}'.`,
+          },
+        });
         return;
       }
       await route.fulfill({
@@ -247,6 +264,11 @@ export async function mockPipelineGenie(page: Page, options: PipelineGenieMockOp
       return;
     }
     if (request.method() === "POST" && /^\/conversations(\/conv-1\/messages)?$/.test(path)) {
+      if (sendFailures > 0) {
+        sendFailures -= 1;
+        await route.fulfill({ status: 500, json: { detail: "Genie temporarily unavailable" } });
+        return;
+      }
       const messageId = `msg-${nextMessage}`;
       nextMessage += 1;
       await route.fulfill({ json: { conversation_id: "conv-1", message_id: messageId } });
