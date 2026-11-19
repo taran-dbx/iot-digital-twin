@@ -29,7 +29,7 @@ bodies; this page only lists routes.
 
 ## Routes by router module
 
-Generated from the routers registered in the app (125 HTTP routes in the routers, 1
+Generated from the routers registered in the app (132 HTTP routes in the routers, 1
 WebSocket, plus the SPA catch-all in `app.py`). Regenerate by listing `router.routes` for
 each module in `routes/__init__.py`.
 
@@ -82,6 +82,20 @@ Genie copilot conversations.
 | POST | `/api/genie/conversations` |
 | POST | `/api/genie/conversations/{conversation_id}/messages` |
 | GET | `/api/genie/conversations/{conversation_id}/messages/{message_id}` |
+
+### `routes/genie_pipelines.py`
+
+Per-pipeline Genie copilot (one space per pipeline and mode, every industry). See
+[genie.md](genie.md).
+
+| Method | Path |
+|---|---|
+| GET | `/api/genie/pipelines/{setup_id}/{mode}/status` |
+| GET | `/api/genie/pipelines/{setup_id}/{mode}/starters` |
+| POST | `/api/genie/pipelines/{setup_id}/{mode}/conversations` |
+| POST | `/api/genie/pipelines/{setup_id}/{mode}/conversations/{conversation_id}/messages` |
+| GET | `/api/genie/pipelines/{setup_id}/{mode}/conversations/{conversation_id}/messages/{message_id}` |
+| GET | `/api/genie/pipelines/{setup_id}/{mode}/conversations/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/result` |
 
 ### `routes/health.py`
 
@@ -157,7 +171,7 @@ LakeTS sync check, CDF status, dashboard, retention.
 
 ### `routes/pipeline_deploy.py`
 
-Admin per-mode deploy, start, stop, status, CDF reconcile.
+Admin per-mode deploy, start, stop, status, CDF reconcile, Genie space backfill.
 
 | Method | Path |
 |---|---|
@@ -166,6 +180,7 @@ Admin per-mode deploy, start, stop, status, CDF reconcile.
 | POST | `/api/admin/pipelines/{setup_id}/realtime/reconcile-cdf` |
 | POST | `/api/admin/pipelines/{setup_id}/{mode}/stop` |
 | GET | `/api/admin/pipelines/{setup_id}/{mode}/status` |
+| POST | `/api/admin/pipelines/{setup_id}/genie/{mode}` |
 
 ### `routes/pipelines.py`
 
