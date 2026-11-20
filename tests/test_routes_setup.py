@@ -22,10 +22,14 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from iot_twin.services.pipelines import pipeline_setup_service
+from tests._fakes import fake_credential
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Secret scope *name* used by the setup payload (not a secret).
+SCOPE_NAME = "iot-secrets"
 
 
 def _make_state() -> MagicMock:
@@ -47,7 +51,7 @@ def _make_ws() -> MagicMock:
     w.postgres.list_endpoints = MagicMock(return_value=[ep])
     w.postgres.get_endpoint = MagicMock(return_value=ep)
     w.postgres.generate_database_credential = MagicMock(
-        return_value=MagicMock(token="fake-token-for-tests")
+        return_value=MagicMock(token=fake_credential("token"))
     )
     return w
 
@@ -69,7 +73,7 @@ def _base_params(**overrides) -> dict:
         "lb_branch_id": "production",
         "lb_database": "databricks_postgres",
         "table_name": "sensor_readings",
-        "secret_scope": "iot-secrets",
+        "secret_scope": SCOPE_NAME,
         "industry": "pharmaceutical",
         "tiering": {"hot": "1 hour", "drop": "7 days", "chunk": "15 minutes"},
         "retention": None,

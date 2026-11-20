@@ -24,10 +24,15 @@ from iot_twin.services import health_checks as hc
 from iot_twin.services.validation import validation_state_machine as sm
 from iot_twin.services.validation import validation_steps as vs
 from iot_twin.services.validation.validation_service import StepContext, StepResult
+from tests._fakes import fake_credential
 
 UC_CATALOG = "test_catalog"
 UC_SCHEMA = "test_schema"
 PIPELINES_LAKEBASE_PROJECT = "test_pipelines"
+
+# UC service credential *name* (an identifier, not a secret) and a probe status.
+UC_SC_NAME = "iot-rtm-sc"
+HTTP_UNAUTHORIZED = "401"
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +47,7 @@ _SETUP = {
     "industry": "pharmaceutical",
     "bootstrap_servers": "b-1.kafka.us-east-1.amazonaws.com:9198",
     "derived": {"region": "us-east-1", "broker_count": 3},
-    "service_credential": "iot-rtm-sc",
+    "service_credential": UC_SC_NAME,
     "cluster_spec": {"partition_count": 3},
     "warehouse_id": "wh1",
 }
@@ -72,7 +77,7 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
 
         def generate_database_credential(self, *, endpoint):
             assert endpoint == requested_names[-1]
-            return SimpleNamespace(token="fake-pg-token-for-tests")
+            return SimpleNamespace(token=fake_credential("pg"))
 
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-client-id")
     ctx = StepContext(
@@ -88,7 +93,7 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
     connection = vs._resolve_lakebase_write_conn(ctx, "pharmaceutical")
 
     assert requested_names == ["projects/test_pipelines/branches/pharmaceutical/endpoints/primary"]
-    assert connection == ("pg.example.com", "app-client-id", "fake-pg-token-for-tests")
+    assert connection == ("pg.example.com", "app-client-id", fake_credential("pg"))
 
 
 def test_cluster_failure_extracts_json_error_and_preserves_root_cause():
@@ -170,7 +175,7 @@ async def test_realtime_write_test_produces_then_consumes_c7242(monkeypatch):
     monkeypatch.setattr(
         vs,
         "_resolve_lakebase_write_conn",
-        lambda ctx, branch: ("pg-host", "pg-user", "fake-pg-token-for-tests"),
+        lambda ctx, branch: ("pg-host", "pg-user", fake_credential("pg")),
     )
     monkeypatch.setenv("DATABRICKS_HOST", "https://workspace.example.com")
     monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "workspace.zerobus.example.com")
@@ -630,7 +635,9 @@ async def test_zerobus_auth_probe_delegates_to_module(monkeypatch):
     result = await vs.auth_probe(_ctx("zerobus"))
     assert result.status == sm.PASSED
 
-    monkeypatch.setattr(vs.zbv, "auth_probe", lambda *a, **k: (False, {"token_error": "401"}))
+    monkeypatch.setattr(
+        vs.zbv, "auth_probe", lambda *a, **k: (False, {"token_error": HTTP_UNAUTHORIZED})
+    )
     result = await vs.auth_probe(_ctx("zerobus"))
     assert result.status == sm.FAILED
 

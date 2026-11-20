@@ -88,6 +88,7 @@ _pre_mock_sdk()
 
 from iot_twin.core.state import AppState
 from iot_twin.domain.catalog import list_alert_rules
+from tests._fakes import fake_credential
 
 
 @pytest.fixture()
@@ -171,7 +172,7 @@ def mock_ws_client() -> MagicMock:
     ws.current_user.me = MagicMock(return_value=MagicMock(user_name="test@example.com"))
     ws.postgres = MagicMock()
     ws.postgres.generate_database_credential = MagicMock(
-        return_value=MagicMock(token="fake-token-for-tests")
+        return_value=MagicMock(token=fake_credential("token"))
     )
     return ws
 

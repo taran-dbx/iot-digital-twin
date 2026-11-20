@@ -15,6 +15,7 @@ import pytest
 
 from iot_twin.services import provisioning_service
 from iot_twin.services.lakets import lakets_service
+from tests._fakes import fake_credential
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -37,7 +38,7 @@ def _mock_ws_client() -> MagicMock:
     endpoint.status.hosts.host = "pg.example.com"
     w.postgres.get_endpoint = MagicMock(return_value=endpoint)
     w.postgres.generate_database_credential = MagicMock(
-        return_value=MagicMock(token="fake-token-for-tests")
+        return_value=MagicMock(token=fake_credential("token"))
     )
     w.postgres.create_role = MagicMock(return_value=None)
     w.postgres.list_endpoints = MagicMock(return_value=[MagicMock(name=ENDPOINT_NAME)])
@@ -269,7 +270,7 @@ def _make_sp_ws(existing_keys: list[str], sp_app_id: str | None = None) -> Magic
     created_sp.id = "12345"
     created_sp.application_id = "fresh-app-id"
     w.service_principals.create.return_value = created_sp
-    w.api_client.do.return_value = {"secret": "not-a-real-oauth-secret"}
+    w.api_client.do.return_value = {"secret": fake_credential("oauth")}
 
     if sp_app_id is not None:
         listed_sp = MagicMock()
@@ -385,7 +386,7 @@ class TestProvisionLakebaseRoleBackCompat:
                 project_id=PROJECT_ID,
                 branch_id=BRANCH_ID,
                 endpoint_name=ENDPOINT_NAME,
-                password="not-a-real-password",  # noqa: S106 — intentional legacy kwarg
+                password=fake_credential("legacy"),  # intentional legacy kwarg
                 role_name="iot_app_user",
             )
 

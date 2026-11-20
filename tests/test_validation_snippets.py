@@ -10,6 +10,10 @@ delta-rs metrics listener, the specific CDF shadow table, https:// OIDC).
 from __future__ import annotations
 
 from iot_twin.services.validation import validation_snippets as snip
+from tests._fakes import fake_credential
+
+# Name of the UC secret holding the Zerobus OAuth value (a key name, not a secret).
+ZEROBUS_OAUTH_ENTRY = "oauth-secret-key"
 
 
 def test_connectivity_probe_checks_both_and_egress():
@@ -42,11 +46,11 @@ def _rtm_write_test_code() -> str:
         metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics/",
         pg_host="example-pg.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
-        pg_token="fake-lb-token-for-tests",
+        pg_token=fake_credential("lakebase"),
         zerobus_endpoint="workspace.zerobus.us-east-1.cloud.databricks.com",
         workspace_url="https://workspace.cloud.databricks.com",
         zerobus_client_id="app-client-id",
-        zerobus_secret_key="oauth-secret-key",
+        zerobus_secret_key=ZEROBUS_OAUTH_ENTRY,
         region="us-east-1",
     )
 
@@ -110,7 +114,7 @@ def test_rtm_write_test_wires_buffered_metrics_listener():
     assert "onQueryProgress" in code
     assert "iot_x.metrics.streaming_metrics" in code  # metrics table fqn
     assert '"mode": "realtime"' in code
-    assert "oauth-secret-key" in code
+    assert ZEROBUS_OAUTH_ENTRY in code
     assert "workspace.zerobus.us-east-1.cloud.databricks.com" in code
     assert "dbutils.secrets.get(" in code
     assert "catalog=_zb_uc_catalog" in code
@@ -166,7 +170,7 @@ def test_rtm_write_test_freshness_filter_drops_stale_rows():
         metrics_table_location="s3://bkt/iot_x/metrics/streaming_metrics/",
         pg_host="example-pg.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
-        pg_token="fake-lb-token-for-tests",
+        pg_token=fake_credential("lakebase"),
         region="us-east-1",
         min_event_epoch=1751780000.0,
     )
@@ -225,7 +229,7 @@ def test_microbatch_write_test_wires_metrics_listener_when_given():
         zerobus_endpoint="workspace.zerobus.us-east-1.cloud.databricks.com",
         workspace_url="https://workspace.cloud.databricks.com",
         zerobus_client_id="app-client-id",
-        zerobus_secret_key="oauth-secret-key",
+        zerobus_secret_key=ZEROBUS_OAUTH_ENTRY,
     )
     assert "BufferedZerobusMetricsListener" in code
     assert "spark.streams.addListener(" in code

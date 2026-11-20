@@ -28,6 +28,7 @@ import pytest
 
 from iot_twin.core.state import AppState
 from iot_twin.routes import provisioning as prov_route
+from tests._fakes import fake_credential
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +200,7 @@ class TestProvisionRouteForwardsTiering:
                 "table_name": "sensor_readings",
                 "host": "pg.example",
                 "user": "u",
-                "password": "p",
+                "password": fake_credential("lakebase"),
                 "port": 5432,
                 "pipeline_id": "pipe-123",
             }
@@ -258,7 +259,7 @@ class TestProvisionRouteForwardsTiering:
                 "table_name": "sensor_readings",
                 "host": "pg.example",
                 "user": "u",
-                "password": "p",
+                "password": fake_credential("lakebase"),
                 "port": 5432,
                 "pipeline_id": "pipe-missing",
             }
@@ -303,7 +304,7 @@ class TestProvisionRouteForwardsTiering:
                 "table_name": "sensor_readings",
                 "host": "pg.example",
                 "user": "u",
-                "password": "p",
+                "password": fake_credential("lakebase"),
                 "port": 5432,
                 "pipeline_id": "pipe-malformed",
             }
@@ -341,7 +342,7 @@ class TestProvisionRouteForwardsTiering:
                 "table_name": "sensor_readings",
                 "host": "pg.example",
                 "user": "u",
-                "password": "p",
+                "password": fake_credential("lakebase"),
                 "port": 5432,
                 "pipeline_id": "pipe-bad-shape",
             }
@@ -379,7 +380,7 @@ class TestProvisionRouteForwardsTiering:
                 "table_name": "sensor_readings",
                 "host": "pg.example",
                 "user": "u",
-                "password": "p",
+                "password": fake_credential("lakebase"),
                 "port": 5432,
                 "pipeline_id": "pipe-x",
             }

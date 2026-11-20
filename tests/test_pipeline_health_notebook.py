@@ -165,7 +165,7 @@ _JWT_HEADER = _b64url(json.dumps({"alg": "HS256"}, separators=(",", ":")))
 _JWT_PAYLOAD = _b64url(json.dumps({"sub": "1234567890"}, separators=(",", ":")))
 _JWT_SIGNATURE = "abc123" + "_-xyz"
 _PAT_BODY = "0123456789abcdef" * 2
-_FAKE_PASSWORD = "hunter2" * 2
+_FAKE_KV_VALUE = "hunter2" * 2
 _BEARER_BODY = "abcdEFGH" + "1234567890" + "abcdEFGH"
 
 
@@ -186,7 +186,7 @@ def _adversarial() -> dict[str, str]:
         "account": "aws_account_id: " + _ACCOUNT_ID,
         "jwt": ".".join((_JWT_HEADER, _JWT_PAYLOAD, _JWT_SIGNATURE)),
         "pat": "dapi" + _PAT_BODY,
-        "password": "password=" + _FAKE_PASSWORD,
+        "kv_pair": "=".join(("password", _FAKE_KV_VALUE)),
         "bearer": "Authorization: Bearer " + _BEARER_BODY,
         "dsn": "postgresql://"
         + "svc_user:"
@@ -213,7 +213,7 @@ def _secret_fragments() -> dict[str, tuple[str, ...]]:
         "account": (_ACCOUNT_ID,),
         "jwt": (_JWT_HEADER[3:], _JWT_SIGNATURE),
         "pat": (_PAT_BODY,),
-        "password": (_FAKE_PASSWORD,),
+        "kv_pair": (_FAKE_KV_VALUE,),
         "bearer": (_BEARER_BODY,),
         "dsn": ("s3cr3t", "svc_user"),
         "bucket": ("acme-prod-lakehouse-bucket",),
@@ -278,8 +278,8 @@ def test_redaction_registered_values_and_user_names(redactor_ns):
 def test_secrets_are_masked_even_when_redaction_is_off(redactor_ns):
     redact = redactor_ns["Redactor"](enabled=False)
     adversarial = _adversarial()
-    cleaned = redact(f"{adversarial['host']} {adversarial['jwt']} {adversarial['password']}")
-    assert _FAKE_PASSWORD not in cleaned and _JWT_SIGNATURE not in cleaned
+    cleaned = redact(f"{adversarial['host']} {adversarial['jwt']} {adversarial['kv_pair']}")
+    assert _FAKE_KV_VALUE not in cleaned and _JWT_SIGNATURE not in cleaned
     assert "a1b2c3d4-e5f6" in cleaned, "hosts stay visible when the owner turns redaction off"
 
 

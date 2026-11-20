@@ -25,6 +25,7 @@ import pytest
 import iot_twin.app as app_module
 import iot_twin.services.deployment.deployment_service as ds
 import iot_twin.services.industry.industry_service as isvc
+from tests._fakes import fake_credential
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT = ROOT / "client"
@@ -270,14 +271,14 @@ class TestAppPublishesSecret:
         monkeypatch.setattr(ds.uc_secrets, "put_secret", fake_put)
         for key, value in {
             "DATABRICKS_CLIENT_ID": "app-sp-id",
-            "DATABRICKS_CLIENT_SECRET": "rotated",
+            "DATABRICKS_CLIENT_SECRET": fake_credential("rotated"),
             "UC_CATALOG": "cat",
             "UC_SCHEMA": "sch",
         }.items():
             monkeypatch.setenv(key, value)
 
         asyncio.run(app_module.publish_runtime_oauth_secret())
-        assert puts == [("cat", "sch", "app_sp_oauth", "rotated")]
+        assert puts == [("cat", "sch", "app_sp_oauth", fake_credential("rotated"))]
 
         monkeypatch.delenv("DATABRICKS_CLIENT_SECRET")
         with caplog.at_level(logging.INFO, logger="iot_digital_twin"):

@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from iot_twin.core.state import AppState
 from iot_twin.routes.lakets import router as lakets_router
 from iot_twin.services.lakets import lakets_service
+from tests._fakes import fake_credential
 
 DEPLOYMENT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -68,7 +69,12 @@ class TestSyncCheckRoute:
             response = await client.post(
                 "/api/lakets/sync/check",
                 json={
-                    "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
+                    "lakebase": {
+                        "mode": "direct",
+                        "host": "h",
+                        "user": "u",
+                        "password": fake_credential("lakebase"),
+                    },
                 },
             )
         assert response.status_code == 200
@@ -92,7 +98,12 @@ class TestSyncCheckRoute:
             response = await client.post(
                 "/api/lakets/sync/check",
                 json={
-                    "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
+                    "lakebase": {
+                        "mode": "direct",
+                        "host": "h",
+                        "user": "u",
+                        "password": fake_credential("lakebase"),
+                    },
                 },
             )
         body = response.json()
@@ -108,7 +119,12 @@ class TestSyncCheckRoute:
             response = await client.post(
                 "/api/lakets/sync/check",
                 json={
-                    "lakebase": {"mode": "direct", "host": "h", "user": "u", "password": "p"},
+                    "lakebase": {
+                        "mode": "direct",
+                        "host": "h",
+                        "user": "u",
+                        "password": fake_credential("lakebase"),
+                    },
                 },
             )
         body = response.json()
