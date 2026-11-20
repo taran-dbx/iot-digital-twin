@@ -7,6 +7,7 @@
 | [genie.md](genie.md) | Shared copilot space, per-pipeline Genie spaces for every industry, permissions, API, limits |
 | [api.md](api.md) | API routes grouped by router module; live OpenAPI at `/docs` and `/openapi.json` |
 | [../ops/README.md](../ops/README.md) | Pipeline health-check notebook: what it checks, permissions, widgets, scorecard |
+| [../usecases/README.md](../usecases/README.md) | Customer-facing manufacturing KPI notebook: KPI definitions, data sources, permissions, widgets |
 
 Related documents elsewhere in the repo: [../README.md](../README.md),
 [../CONTRIBUTING.md](../CONTRIBUTING.md), [../CHANGELOG.md](../CHANGELOG.md) and

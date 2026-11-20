@@ -101,7 +101,10 @@ def build_notebook(model: dict[str, Any], source: Path, label: str) -> nbformat.
             cell.outputs = _outputs(command)
             cell.execution_count = None
     banner = nbformat.v4.new_markdown_cell(f"**{label}**", id="live-run-label")
-    notebook.cells.insert(0, banner)
+    if notebook.cells and notebook.cells[0].get("id") == banner.id:
+        notebook.cells[0] = banner  # source is itself a stored snapshot: replace its label
+    else:
+        notebook.cells.insert(0, banner)
     nbformat.validate(notebook)
     return notebook
 
