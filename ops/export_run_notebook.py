@@ -6,6 +6,11 @@ notebook as an HTML page that embeds the notebook model (base64 + URL-encoded JS
 script reads that JSON, copies the rendered outputs onto the *source* notebook's cells and
 writes a valid nbformat 4 file whose first cell is labelled ``LIVE RUN, redacted, <date>``.
 
+Databricks ``displayHTML`` outputs carry only ``text/html``; each one gets ``text/markdown`` and
+``text/plain`` versions derived from the HTML (tables as pipe tables, badges as words, charts
+as a one-line summary plus ``image/svg+xml``) so the snapshot is readable in viewers that do not
+render HTML. An IPython object repr (``<IPython.core.display.HTML object>``) is never kept.
+
 Usage::
 
     python ops/export_run_notebook.py export.json OUT.ipynb --date 2026-11-19
@@ -27,9 +32,13 @@ from typing import Any
 
 import nbformat
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from html_fallback import mime_bundle  # noqa: E402  (sibling module, not a package)
+
 SOURCE_NOTEBOOK = Path(__file__).resolve().parent / "notebooks" / "pipeline_health_check.ipynb"
 _MODEL_RE = re.compile(r"__DATABRICKS_NOTEBOOK_MODEL\s*=\s*'([^']+)'")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_OBJECT_REPR = re.compile(r"^<[\w.]+ object(?: at 0x[0-9a-f]+)?>$")
 
 
 class IncompleteRunError(RuntimeError):
@@ -46,6 +55,20 @@ def load_model(export_json: Path) -> dict[str, Any]:
     return json.loads(urllib.parse.unquote(base64.b64decode(match.group(1)).decode("utf-8")))
 
 
+def _as_text(value: Any) -> str:
+    return "".join(value) if isinstance(value, list) else str(value)
+
+
+def with_text_fallbacks(data: dict[str, Any]) -> dict[str, Any]:
+    """Add Markdown/plain-text versions to an HTML bundle; drop useless object reprs."""
+    plain = data.get("text/plain")
+    if plain is not None and _OBJECT_REPR.match(_as_text(plain).strip()):
+        data = {k: v for k, v in data.items() if k != "text/plain"}
+    if "text/html" not in data:
+        return dict(data)
+    return {**data, **mime_bundle(_as_text(data["text/html"]))}
+
+
 def _outputs(command: dict[str, Any]) -> list[nbformat.NotebookNode]:
     """Map one command's results to nbformat outputs (HTML/text bundles and plain text)."""
     results = command.get("results") or {}
@@ -58,7 +81,7 @@ def _outputs(command: dict[str, Any]) -> list[nbformat.NotebookNode]:
     else:
         items = []
     return [
-        nbformat.v4.new_output("display_data", data=item["data"], metadata={})
+        nbformat.v4.new_output("display_data", data=with_text_fallbacks(item["data"]), metadata={})
         for item in items
         if item.get("type") == "mimeBundle" and isinstance(item.get("data"), dict)
     ]

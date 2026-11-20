@@ -118,6 +118,8 @@ def test_export_keeps_outputs_and_adds_label(exporter, tmp_path):
     code = [c for c in notebook.cells if c.cell_type == "code"]
     assert all(c.outputs for c in code)
     assert code[0].outputs[0]["data"]["text/html"].startswith("<b>out")
+    assert code[0].outputs[0]["data"]["text/plain"].startswith("out")
+    assert code[0].outputs[0]["data"]["text/markdown"].startswith("out")
 
 
 def test_export_refuses_partial_runs(exporter, tmp_path, capsys):
