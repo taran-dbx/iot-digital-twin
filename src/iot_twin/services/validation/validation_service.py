@@ -238,14 +238,14 @@ async def _halt_if_cluster_dead(
     cluster_state: str | None,
 ) -> dict:
     """Fail the next runnable step and persist when the harness cluster is dead."""
-    key = sm.next_runnable_step(state)
-    if key is None or not _should_halt_for_dead_cluster(
-        state, cluster_state, key, preserve_failed=True
+    next_step = sm.next_runnable_step(state)
+    if next_step is None or not _should_halt_for_dead_cluster(
+        state, cluster_state, next_step, preserve_failed=True
     ):
         return state
     error = cluster_gone_error(str(cluster_state))
-    logger.warning("validation step %s failed: %s", key, error)
-    state = _apply_result(state, key, StepResult(sm.FAILED, error=error))
+    logger.warning("validation step %s failed: %s", next_step, error)
+    state = _apply_result(state, next_step, StepResult(sm.FAILED, error=error))
     await _persist(db, setup_id, state)
     return state
 
