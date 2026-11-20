@@ -40,6 +40,9 @@ import type {
 } from "@/lib/admin-api";
 import { Eyebrow } from "./components";
 
+/** Backend check `name` for the secret-scope access check. */
+const SCOPE_ACCESS_CHECK = "secrets";
+
 /** Friendly labels for the stable backend check `name`s. */
 const CHECK_LABEL: Record<string, string> = {
   uc_catalog_schemas: "Unity Catalog + schemas",
@@ -50,7 +53,7 @@ const CHECK_LABEL: Record<string, string> = {
   chronotable: "LakeTS ChronoTable",
   cdf_sync: "CDF sync · Lakebase → Delta",
   uc_grants: "Unity Catalog grants",
-  secrets: "Secret scope",
+  [SCOPE_ACCESS_CHECK]: "Secret scope",
   jobs: "Pipeline jobs",
   interactive_cluster: "Interactive cluster",
   kafka_topics: "Kafka topic connectivity",

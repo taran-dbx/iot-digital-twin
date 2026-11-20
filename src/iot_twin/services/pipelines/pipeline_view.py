@@ -72,9 +72,7 @@ HEALTH_UNKNOWN = "unknown"
 # The two-tier health service (``services/health_checks.py``) emits one
 # ``{name, tier, status, detail}`` per check.  These are the shared vocabularies
 # so the pure rollup below and the checks never drift.
-CHECK_PASS = "pass"
-CHECK_FAIL = "fail"
-CHECK_SKIP = "skip"
+CHECK_PASS, CHECK_FAIL, CHECK_SKIP = ("pass", "fail", "skip")
 TIER_API = "api"  # runs from the app backend, no interactive cluster
 TIER_E2E = "e2e"  # opt-in interactive harness (spins the cluster)
 

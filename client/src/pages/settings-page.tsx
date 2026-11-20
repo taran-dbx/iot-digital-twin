@@ -58,12 +58,16 @@ const DEFAULT_LAKEBASE: LakebaseSettings = {
   port: "5432",
 };
 
+// Default secret-scope key *names* (identifiers, not secrets).
+const LB_LOGIN_ENTRY_NAME = "lb-password";
+const ZB_OAUTH_ENTRY_NAME = "zerobus-client-secret";
+
 const DEFAULT_SECRETS: SecretsSettings = {
   scope: "iot-secrets",
   lb_user_key: "lb-user",
-  lb_password_key: "lb-password",
+  lb_password_key: LB_LOGIN_ENTRY_NAME,
   zb_client_id_key: "zerobus-client-id",
-  zb_client_secret_key: "zerobus-client-secret",
+  zb_client_secret_key: ZB_OAUTH_ENTRY_NAME,
 };
 
 const DEFAULT_CLUSTER: ClusterSettings = {

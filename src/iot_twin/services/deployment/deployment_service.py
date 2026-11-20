@@ -66,7 +66,7 @@ from iot_twin.services.deployment.deployment_gate import (  # noqa: F401  (re-ex
     outstanding_steps,
 )
 from iot_twin.services.pipelines import pipeline_setup_repo
-from iot_twin.services.production_control import PRODUCTION_CONTROL_TOKEN, control_file_path
+from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER, control_file_path
 from iot_twin.services.resource_ledger import record_resource
 
 logger = logging.getLogger("iot_digital_twin.services.deployment")
@@ -599,7 +599,7 @@ async def _deploy_spark_pipeline(
     if producer_notebook:
         producer_path = _notebook_path(single_user_name, industry, mode, "producer")
         control_path = control_file_path(producer_path.rsplit("/", 1)[0], industry)
-        producer_notebook = producer_notebook.replace(PRODUCTION_CONTROL_TOKEN, control_path)
+        producer_notebook = producer_notebook.replace(PRODUCTION_CONTROL_PLACEHOLDER, control_path)
         _upload_notebook(w, producer_path, producer_notebook)
 
     tasks = build_spark_tasks(

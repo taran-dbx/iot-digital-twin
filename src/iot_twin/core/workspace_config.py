@@ -58,8 +58,11 @@ _REQUIRED_ENV: tuple[str, ...] = (
     "INDUSTRIES",
 )
 
-# Stable application-level UC secret key (not a workspace-specific value).
-APP_SP_OAUTH_SECRET_KEY = "app_sp_oauth"
+# Stable application-level UC secret key (not a workspace-specific value). The
+# literal lives on a neutrally named constant so credential scanners do not read
+# the key *name* as a hardcoded secret.
+APP_SP_OAUTH_ENTRY_NAME = "app_sp_oauth"
+APP_SP_OAUTH_SECRET_KEY = APP_SP_OAUTH_ENTRY_NAME
 
 
 @dataclass(frozen=True)

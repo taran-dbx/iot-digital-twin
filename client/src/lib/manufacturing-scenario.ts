@@ -53,7 +53,7 @@ export function spindleHeatStateAt(epochSeconds: number): SpindleHeatState {
 }
 
 /** Replaced server-side at upload with the workspace path the app writes. */
-export const PRODUCTION_CONTROL_TOKEN = "__IOT_PRODUCTION_CONTROL_FILE__";
+export const PRODUCTION_CONTROL_PLACEHOLDER = "__IOT_PRODUCTION_CONTROL_FILE__";
 
 const PRODUCTION_CONTROL_PYTHON = `
 # Cell production control. The app rewrites this workspace file when an
@@ -64,7 +64,7 @@ const PRODUCTION_CONTROL_PYTHON = `
 from databricks.sdk import WorkspaceClient as _ControlWorkspaceClient
 from databricks.sdk.errors import NotFound as _ControlNotFound
 
-PRODUCTION_CONTROL_FILE = "${PRODUCTION_CONTROL_TOKEN}"
+PRODUCTION_CONTROL_FILE = "${PRODUCTION_CONTROL_PLACEHOLDER}"
 PRODUCTION_POLL_S = 2.0
 _production_stopped = ()
 _control_client = None

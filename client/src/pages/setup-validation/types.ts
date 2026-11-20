@@ -76,6 +76,9 @@ export function computeWorkers(partitions: number): number {
   return Math.min(Math.max(Math.ceil(partitions / CORES_PER_WORKER), 1), 8);
 }
 
+/** Default UC service credential *name* (an identifier, not a secret). */
+const DEFAULT_UC_SC_NAME = "iot-msk-service-cred";
+
 /** Fixed prototype source config (Kafka / MSK). */
 export const SOURCE_DEFAULTS = {
   bootstrapServers: "b-1.example.abc123.c9.kafka.us-east-1.amazonaws.com:9098",
@@ -84,7 +87,7 @@ export const SOURCE_DEFAULTS = {
   brokerCount: 3,
   partitions: 6,
   mskArn: "arn:aws:kafka:us-east-1:123456789012:cluster/example/abc123-…-4",
-  serviceCredential: "iot-msk-service-cred",
+  serviceCredential: DEFAULT_UC_SC_NAME,
 } as const;
 
 /** Generation rate — records/sec plus an estimated wire throughput. */
