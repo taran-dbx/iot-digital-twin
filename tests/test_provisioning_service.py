@@ -36,7 +36,9 @@ def _mock_ws_client() -> MagicMock:
     endpoint = MagicMock()
     endpoint.status.hosts.host = "pg.example.com"
     w.postgres.get_endpoint = MagicMock(return_value=endpoint)
-    w.postgres.generate_database_credential = MagicMock(return_value=MagicMock(token="oauth-token"))
+    w.postgres.generate_database_credential = MagicMock(
+        return_value=MagicMock(token="fake-token-for-tests")
+    )
     w.postgres.create_role = MagicMock(return_value=None)
     w.postgres.list_endpoints = MagicMock(return_value=[MagicMock(name=ENDPOINT_NAME)])
     return w
@@ -267,7 +269,7 @@ def _make_sp_ws(existing_keys: list[str], sp_app_id: str | None = None) -> Magic
     created_sp.id = "12345"
     created_sp.application_id = "fresh-app-id"
     w.service_principals.create.return_value = created_sp
-    w.api_client.do.return_value = {"secret": "the-oauth-secret"}
+    w.api_client.do.return_value = {"secret": "not-a-real-oauth-secret"}
 
     if sp_app_id is not None:
         listed_sp = MagicMock()
@@ -383,7 +385,7 @@ class TestProvisionLakebaseRoleBackCompat:
                 project_id=PROJECT_ID,
                 branch_id=BRANCH_ID,
                 endpoint_name=ENDPOINT_NAME,
-                password="ignored-legacy-password",  # noqa: S106 — intentional legacy kwarg
+                password="not-a-real-password",  # noqa: S106 — intentional legacy kwarg
                 role_name="iot_app_user",
             )
 

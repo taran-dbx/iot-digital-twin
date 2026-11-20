@@ -72,7 +72,7 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
 
         def generate_database_credential(self, *, endpoint):
             assert endpoint == requested_names[-1]
-            return SimpleNamespace(token="pg-token")
+            return SimpleNamespace(token="fake-pg-token-for-tests")
 
     monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-client-id")
     ctx = StepContext(
@@ -88,7 +88,7 @@ def test_resolve_lakebase_write_conn_uses_configured_project(monkeypatch):
     connection = vs._resolve_lakebase_write_conn(ctx, "pharmaceutical")
 
     assert requested_names == ["projects/test_pipelines/branches/pharmaceutical/endpoints/primary"]
-    assert connection == ("pg.example.com", "app-client-id", "pg-token")
+    assert connection == ("pg.example.com", "app-client-id", "fake-pg-token-for-tests")
 
 
 def test_cluster_failure_extracts_json_error_and_preserves_root_cause():
@@ -168,7 +168,9 @@ async def test_realtime_write_test_produces_then_consumes_c7242(monkeypatch):
     monkeypatch.setattr(vs.snip, "rtm_produce", fake_produce)
     monkeypatch.setattr(vs.snip, "rtm_write_test", fake_write)
     monkeypatch.setattr(
-        vs, "_resolve_lakebase_write_conn", lambda ctx, branch: ("pg-host", "pg-user", "pg-token")
+        vs,
+        "_resolve_lakebase_write_conn",
+        lambda ctx, branch: ("pg-host", "pg-user", "fake-pg-token-for-tests"),
     )
     monkeypatch.setenv("DATABRICKS_HOST", "https://workspace.example.com")
     monkeypatch.setenv("ZEROBUS_SERVER_ENDPOINT", "workspace.zerobus.example.com")

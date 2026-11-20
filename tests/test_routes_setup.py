@@ -46,7 +46,9 @@ def _make_ws() -> MagicMock:
     ep.status.hosts.host = "pg.example.com"
     w.postgres.list_endpoints = MagicMock(return_value=[ep])
     w.postgres.get_endpoint = MagicMock(return_value=ep)
-    w.postgres.generate_database_credential = MagicMock(return_value=MagicMock(token="oauth-token"))
+    w.postgres.generate_database_credential = MagicMock(
+        return_value=MagicMock(token="fake-token-for-tests")
+    )
     return w
 
 

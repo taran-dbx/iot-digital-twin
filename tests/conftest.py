@@ -170,7 +170,9 @@ def mock_ws_client() -> MagicMock:
     ws.current_user = MagicMock()
     ws.current_user.me = MagicMock(return_value=MagicMock(user_name="test@example.com"))
     ws.postgres = MagicMock()
-    ws.postgres.generate_database_credential = MagicMock(return_value=MagicMock(token="mock-token"))
+    ws.postgres.generate_database_credential = MagicMock(
+        return_value=MagicMock(token="fake-token-for-tests")
+    )
     return ws
 
 

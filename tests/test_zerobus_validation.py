@@ -245,7 +245,7 @@ def test_auth_probe_reachable_no_credentials_skips_token_check():
 def test_auth_probe_token_exchange_success():
     fake_resp = MagicMock()
     fake_resp.status_code = 200
-    fake_resp.json.return_value = {"access_token": "eyFakeToken"}
+    fake_resp.json.return_value = {"access_token": "fake-access-token-for-tests"}
     with (
         patch("socket.gethostbyname", return_value="10.0.0.1"),
         patch("socket.create_connection", MagicMock()),
@@ -256,12 +256,12 @@ def test_auth_probe_token_exchange_success():
             "123.zerobus.us-east-1.cloud.databricks.com",
             "iot_pharmaceutical.zerobus.iot_sensor_data",
             client_id="cid",
-            client_secret="csecret",
+            client_secret="not-a-real-secret",
         )
     assert ok is True
     assert detail["token_ok"] is True
     kwargs = mock_post.call_args.kwargs
-    assert kwargs["auth"] == ("cid", "csecret")
+    assert kwargs["auth"] == ("cid", "not-a-real-secret")
     assert "authorization_details" in kwargs["data"]
     assert "iot_pharmaceutical" in kwargs["data"]["authorization_details"]
 
@@ -285,7 +285,7 @@ def test_auth_probe_token_exchange_missing_grants_fails_clearly():
             "123.zerobus.us-east-1.cloud.databricks.com",
             "iot_pharmaceutical.zerobus.iot_sensor_data",
             client_id="cid",
-            client_secret="csecret",
+            client_secret="not-a-real-secret",
         )
     assert ok is False
     assert detail["token_ok"] is False
@@ -303,7 +303,7 @@ def test_auth_probe_bad_table_fqn_fails_before_network_call():
             "123.zerobus.us-east-1.cloud.databricks.com",
             "not_a_three_part_name",
             client_id="cid",
-            client_secret="csecret",
+            client_secret="not-a-real-secret",
         )
     assert ok is False
     assert "catalog.schema.table" in detail["token_error"]

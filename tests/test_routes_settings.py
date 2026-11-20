@@ -46,7 +46,7 @@ def _make_ws(existing_keys: list[str], sp_app_id: str | None = None) -> MagicMoc
     created_sp.id = "12345"
     created_sp.application_id = "fresh-app-id"
     w.service_principals.create.return_value = created_sp
-    w.api_client.do.return_value = {"secret": "the-oauth-secret"}
+    w.api_client.do.return_value = {"secret": "not-a-real-oauth-secret"}
 
     # Already-exists path wiring: list SP by displayName
     if sp_app_id is not None:

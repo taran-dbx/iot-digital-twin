@@ -215,7 +215,7 @@ class TestProvisionExisting:
         assert body["warnings"] and "recreated" in body["warnings"][0]
 
     async def test_sdk_failure_502_sanitized(self, env) -> None:
-        env.ws.genie.create_space.side_effect = RuntimeError("token=dapiSECRET")
+        env.ws.genie.create_space.side_effect = RuntimeError("token=fake-token-for-tests")
         resp = await _post()
         assert resp.status_code == 502
-        assert "dapiSECRET" not in resp.text
+        assert "fake-token-for-tests" not in resp.text

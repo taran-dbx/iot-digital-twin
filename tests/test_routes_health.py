@@ -98,9 +98,9 @@ class TestAppDefaultsEndpoint:
         {
             "ZEROBUS_SERVER_ENDPOINT": "https://zb.example.com",
             "ZEROBUS_CLIENT_ID": "legacy-zb-client",
-            "ZEROBUS_CLIENT_SECRET": "legacy-zb-secret",
+            "ZEROBUS_CLIENT_SECRET": "not-a-real-legacy-zb-secret",
             "DATABRICKS_CLIENT_ID": "app-client-123",
-            "DATABRICKS_CLIENT_SECRET": "app-secret-456",
+            "DATABRICKS_CLIENT_SECRET": "not-a-real-app-secret",
             "DATABRICKS_HOST": "https://adb-999.azuredatabricks.net",
             "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-123",
         },

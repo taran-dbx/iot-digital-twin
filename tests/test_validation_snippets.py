@@ -42,7 +42,7 @@ def _rtm_write_test_code() -> str:
         metrics_table_location="s3://bkt/iot-digital-twin/iot_x/metrics/streaming_metrics/",
         pg_host="example-pg.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
-        pg_token="lb-oauth-token",
+        pg_token="fake-lb-token-for-tests",
         zerobus_endpoint="workspace.zerobus.us-east-1.cloud.databricks.com",
         workspace_url="https://workspace.cloud.databricks.com",
         zerobus_client_id="app-client-id",
@@ -166,7 +166,7 @@ def test_rtm_write_test_freshness_filter_drops_stale_rows():
         metrics_table_location="s3://bkt/iot_x/metrics/streaming_metrics/",
         pg_host="example-pg.database.us-east-1.cloud.databricks.com",
         pg_user="app-user",
-        pg_token="lb-oauth-token",
+        pg_token="fake-lb-token-for-tests",
         region="us-east-1",
         min_event_epoch=1751780000.0,
     )
