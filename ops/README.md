@@ -141,5 +141,7 @@ pytest tests/test_pipeline_health_notebook.py
 
 `tests/test_pipeline_health_notebook.py` validates the notebook, re-executes it offline in
 sample mode, and fails if the committed outputs are missing or contain host/id/email patterns.
-Do not commit outputs of a real-workspace run: even redacted they describe a live system and go
-stale. To share one, run with `sample=false redact=true` in the workspace and keep it out of git.
+Real-workspace runs are not auto-regenerated and are not stored next to the sample notebook.
+Deliberately kept, dated, redacted live-run snapshots live in
+[`notebooks/runs/`](notebooks/runs/README.md) (how they are produced and re-run is described
+there); always run with `sample=false redact=true`.
