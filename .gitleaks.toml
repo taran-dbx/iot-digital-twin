@@ -1,5 +1,10 @@
 # gitleaks configuration: the default ruleset plus narrow, documented
 # allowlists for known false positives. Keep entries specific.
+#
+# The tracked tree is also meant to pass the stock default rules with no
+# allowlist at all (external scanners use the defaults); CI and pre-commit
+# enforce that with .gitleaks-default.toml. The allowlists below only matter
+# for older history scanned by `gitleaks git`.
 title = "iot-digital-twin gitleaks config"
 
 [extend]
