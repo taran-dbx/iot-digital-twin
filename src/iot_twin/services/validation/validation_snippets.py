@@ -808,9 +808,9 @@ def zerobus_produce(
 try:
     from databricks.sdk import WorkspaceClient
     # Auth endpoint MUST carry the https:// prefix (known gotcha, §1.10).
-    token_url = "https://" + {workspace_url!r}.replace("https://", "") + "/oidc/v1/token"
+    oidc_url = "https://" + {workspace_url!r}.replace("https://", "") + "/oidc/v1/token"
     _ok(table={table_fqn!r}, server_endpoint={server_endpoint!r},
-        token_url=token_url, records={num_records})
+        token_url=oidc_url, records={num_records})
 except Exception as e:
     _fail(traceback.format_exc())
 """

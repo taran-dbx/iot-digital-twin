@@ -39,6 +39,8 @@ require_profile()  # --profile <name> or $DATABRICKS_CONFIG_PROFILE; no default 
 STATE_FILE = Path(os.getenv("E2E_STATE_FILE", "/tmp/pharma_e2e_state.json"))
 
 INDUSTRY = "pharmaceutical"
+# UC service credential *name* (an identifier, not a secret).
+UC_SC_NAME = "iot-rtm-sc"
 WAREHOUSE_ID = os.getenv("E2E_WAREHOUSE_ID", "0123456789abcdef")  # lakets-demo-wh (RUNNING)
 BOOTSTRAP_PUBLIC = (
     "b-2-public.example.abc123.c1.kafka.us-east-1.amazonaws.com:9198,"
@@ -94,7 +96,7 @@ async def stage_setup():
             source_type="kafka",
             bootstrap_servers=BOOTSTRAP_PUBLIC,
             derived={"region": "us-east-1", "broker_count": 3},
-            service_credential="iot-rtm-sc",
+            service_credential=UC_SC_NAME,
             enabled_modes=["realtime", "microbatch", "zerobus"],
             cluster_spec={"partition_count": 3},
             warehouse_id=WAREHOUSE_ID,

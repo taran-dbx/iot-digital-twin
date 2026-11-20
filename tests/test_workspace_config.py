@@ -16,6 +16,12 @@ _REQUIRED_ENV: dict[str, str] = {
     "INDUSTRIES": "industries",  # list field — tested separately
 }
 
+# Secret scope and UC service credential *names* (identifiers, not secrets).
+SCOPE_NAME = "test-scope"
+UC_SC_NAME = "test-credential"
+CUSTOM_SCOPE_NAME = "my-scope"
+ZEROBUS_SCOPE_NAME = "zb-scope"
+
 _FULL_ENV: dict[str, str] = {
     "UC_CATALOG": "test_catalog",
     "UC_SCHEMA": "test_schema",
@@ -27,8 +33,8 @@ _FULL_ENV: dict[str, str] = {
     "INDUSTRIES": "pharmaceutical,manufacturing",
     "PGHOST": "example-pg.database.eu-central-1.cloud.databricks.com",
     # Optional env vars for the three call-time-only fields.
-    "SECRET_SCOPE": "test-scope",
-    "UC_SERVICE_CREDENTIAL": "test-credential",
+    "SECRET_SCOPE": SCOPE_NAME,
+    "UC_SERVICE_CREDENTIAL": UC_SC_NAME,
     "PIPELINES_LAKEBASE_PROJECT": "test-pipelines",
 }
 
@@ -124,11 +130,11 @@ class TestOptionalFields:
     def test_secret_scope_from_secret_scope_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
-        monkeypatch.setenv("SECRET_SCOPE", "my-scope")
+        monkeypatch.setenv("SECRET_SCOPE", CUSTOM_SCOPE_NAME)
         monkeypatch.delenv("ZEROBUS_SECRET_SCOPE", raising=False)
         from iot_twin.core.workspace_config import get_config
 
-        assert get_config().secret_scope == "my-scope"
+        assert get_config().secret_scope == CUSTOM_SCOPE_NAME
 
     def test_secret_scope_falls_back_to_zerobus_scope(
         self, monkeypatch: pytest.MonkeyPatch
@@ -136,10 +142,10 @@ class TestOptionalFields:
         for key, val in _FULL_ENV.items():
             monkeypatch.setenv(key, val)
         monkeypatch.delenv("SECRET_SCOPE", raising=False)
-        monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", "zb-scope")
+        monkeypatch.setenv("ZEROBUS_SECRET_SCOPE", ZEROBUS_SCOPE_NAME)
         from iot_twin.core.workspace_config import get_config
 
-        assert get_config().secret_scope == "zb-scope"
+        assert get_config().secret_scope == ZEROBUS_SCOPE_NAME
 
     def test_secret_scope_empty_when_neither_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for key, val in _FULL_ENV.items():

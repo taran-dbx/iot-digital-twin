@@ -51,6 +51,7 @@ import {
 import { useSensorContext } from "@/contexts/sensor-context";
 import { api, type IndustryInfo } from "@/lib/api";
 import { formatNumber, formatLatency, formatTimestamp } from "@/lib/utils";
+import { QUEUING_P50_FIELD } from "@/lib/latency-series";
 import { PharmaPlant } from "@/components/twin/PharmaPlant";
 import { RealtimeKpiCard } from "@/components/dashboard/realtime-kpi-card";
 import { ConnectionStatusBar } from "@/components/dashboard/connection-status-bar";
@@ -1625,7 +1626,7 @@ export function DashboardPage() {
                         <RechartsTooltip contentStyle={TOOLTIP_STYLE} />
                         <Line type="monotone" dataKey="e2e_p50_ms" stroke="#e17055" strokeWidth={2} dot={false} name="E2E p50" />
                         <Line type="monotone" dataKey="processing_p50_ms" stroke="#74b9ff" strokeWidth={2} dot={false} name="Processing p50" />
-                        <Line type="monotone" dataKey="queuing_p50_ms" stroke="#fdcb6e" strokeWidth={2} dot={false} name="Queuing p50" />
+                        <Line type="monotone" dataKey={QUEUING_P50_FIELD} stroke="#fdcb6e" strokeWidth={2} dot={false} name="Queuing p50" />
                         <Legend wrapperStyle={{ fontSize: 10 }} />
                       </LineChart>
                     </ResponsiveContainer>

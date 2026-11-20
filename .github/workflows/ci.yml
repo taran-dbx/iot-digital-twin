@@ -80,6 +80,8 @@ jobs:
           python-version: "3.11"
       - name: Scan tracked files (including static/dist)
         run: python scripts/check_identifiers.py
+      - name: No literal credential assignments (including static/dist)
+        run: python scripts/check_credential_literals.py
 
   gitleaks:
     name: Secret scan (gitleaks)
@@ -102,3 +104,9 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Scan full git history
         run: gitleaks git --redact --verbose --no-banner --config .gitleaks.toml .
+      - name: Scan tracked tree with stock rules (no allowlist)
+        run: |
+          tree="$RUNNER_TEMP/tree"
+          mkdir -p "$tree"
+          git archive HEAD | tar -x -C "$tree"
+          gitleaks dir --redact --verbose --no-banner --config .gitleaks-default.toml "$tree"

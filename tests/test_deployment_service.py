@@ -17,7 +17,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 
 from iot_twin.services.deployment import deployment_service as ds
-from iot_twin.services.production_control import PRODUCTION_CONTROL_TOKEN
+from iot_twin.services.production_control import PRODUCTION_CONTROL_PLACEHOLDER
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,9 @@ def _db(setup: dict, deployment: dict | None = None) -> MagicMock:
     return db
 
 
+# Secret scope *name* in the legacy consumer source (an identifier, not a secret).
+LEGACY_SCOPE_NAME = "legacy-scope"
+
 BASE_SETUP = {
     "id": "setup-1",
     "industry": "pharmaceutical",
@@ -97,7 +100,7 @@ class TestConsumerCredentialNormalization:
         monkeypatch.setenv("UC_CATALOG", "configured-catalog")
         monkeypatch.setenv("UC_SCHEMA", "configured-schema")
         source = (
-            'APP_SECRET_SCOPE = "legacy-scope"\n'
+            f'APP_SECRET_SCOPE = "{LEGACY_SCOPE_NAME}"\n'
             '_lb_ci = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-id")\n'
             '_lb_cs = dbutils.secrets.get(APP_SECRET_SCOPE, "sss-industries-client-secret")\n'
         )
@@ -417,7 +420,7 @@ class TestDeployPipeline:
             "setup-1",
             "realtime",
             consumer_notebook="# consumer",
-            producer_notebook=f'PRODUCTION_CONTROL_FILE = "{PRODUCTION_CONTROL_TOKEN}"',
+            producer_notebook=f'PRODUCTION_CONTROL_FILE = "{PRODUCTION_CONTROL_PLACEHOLDER}"',
             w=w,
         )
 

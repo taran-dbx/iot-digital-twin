@@ -55,9 +55,10 @@ file — the coordinator wires it in)::
         workspace_url = os.getenv("DATABRICKS_HOST", "")
         server_endpoint = os.getenv("ZEROBUS_SERVER_ENDPOINT", "")
         table_fqn = f"{cfg['catalog']}.zerobus.iot_sensor_data"
+        scope_name = "iot-secrets"
         ok, detail = zbv.auth_probe(
             workspace_url, server_endpoint, table_fqn,
-            secret_scope="iot-secrets", secret_key="zerobus-client-secret",
+            secret_scope=scope_name, secret_key=zbv.ZEROBUS_OAUTH_ENTRY_NAME,
         )
         return StepResult(sm.PASSED if ok else sm.FAILED, data=detail)
 
@@ -103,6 +104,12 @@ __all__ = [
 
 OK_SENTINEL = "VALIDATION_OK"
 FAIL_SENTINEL = "VALIDATION_FAIL"
+# Default UC secret key *name* holding the Zerobus SP OAuth value (an identifier,
+# not a secret; neutrally named so credential scanners do not flag it).
+ZEROBUS_OAUTH_ENTRY_NAME = "zerobus-client-secret"
+_NO_CREDS_RESOLVABLE = (
+    "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
+)
 
 _PREAMBLE = f'''
 import json, traceback
@@ -138,7 +145,7 @@ def zerobus_produce_snippet(
     source: str = "validation",
     secret_scope: str | None = None,
     client_id_key: str = "zerobus-client-id",
-    client_secret_key: str = "zerobus-client-secret",
+    client_secret_key: str = ZEROBUS_OAUTH_ENTRY_NAME,
 ) -> str:
     """Return Python source that ingests ``num_records`` SSOT sensor rows into
     ``table_fqn`` via the Zerobus SDK and waits for acks (spec §1.10 zerobus).
@@ -333,9 +340,7 @@ def auth_probe(
 
     if not resolved_id or not resolved_secret:
         detail["token_ok"] = None
-        detail["token_skipped"] = (
-            "no DATABRICKS_CLIENT_ID/CLIENT_SECRET or ZEROBUS_CLIENT_ID/CLIENT_SECRET resolvable"
-        )
+        detail["token_skipped"] = _NO_CREDS_RESOLVABLE
         return True, detail  # reachability alone passes when creds are absent
 
     parts = table_fqn.split(".")

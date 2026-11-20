@@ -29,8 +29,8 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 PRODUCTION_STATE_EVENT = "production_state"
-# matches PRODUCTION_CONTROL_TOKEN in client/src/lib/manufacturing-scenario.ts
-PRODUCTION_CONTROL_TOKEN = "__IOT_PRODUCTION_CONTROL_FILE__"
+# matches PRODUCTION_CONTROL_PLACEHOLDER in client/src/lib/manufacturing-scenario.ts
+PRODUCTION_CONTROL_PLACEHOLDER = "__IOT_PRODUCTION_CONTROL_FILE__"
 PRODUCTION_STATES = ("running", "stopped")
 CONTROL_DIR = "production_control"
 WORKSPACE_SUBDIR = ".iot-digital-twin"

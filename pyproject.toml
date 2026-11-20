@@ -59,7 +59,9 @@ line-length = 100
 extend-exclude = ["client", "tests/e2e", "static", "lib"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# S105-S107: no string literal assigned to a credential-named variable, kwarg,
+# key or default (external "hardcoded credential" scanners flag these shapes).
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S105", "S106", "S107"]
 ignore = [
     # Long string literals (SQL, notebook templates, log messages) are kept
     # intact; the formatter enforces line length for code.

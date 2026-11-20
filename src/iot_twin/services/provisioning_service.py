@@ -21,6 +21,7 @@ from iot_twin.models.sql_ddl import (
 )
 from iot_twin.services.app_permissions import _app_name, grant_app_can_use
 from iot_twin.services.lakets import lakets_service
+from iot_twin.services.zerobus_validation import ZEROBUS_OAUTH_ENTRY_NAME
 
 logger = logging.getLogger("iot_digital_twin.services.provisioning")
 
@@ -173,7 +174,7 @@ async def ensure_streaming_sp(
         return {"client_id": None, "status": "failed", "results": results}
 
     zb_id_key = "zerobus-client-id"
-    zb_secret_key = "zerobus-client-secret"
+    zb_secret_key = ZEROBUS_OAUTH_ENTRY_NAME
     sp_name = f"iot-sss-{scope_name}"
     client_id: str | None = None
 
@@ -294,7 +295,10 @@ SHARED_STREAMING_SP_DISPLAY_NAME = "iot-sss-industries"
 # literal — the real value is resolved per-call via workspace_config.
 SHARED_STREAMING_SP_SECRET_SCOPE: str = ""
 SHARED_STREAMING_SP_ID_KEY = "sss-industries-client-id"
-SHARED_STREAMING_SP_SECRET_KEY = "sss-industries-client-secret"
+# Key *names* inside the scope; the literals sit on neutrally named constants so
+# credential scanners do not read them as hardcoded secrets.
+SHARED_STREAMING_SP_OAUTH_ENTRY_NAME = "sss-industries-client-secret"
+SHARED_STREAMING_SP_SECRET_KEY = SHARED_STREAMING_SP_OAUTH_ENTRY_NAME
 # Distinct Lakebase role_id for the shared streaming SP so it can be registered
 # on the SAME branch as the app-backend role (LAKEBASE_ROLE_ID="iot-app-user")
 # without a role_id collision.

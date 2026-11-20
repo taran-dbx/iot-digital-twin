@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { api } from "@/lib/api";
 import { formatLatency, formatNumber } from "@/lib/utils";
+import { QUEUING_P50_FIELD } from "@/lib/latency-series";
 import type { SourceMetrics, StreamingLatencyResponse } from "@/lib/types";
 import { SectionBadge } from "./section";
 import { LatencyKpiTile, fmtLatency, fmtNum } from "./latency-kpis";
@@ -333,7 +334,7 @@ export function StreamingSourceMetrics({
                   <RechartsTooltip contentStyle={TOOLTIP_STYLE} />
                   <Line type="monotone" dataKey="e2e_p50_ms" stroke="#f59e0b" strokeWidth={2} dot={false} name="E2E p50" />
                   <Line type="monotone" dataKey="processing_p50_ms" stroke="#3b82f6" strokeWidth={2} dot={false} name="Processing p50" />
-                  <Line type="monotone" dataKey="queuing_p50_ms" stroke="#94a3b8" strokeWidth={2} dot={false} name="Queuing p50" />
+                  <Line type="monotone" dataKey={QUEUING_P50_FIELD} stroke="#94a3b8" strokeWidth={2} dot={false} name="Queuing p50" />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
                 </LineChart>
               </ResponsiveContainer>

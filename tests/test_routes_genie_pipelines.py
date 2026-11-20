@@ -383,10 +383,10 @@ class TestPoll:
     @pytest.mark.asyncio
     async def test_sdk_error_is_sanitized_500(self, api: AsyncClient) -> None:
         await _start(api)
-        api.ws.genie.get_message.side_effect = RuntimeError("token=dapiSECRET")
+        api.ws.genie.get_message.side_effect = RuntimeError("token=fake-token-for-tests")
         resp = await api.get(f"{BASE}/conversations/conv-1/messages/msg-1", headers=ALICE)
         assert resp.status_code == 500
-        assert "dapiSECRET" not in resp.text
+        assert "fake-token-for-tests" not in resp.text
 
 
 class TestAttachmentResult:

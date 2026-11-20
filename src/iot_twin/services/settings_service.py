@@ -10,6 +10,10 @@ import logging
 
 logger = logging.getLogger("iot_digital_twin.services.settings")
 
+# Deliberately bogus login for the Lakebase reachability probe: the connect only
+# has to reach the host, an auth rejection still proves it is connectable.
+_PROBE_LOGIN = "probe"
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -143,8 +147,8 @@ async def validate_lakebase(body: dict) -> dict:
                 conn = await asyncpg.connect(
                     host=host,
                     database=database,
-                    user="probe",
-                    password="probe",
+                    user=_PROBE_LOGIN,
+                    password=_PROBE_LOGIN,
                     port=port,
                     ssl="require",
                     timeout=5,

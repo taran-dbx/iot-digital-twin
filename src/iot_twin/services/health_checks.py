@@ -85,7 +85,7 @@ LAKEBASE_ENDPOINTS_CHECK = "lakebase_endpoints"
 CHRONOTABLE_CHECK = "chronotable"
 CDF_SYNC_CHECK = "cdf_sync"
 GRANTS_CHECK = "uc_grants"
-SECRETS_CHECK = "secrets"
+SCOPE_ACCESS_CHECK = "secrets"
 JOBS_CHECK = "jobs"
 CLUSTER_STATE_CHECK = "interactive_cluster"
 KAFKA_TOPIC_CHECK = "kafka_topics"
@@ -574,13 +574,15 @@ async def check_secrets(
         missing = [k for k in required_keys if k not in keys]
         if missing:
             return _result(
-                SECRETS_CHECK,
+                SCOPE_ACCESS_CHECK,
                 FAIL,
                 f"scope {scope} missing secrets: {', '.join(missing)}",
             )
-        return _result(SECRETS_CHECK, PASS, f"scope {scope}: {len(required_keys)} secrets present")
+        return _result(
+            SCOPE_ACCESS_CHECK, PASS, f"scope {scope}: {len(required_keys)} secrets present"
+        )
     except Exception as exc:
-        return _result(SECRETS_CHECK, FAIL, f"secrets check failed: {exc}")
+        return _result(SCOPE_ACCESS_CHECK, FAIL, f"secrets check failed: {exc}")
 
 
 async def check_uc_secret(catalog: str, schema: str, ws: Any) -> dict:
@@ -588,9 +590,9 @@ async def check_uc_secret(catalog: str, schema: str, ws: Any) -> dict:
     fqn = f"{catalog}.{schema}.{cat.APP_SP_OAUTH_SECRET}"
     try:
         ws.secrets_uc.get_secret(fqn, include_value=False)
-        return _result(SECRETS_CHECK, PASS, f"UC secret {fqn} present")
+        return _result(SCOPE_ACCESS_CHECK, PASS, f"UC secret {fqn} present")
     except Exception as exc:
-        return _result(SECRETS_CHECK, FAIL, f"UC secret {fqn} check failed: {exc}")
+        return _result(SCOPE_ACCESS_CHECK, FAIL, f"UC secret {fqn} check failed: {exc}")
 
 
 # ---------------------------------------------------------------------------

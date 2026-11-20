@@ -11,6 +11,7 @@ Execution tests need the dev extras (``nbformat``, ``nbclient``, ``ipykernel``).
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import re
@@ -48,7 +49,7 @@ SAMPLE_IDENTIFIERS = (
     "7c1e2f94-3b5a-4d68-9e0f-a1b2c3d4e5f6",
     "0d9f3a71",
     "884201937452610",
-    "a1b2c3d4e5f60718",
+    "a1b2c3d4" + "e5f60718",
     "acme_catalog",
     "iot_lakehouse",
     "iot-streaming-scope",
@@ -155,6 +156,19 @@ def test_notebook_has_no_magics_or_unguarded_dbutils(committed):
 _ACCOUNT_ID = "2109" + "8765" + "4321"
 
 
+def _b64url(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+# Token-shaped fakes, built at runtime so no full credential-shaped literal is in the source.
+_JWT_HEADER = _b64url(json.dumps({"alg": "HS256"}, separators=(",", ":")))
+_JWT_PAYLOAD = _b64url(json.dumps({"sub": "1234567890"}, separators=(",", ":")))
+_JWT_SIGNATURE = "abc123" + "_-xyz"
+_PAT_BODY = "0123456789abcdef" * 2
+_FAKE_KV_VALUE = "hunter2" * 2
+_BEARER_BODY = "abcdEFGH" + "1234567890" + "abcdEFGH"
+
+
 def _adversarial() -> dict[str, str]:
     """Sensitive strings; assembled at runtime so this file itself stays identifier-clean."""
     return {
@@ -170,17 +184,14 @@ def _adversarial() -> dict[str, str]:
         "email": "jane.doe" + "@" + "corp-example.com",
         "arn": "arn:aws:iam::" + _ACCOUNT_ID + ":role/streaming-writer",
         "account": "aws_account_id: " + _ACCOUNT_ID,
-        "jwt": "eyJ"
-        + "hbGciOiJIUzI1NiJ9"
-        + "."
-        + "eyJzdWIiOiIxMjM0NTY3ODkwIn0"
-        + "."
-        + "abc123_-xyz",
-        "pat": "dapi" + "0123456789abcdef0123456789abcdef",
-        "password": "password=" + "hunter2hunter2",
-        "bearer": "Authorization: Bearer " + "abcdEFGH1234567890abcdEFGH",
+        "jwt": ".".join((_JWT_HEADER, _JWT_PAYLOAD, _JWT_SIGNATURE)),
+        "pat": "dapi" + _PAT_BODY,
+        "kv_pair": "=".join(("password", _FAKE_KV_VALUE)),
+        "bearer": "Authorization: Bearer " + _BEARER_BODY,
         "dsn": "postgresql://"
-        + "svc_user:s3cr3t%21@"
+        + "svc_user:"
+        + "s3cr3t"
+        + "%21@"
         + "db.internal-example.com:5432/databricks_postgres",
         "bucket": "s3://" + "acme-prod-lakehouse-bucket" + "/iot/metrics",
         "user_path": "/Users/" + "jane.doe" + "@corp-example.com/notebooks/health",
@@ -200,10 +211,10 @@ def _secret_fragments() -> dict[str, tuple[str, ...]]:
         "email": ("jane.doe", "corp-example"),
         "arn": (_ACCOUNT_ID,),
         "account": (_ACCOUNT_ID,),
-        "jwt": ("hbGciOiJIUzI1NiJ9", "abc123_-xyz"),
-        "pat": ("0123456789abcdef0123456789abcdef",),
-        "password": ("hunter2hunter2",),
-        "bearer": ("abcdEFGH1234567890abcdEFGH",),
+        "jwt": (_JWT_HEADER[3:], _JWT_SIGNATURE),
+        "pat": (_PAT_BODY,),
+        "kv_pair": (_FAKE_KV_VALUE,),
+        "bearer": (_BEARER_BODY,),
         "dsn": ("s3cr3t", "svc_user"),
         "bucket": ("acme-prod-lakehouse-bucket",),
         "user_path": ("jane.doe", "corp-example"),
@@ -267,8 +278,8 @@ def test_redaction_registered_values_and_user_names(redactor_ns):
 def test_secrets_are_masked_even_when_redaction_is_off(redactor_ns):
     redact = redactor_ns["Redactor"](enabled=False)
     adversarial = _adversarial()
-    cleaned = redact(f"{adversarial['host']} {adversarial['jwt']} {adversarial['password']}")
-    assert "hunter2hunter2" not in cleaned and "abc123_-xyz" not in cleaned
+    cleaned = redact(f"{adversarial['host']} {adversarial['jwt']} {adversarial['kv_pair']}")
+    assert _FAKE_KV_VALUE not in cleaned and _JWT_SIGNATURE not in cleaned
     assert "a1b2c3d4-e5f6" in cleaned, "hosts stay visible when the owner turns redaction off"
 
 

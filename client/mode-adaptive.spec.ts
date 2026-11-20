@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
+/** UC service credential *name* returned by the mocked config (an identifier, not a secret). */
+const UC_SC_NAME = "iot-rtm-sc";
+
 async function selectZerobusOnly(page: Page) {
   await page.getByRole("button", { name: /Real-time/ }).click();
   await page.getByRole("button", { name: /Micro-batch/ }).click();
@@ -579,7 +582,7 @@ test.describe("[Windsor] Mode-adaptive pipeline setup", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          service_credential: "iot-rtm-sc",
+          service_credential: UC_SC_NAME,
           pipelines_project: "pipeline-project",
           uc_catalog: "catalog",
           uc_schema: "schema",

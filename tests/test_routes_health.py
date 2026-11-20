@@ -7,6 +7,8 @@ from unittest.mock import patch
 import pytest
 from httpx import AsyncClient
 
+from tests._fakes import fake_credential
+
 
 class TestHealthEndpoint:
     """GET /api/health should return status and configuration info."""
@@ -98,9 +100,9 @@ class TestAppDefaultsEndpoint:
         {
             "ZEROBUS_SERVER_ENDPOINT": "https://zb.example.com",
             "ZEROBUS_CLIENT_ID": "legacy-zb-client",
-            "ZEROBUS_CLIENT_SECRET": "legacy-zb-secret",
+            "ZEROBUS_CLIENT_SECRET": fake_credential("legacy-zb"),
             "DATABRICKS_CLIENT_ID": "app-client-123",
-            "DATABRICKS_CLIENT_SECRET": "app-secret-456",
+            "DATABRICKS_CLIENT_SECRET": fake_credential("app"),
             "DATABRICKS_HOST": "https://adb-999.azuredatabricks.net",
             "DATABRICKS_SQL_WAREHOUSE_ID": "warehouse-123",
         },
