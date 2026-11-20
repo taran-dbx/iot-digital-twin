@@ -80,6 +80,8 @@ jobs:
           python-version: "3.11"
       - name: Scan tracked files (including static/dist)
         run: python scripts/check_identifiers.py
+      - name: No literal credential assignments (including static/dist)
+        run: python scripts/check_credential_literals.py
 
   gitleaks:
     name: Secret scan (gitleaks)

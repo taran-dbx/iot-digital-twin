@@ -42,3 +42,10 @@ repos:
         language: system
         pass_filenames: true
         types: [text]
+      - id: check-credential-literals
+        name: no literal credential assignments
+        description: Rejects string literals assigned to credential-named identifiers (see scripts/check_credential_literals.py).
+        entry: python3 scripts/check_credential_literals.py
+        language: system
+        pass_filenames: true
+        types: [text]

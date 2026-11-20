@@ -39,7 +39,11 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`
 
 Never commit secrets, tokens, workspace hosts, IDs, e-mail addresses or broker lists.
 Use placeholders in git and real values in gitignored files or bundle variable overrides.
-`pre-commit` runs gitleaks and `scripts/check_identifiers.py`; CI runs both.
+`pre-commit` runs gitleaks (repo config and stock rules with no allowlist),
+`scripts/check_identifiers.py` and `scripts/check_credential_literals.py`; CI runs all of them.
+Never assign a string literal to a credential-named variable, kwarg or key, even a fake one:
+tests use `tests/_fakes.fake_credential("label")`, and secret scope/key *names* live on
+constants whose own name is not credential-shaped (e.g. `ZEROBUS_OAUTH_ENTRY_NAME`).
 
 ## Deployment changes
 
