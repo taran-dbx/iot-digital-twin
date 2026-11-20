@@ -16,6 +16,9 @@ All notable changes to this project are documented here. The format follows
 - `ops/notebooks/pipeline_health_check.ipynb`: a read-only, inline-only Databricks notebook that
   scores one deployed pipeline end to end (jobs, Lakebase, LakeTS, CDF/Delta, metrics,
   cross-checks), with identifier redaction and a synthetic `sample` mode; see `ops/README.md`.
+- Fail-safe usage tracking with `dbdemos-tracker` (vendored wheel in `lib/`) for app
+  start, page loads, dashboard streams and pipeline setup/validate/deploy. Opt out with
+  `USAGE_TRACKING_ENABLED=false`.
 
 ### Changed
 - Python code moved to the `src/iot_twin/` package; `services/` grouped into subpackages.

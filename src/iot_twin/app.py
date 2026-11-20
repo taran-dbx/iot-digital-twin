@@ -28,12 +28,23 @@ from iot_twin.services.deployment.deployment_service import (
     sync_runtime_oauth_secret,
 )
 from iot_twin.services.simulator_service import run_simulator
+from iot_twin.services.usage_tracking import UsageTracker, UsageTrackingMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("iot_digital_twin")
+
+# Usage tracking (dbdemos-tracker): a no-op until started; opt out with
+# USAGE_TRACKING_ENABLED=false. See services/usage_tracking.py.
+usage_tracker = UsageTracker.from_env()
+
+
+async def start_usage_tracking() -> None:
+    """Start usage tracking and record the app start; never raises."""
+    if await usage_tracker.start():
+        usage_tracker.track_app_start()
 
 
 async def publish_runtime_oauth_secret() -> None:
@@ -110,6 +121,8 @@ async def lifespan(application: FastAPI):
         state.app_backend_error = "PGHOST not set"
 
     secret_sync = asyncio.create_task(publish_runtime_oauth_secret())
+    # Off the startup path: the workspace-id lookup must not delay boot.
+    tracking_start = asyncio.create_task(start_usage_tracking())
 
     # --- Simulator background task ---
     state.simulator_task = asyncio.create_task(run_simulator(state))
@@ -119,6 +132,7 @@ async def lifespan(application: FastAPI):
     logger.info("=== IoT Digital Twin started (db=%s) ===", state.db_available)
     yield
     secret_sync.cancel()
+    tracking_start.cancel()
     logger.info("=== IoT Digital Twin shutting down ===")
     await shutdown(state)
     logger.info("=== IoT Digital Twin stopped ===")
@@ -128,6 +142,7 @@ async def lifespan(application: FastAPI):
 # Application factory
 # ---------------------------------------------------------------------------
 app = FastAPI(title="IoT Digital Twin", lifespan=lifespan)
+app.add_middleware(UsageTrackingMiddleware, tracker=usage_tracker)
 
 # Every router (API, setup, admin, validation, SPA root) is registered by
 # create_api_router(), in a fixed order.

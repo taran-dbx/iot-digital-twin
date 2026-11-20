@@ -103,6 +103,26 @@ placeholders only. Main settings:
 | `UC_SERVICE_CREDENTIAL`, `UC_STORAGE_BASE`, `UC_EXTERNAL_LOCATION` | Storage and credentials |
 | `INDUSTRIES` | Industries offered in the UI |
 | `ADMIN_GROUP` | Group whose members are app admins (optional `ADMIN_EMAILS` CSV adds extra admins; not set by the bundle) |
+| `USAGE_TRACKING_ENABLED` | Usage tracking on/off (default `true`; `false`, `0`, `no` or `off` opts out) |
+| `USAGE_TRACKING_APP_NAME`, `USAGE_TRACKING_DEMO_CATALOG_ID` | Optional tracker app name (default `iot-digital-twin`) and [demo catalog](https://go/demo-catalog) id |
+
+### Usage tracking
+
+The app reports usage to the dbdemos analytics service through the
+[`dbdemos-tracker`](https://github.com/databricks-field-eng/dbdemos-tracker) package
+(`src/iot_twin/services/usage_tracking.py`). Each event carries the workspace id, the app
+name and a fixed event path. For `@databricks.com` users only, a SHA-256 hash of their
+email is also sent (never the address itself; other users send no user identifier).
+Tracked events: app start, SPA page loads (landing, industries, industry setup, mode dashboards, setup/validate, pipelines, settings), live dashboard
+streams (`/api/events`), industry setup, validation start, pipeline create and pipeline
+deploy. Ids are replaced with `{id}`; query strings and request bodies are never sent.
+
+Tracking is fire-and-forget and fail-safe. If the package, the workspace id lookup or the
+network is unavailable, tracking turns itself off and the app keeps running. Opt out with
+`USAGE_TRACKING_ENABLED=false` (bundle variable `usage_tracking_enabled`, or the profile key
+of the same name for `scripts/render_app_yaml.py`). The package is published on the
+Databricks-internal PyPI proxy, which the Apps runtime cannot reach, so its wheel is
+vendored in `lib/` and installed from `requirements.txt`.
 
 Dev scripts under `scripts/` never default to a CLI profile: pass `--profile <name>` or
 set `DATABRICKS_CONFIG_PROFILE`.

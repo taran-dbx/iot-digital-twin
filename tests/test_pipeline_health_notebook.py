@@ -151,6 +151,10 @@ def test_notebook_has_no_magics_or_unguarded_dbutils(committed):
 
 
 # ── redaction helper (adversarial) ───────────────────────────────────────────
+# A 12-digit AWS account id, assembled from pieces so the file stays identifier-clean.
+_ACCOUNT_ID = "2109" + "8765" + "4321"
+
+
 def _adversarial() -> dict[str, str]:
     """Sensitive strings; assembled at runtime so this file itself stays identifier-clean."""
     return {
@@ -164,8 +168,8 @@ def _adversarial() -> dict[str, str]:
         "url": "https://" + "workspace-9999" + ".cloud.databricks.com/api/2.0/jobs/get?job_id=1",
         "uuid": "7c1e2f94-3b5a-4d68-9e0f-a1b2c3d4e5f6",
         "email": "jane.doe" + "@" + "corp-example.com",
-        "arn": "arn:aws:iam::" + "210987654321" + ":role/streaming-writer",
-        "account": "aws_account_id: " + "210987654321",
+        "arn": "arn:aws:iam::" + _ACCOUNT_ID + ":role/streaming-writer",
+        "account": "aws_account_id: " + _ACCOUNT_ID,
         "jwt": "eyJ"
         + "hbGciOiJIUzI1NiJ9"
         + "."
@@ -194,8 +198,8 @@ def _secret_fragments() -> dict[str, tuple[str, ...]]:
         "url": ("workspace-9999",),
         "uuid": ("7c1e2f94",),
         "email": ("jane.doe", "corp-example"),
-        "arn": ("210987654321",),
-        "account": ("210987654321",),
+        "arn": (_ACCOUNT_ID,),
+        "account": (_ACCOUNT_ID,),
         "jwt": ("hbGciOiJIUzI1NiJ9", "abc123_-xyz"),
         "pat": ("0123456789abcdef0123456789abcdef",),
         "password": ("hunter2hunter2",),

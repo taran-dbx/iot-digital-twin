@@ -36,6 +36,7 @@ _EXPECTED_ENV_NAMES = (
     "INDUSTRIES",
     "ADMIN_GROUP",
     "GENIE_SPACE_ID",
+    "USAGE_TRACKING_ENABLED",
 )
 
 _MINIMAL_PROFILE = {
@@ -286,6 +287,19 @@ def test_admin_emails_emitted_when_profile_sets_it(renderer) -> None:
     profile = {**_MINIMAL_PROFILE, "ADMIN_EMAILS": "ops@example.com"}
     rendered = renderer.render_app_yaml(profile)
     assert 'name: ADMIN_EMAILS\n    value: "ops@example.com"' in rendered
+
+
+def test_usage_tracking_defaults_to_enabled(renderer) -> None:
+    rendered = renderer.render_app_yaml(_MINIMAL_PROFILE)
+    assert 'name: USAGE_TRACKING_ENABLED\n    value: "true"' in rendered
+
+
+def test_usage_tracking_opt_out_from_profile(renderer, tmp_path: Path) -> None:
+    profile = {**_MINIMAL_PROFILE, "USAGE_TRACKING_ENABLED": "false"}
+    (tmp_path / "optout.profile").write_text(json.dumps(profile), encoding="utf-8")
+    loaded = renderer.load_profile("optout", tmp_path)
+    rendered = renderer.render_app_yaml(loaded)
+    assert 'name: USAGE_TRACKING_ENABLED\n    value: "false"' in rendered
 
 
 def test_real_profile_lookup_ignores_example_templates(renderer, tmp_path: Path) -> None:
