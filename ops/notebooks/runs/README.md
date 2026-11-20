@@ -10,6 +10,13 @@ reference for the report layout.
 | File | Meaning |
 |---|---|
 | `<industry>_<mode>_<YYYY-MM-DD>.ipynb` | One run: first cell reads `LIVE RUN, redacted, <date>` |
+| `<industry>_<mode>_<YYYY-MM-DD>.html` | Static HTML copy of the same run (`jupyter nbconvert --to html --no-input`), for browsers; commit it only if `scripts/check_identifiers.py` passes on it |
+
+Every output carries `text/html` plus `text/markdown` and `text/plain` versions (tables as pipe
+tables, PASS/WARN/FAIL as words, charts as a one-line summary plus `image/svg+xml`), so the
+report stays readable in viewers that do not render HTML (untrusted notebooks, sanitising
+previews, IDE file viewers). Databricks `displayHTML` exports only HTML; the converter derives
+the text versions with `ops/html_fallback.py`.
 
 ## How they are produced
 
@@ -37,13 +44,14 @@ reference for the report layout.
      ops/notebooks/runs/<industry>_<mode>_<YYYY-MM-DD>.ipynb --date <YYYY-MM-DD>
    ```
 
-   The converter refuses runs where any cell errored or was skipped (for example when the
+   The date is the day the run actually executed. The converter refuses runs where any cell errored or was skipped (for example when the
    Python kernel crashed): re-run instead of committing a partial snapshot.
 4. Scan before committing, and delete the temporary workspace notebook afterwards:
 
    ```bash
-   python scripts/check_identifiers.py ops/notebooks/runs/*.ipynb
-   pytest tests/test_health_run_snapshots.py
+   jupyter nbconvert --to html --no-input ops/notebooks/runs/<name>.ipynb   # optional static copy
+   python scripts/check_identifiers.py ops/notebooks/runs/*.ipynb ops/notebooks/runs/*.html
+   pytest tests/test_health_run_snapshots.py tests/test_notebook_text_fallbacks.py
    ```
 
 ## Rules
